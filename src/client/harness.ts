@@ -1,0 +1,138 @@
+import type { ComponentType, ReactNode } from 'react';
+
+/** Harness services the browser client receives through its plugin context. */
+
+/** One outcome of a route call. */
+export type RpcOutcome =
+  | { ok: true; value: unknown }
+  | { ok: false; error: { code: string; message: string; details: Record<string, unknown> } };
+
+export interface ConnectionService {
+  rpc: { call(route: string, endpoint: string, payload: unknown, signal?: AbortSignal): Promise<RpcOutcome> };
+}
+
+export interface OpenResourceOptions {
+  kind?: string;
+  params?: Record<string, unknown>;
+}
+
+export interface SidebarRightService {
+  openResource(address: string, options?: OpenResourceOptions): void;
+  openTab(kind: string, options?: { params?: Record<string, unknown> }): void;
+}
+
+export type Translator = (key: string, values?: Record<string, string | number>) => string;
+
+export interface LocaleService {
+  register(namespace: string, language: string, dictionary: Record<string, string>): void;
+  bind(namespace: string): Translator;
+}
+
+export interface TabNavigation {
+  address?: string;
+  params?: Record<string, unknown>;
+  revision?: number;
+}
+
+/** The actions a tab may take on itself. */
+export interface TabActions {
+  bindCommands(commands: { refresh?: () => void }): () => void;
+  openResource(address: string, options?: OpenResourceOptions): void;
+  openTab(kind: string, options?: { params?: Record<string, unknown> }): void;
+  close(): void;
+}
+
+export interface TabInfo {
+  sidebar?: { expanded: boolean; fullscreen: boolean };
+  tab: { id: string; contentId?: string; navigation?: TabNavigation; visible?: boolean; actions?: TabActions };
+  panel: { id: string };
+}
+
+export type UseTabInfo = () => TabInfo;
+
+export interface WorkspaceItem {
+  workspaceId: string;
+  path: string;
+  sessionIds?: string[];
+}
+
+export interface SessionItem {
+  cwd?: string;
+}
+
+export interface WorkspaceState {
+  items: WorkspaceItem[];
+}
+
+export interface SessionState {
+  byId: Record<string, SessionItem | undefined>;
+}
+
+export type StoreHook<T> = <R>(selector: (state: T) => R) => R;
+
+export interface GuideEntry {
+  id: string;
+  order: number;
+  title: () => string;
+  description: () => string;
+  icon: () => ReactNode;
+}
+
+export interface TabTypeDefinition {
+  id: string;
+  kind: string;
+  priority: 'extension' | 'builtin' | 'fallback';
+  keepMounted?: boolean;
+  patterns?: string[];
+  title: (address: string) => string;
+  canOpen?: (address: string) => boolean;
+  guide?: GuideEntry[];
+}
+
+export interface SlotSpec {
+  name: string;
+  key?: string;
+  id?: string;
+  order?: number;
+  locale?: string;
+  inject?: () => Record<string, unknown>;
+}
+
+export interface SlotsService {
+  inject(name: string, register: () => (() => void) | void): void;
+  register<P>(spec: SlotSpec, component: ComponentType<P>): () => void;
+}
+
+export interface ClientContext {
+  connection: ConnectionService;
+  sidebarRight: SidebarRightService;
+  locale: LocaleService;
+  slots: SlotsService;
+  sidebarRightTabs: { register(definition: TabTypeDefinition): () => void };
+  effect(callback: () => (() => void) | void, label?: string): void;
+}
+
+/** Standard props every session-scoped slot body receives, plus the translator this plugin injects. */
+export interface SessionSlotProps {
+  sessionId: string;
+  t: Translator;
+  useSessions: StoreHook<SessionState>;
+  useWorkspaces: StoreHook<WorkspaceState>;
+}
+
+export interface TabProps extends SessionSlotProps {
+  useTabInfo: UseTabInfo;
+}
+
+/** The parts of a settled tool result this plugin reads. */
+export interface ToolResultBlock {
+  isError?: boolean;
+  meta?: unknown;
+  content?: readonly unknown[];
+}
+
+export interface ToolViewProps extends SessionSlotProps {
+  phase?: 'preparing' | 'start' | 'result';
+  toolName?: string;
+  block?: ToolResultBlock;
+}

@@ -1,0 +1,7 @@
+- insert:
+    - id: dsh-artifacts
+      name: 'dsh-artifacts'
+      config: {}
+    - id: dsh-artifacts-tools
+      name: 'dsh-artifacts/tools'
+      config: {}

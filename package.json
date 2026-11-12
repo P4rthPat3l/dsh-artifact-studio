@@ -1,0 +1,78 @@
+{
+  "name": "dsh-artifacts",
+  "version": "0.1.1",
+  "type": "module",
+  "description": "Local-first artifacts for DeepSeek Harness: the agent creates pages and documents as versioned files, and you open, edit, restore, and export them beside the chat.",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "deepseek",
+    "artifacts",
+    "documents",
+    "design-system",
+    "local-first"
+  ],
+  "license": "MIT",
+  "author": "Parth Patel",
+  "exports": {
+    ".": "./dist/host/index.js",
+    "./tools": "./dist/host/tools-plugin.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "dist",
+    "client.js",
+    "client.doc.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "LICENSE",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-sidebar-right",
+        "@deepseek-ai/dsh-client-ui-session",
+        "@deepseek-ai/dsh-client-ui-workspace",
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc -p src/host/tsconfig.json && node scripts/build.mjs",
+    "typecheck": "tsc -p src/host/tsconfig.json --noEmit && tsc -p src/client/tsconfig.json",
+    "test": "npm run build && node --test tests/*.test.mjs",
+    "prepack": "node scripts/check-icon.mjs"
+  },
+  "dependencies": {
+    "docx": "9.15.3",
+    "marked": "^17.0.1"
+  },
+  "devDependencies": {
+    "@tiptap/core": "3.33.1",
+    "@tiptap/extension-list": "^3.33.1",
+    "@tiptap/extension-table": "^3.33.1",
+    "@tiptap/markdown": "3.33.1",
+    "@tiptap/pm": "3.33.1",
+    "@tiptap/starter-kit": "3.33.1",
+    "@types/node": "^22.20.5",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "esbuild": "^0.25.0",
+    "jsdom": "^25.0.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "typescript": "^5.9.3"
+  }
+}
