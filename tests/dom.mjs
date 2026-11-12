@@ -18,6 +18,9 @@ export function installDom() {
   global.cancelAnimationFrame = window.cancelAnimationFrame.bind(window);
   global.DOMRect = window.DOMRect;
   global.Range = window.Range;
+  // jsdom has no layout API on Range; ProseMirror uses it when a toolbar restores selection.
+  window.Range.prototype.getClientRects = () => [];
+  window.Range.prototype.getBoundingClientRect = () => new window.DOMRect();
   global.Node = window.Node;
   global.Element = window.Element;
   global.HTMLElement = window.HTMLElement;

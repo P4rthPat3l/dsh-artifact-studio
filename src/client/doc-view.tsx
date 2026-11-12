@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import type { DocChunk, DocEditorHandle } from './doc/entry.js';
+import type { Translator } from './harness.js';
+import type { DocChunk, DocEditorHandle, DocFormat } from './doc/entry.js';
 
 let chunk: Promise<DocChunk> | null = null;
 
@@ -30,6 +31,7 @@ export interface DocViewProps {
   failedLabel: string;
   onChange: (markdown: string) => void;
   onSave: () => void;
+  t?: Translator;
 }
 
 /**
@@ -38,11 +40,14 @@ export interface DocViewProps {
  * @param props the content and callbacks.
  * @returns the editor.
  */
-export function DocView({ markdown, revision, editable, label, loadingLabel, failedLabel, onChange, onSave }: DocViewProps) {
+export function DocView({ markdown, revision, editable, label, loadingLabel, failedLabel, onChange, onSave, t }: DocViewProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const handleRef = useRef<DocEditorHandle | null>(null);
   const changeRef = useRef(onChange);
   changeRef.current = onChange;
+  const latest = useRef({ markdown, editable, label });
+  latest.current = { markdown, editable, label };
+  const [active, setActive] = useState<readonly DocFormat[]>([]);
   const [state, setState] = useState<'loading' | 'ready' | 'failed'>('loading');
 
   useEffect(() => {
@@ -52,10 +57,9 @@ export function DocView({ markdown, revision, editable, label, loadingLabel, fai
         if (cancelled || mountRef.current === null) return;
         handleRef.current = loaded.mountDocEditor({
           element: mountRef.current,
-          markdown,
-          editable,
-          label,
+          ...latest.current,
           onChange: (value) => changeRef.current(value),
+          onSelectionChange: setActive,
         });
         setState('ready');
       })
@@ -74,13 +78,10 @@ export function DocView({ markdown, revision, editable, label, loadingLabel, fai
   useEffect(() => {
     const handle = handleRef.current;
     if (handle === null) return;
-    // Saving changes the revision, but the text is already what the editor
-    // holds; replacing it would move the caret to the end and add an undo step.
+    // Own edits already match; another mounted view may have changed the shared draft.
     if (handle.getMarkdown() === markdown) return;
     handle.setMarkdown(markdown);
-    // Otherwise this is a new revision from a reload or another version.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [revision]);
+  }, [revision, markdown]);
 
   useEffect(() => {
     handleRef.current?.setEditable(editable);
@@ -97,6 +98,11 @@ export function DocView({ markdown, revision, editable, label, loadingLabel, fai
         }
       }}
     >
+      {!editable || t === undefined ? null : <div className="art-doc-toolbar" role="toolbar" aria-label={t('format.toolbar')}>
+        {(['heading', 'bold', 'italic', 'bulletList', 'orderedList', 'codeBlock'] satisfies DocFormat[]).map(command => (
+          <button key={command} type="button" className="art-button" aria-pressed={active.includes(command)} disabled={state !== 'ready'} onMouseDown={event => event.preventDefault()} onClick={() => handleRef.current?.format(command)}>{t(`format.${command}`)}</button>
+        ))}
+      </div>}
       {state === 'loading' ? <p className="art-note">{loadingLabel}</p> : null}
       {state === 'failed' ? <p className="art-note">{failedLabel}</p> : null}
       <div className="art-doc-mount" ref={mountRef} />

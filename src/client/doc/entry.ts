@@ -4,11 +4,14 @@ import { TableKit } from '@tiptap/extension-table';
 import { Markdown } from '@tiptap/markdown';
 import StarterKit from '@tiptap/starter-kit';
 
+export type DocFormat = 'heading' | 'bold' | 'italic' | 'bulletList' | 'orderedList' | 'codeBlock';
+
 /** The handle the tab keeps to one mounted document editor. */
 export interface DocEditorHandle {
   getMarkdown(): string;
   setMarkdown(markdown: string): void;
   setEditable(editable: boolean): void;
+  format(command: DocFormat): void;
   destroy(): void;
 }
 
@@ -19,6 +22,7 @@ export interface DocEditorOptions {
   editable: boolean;
   label: string;
   onChange: (markdown: string) => void;
+  onSelectionChange?: (active: readonly DocFormat[]) => void;
 }
 
 /**
@@ -44,6 +48,11 @@ export function mountDocEditor(options: DocEditorOptions): DocEditorHandle {
     editorProps: {
       attributes: { class: 'art-prose', 'aria-label': options.label, role: 'textbox', 'aria-multiline': 'true' },
     },
+    onTransaction: ({ editor: current }) => {
+      const formats: DocFormat[] = ['heading', 'bold', 'italic', 'bulletList', 'orderedList', 'codeBlock'];
+      options.onSelectionChange?.(formats.filter(command => command === 'heading'
+        ? current.isActive('heading', { level: 2 }) : current.isActive(command)));
+    },
     onUpdate: ({ editor: current }) => {
       if (!applying) options.onChange(current.getMarkdown());
     },
@@ -59,6 +68,19 @@ export function mountDocEditor(options: DocEditorOptions): DocEditorHandle {
       }
     },
     setEditable: (editable) => editor.setEditable(editable, false),
+    format(command) {
+      if (!editor.isEditable) return;
+      const chain = editor.chain().focus();
+      switch (command) {
+        case 'heading': chain.toggleHeading({ level: 2 }).run(); break;
+        case 'bold': chain.toggleBold().run(); break;
+        case 'italic': chain.toggleItalic().run(); break;
+        case 'bulletList': chain.toggleBulletList().run(); break;
+        case 'orderedList': chain.toggleOrderedList().run(); break;
+        case 'codeBlock': chain.toggleCodeBlock().run(); break;
+        default: { const unreachable: never = command; throw new Error(String(unreachable)); }
+      }
+    },
     destroy: () => editor.destroy(),
   };
 }

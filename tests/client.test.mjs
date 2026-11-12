@@ -132,6 +132,12 @@ function fakeHost() {
               })),
             },
           };
+        case 'restore': {
+          if (payload.baseVersion !== item.manifest.version) return { ok: false, error: { code: 'artifact/stale-version', message: 'stale', details: {} } };
+          item.content = `restored ${payload.version}`;
+          item.manifest = { ...item.manifest, version: item.manifest.version + 1 };
+          return { ok: true, value: { manifest: { ...item.manifest } } };
+        }
         case 'designSystem':
           return {
             ok: true,
@@ -175,6 +181,10 @@ function stubContext(host) {
       openTab: (kind) => records.openedTabs.push(kind),
     },
     sidebarRightTabs: { register: (definition) => { records.tabs.push(definition); return () => undefined; } },
+    workspaces: (() => {
+      const snapshot = { items: [{ workspaceId: 'ws-a', path: '/work/a', title: 'Work A', sessionIds: ['ses-a'] }] };
+      return { list: { getSnapshot: () => snapshot, subscribe: () => () => undefined } };
+    })(),
     slots: {
       inject: (_name, callback) => callback(),
       register: (spec, component) => {
@@ -237,6 +247,328 @@ async function click(element) {
     await settle(60);
   });
 }
+
+async function changeValue(element, value) {
+  await act(async () => {
+    const prototype = element.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(prototype, 'value').set.call(element, value);
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+
+async function pageFixture(suffix) {
+  const host = fakeHost();
+  const id = `art_ws_regression${suffix}`;
+  host.state.artifacts.set(id, { manifest: host.manifest(id, 'page', 'Regression', 3), content: '<p>saved</p>' });
+  const { ctx, records } = stubContext(host);
+  plugin.apply(ctx);
+  const tab = slot(records, 'sidebar.right.pane.tab', 'dsh-artifacts/artifact');
+  const view = await render(tab.component, tabProps(`dsh-resource://artifact/workspace/ws-a/${id}`));
+  await click([...view.container.querySelectorAll('.art-segment button')].find(button => button.textContent === 'tab.source'));
+  return { host, id, view };
+}
+
+function deferred() {
+  let resolve;
+  const promise = new Promise(done => { resolve = done; });
+  return { promise, resolve };
+}
+
+test('AC-036: reload asks before discarding and cancel retains the draft', async () => {
+  const { host, view } = await pageFixture('reload');
+  try {
+    await changeValue(view.container.querySelector('textarea'), '<p>draft</p>');
+    await click(view.container.querySelector('[aria-label="gallery.more"]'));
+    await click([...view.container.querySelectorAll('[role="menuitem"]')].find(button => button.textContent === 'tab.reload'));
+    assert.ok(view.container.querySelector('[role="alertdialog"]'));
+    await click([...view.container.querySelectorAll('button')].find(button => button.textContent === 'create.cancel'));
+    assert.equal(view.container.querySelector('textarea').value, '<p>draft</p>');
+    assert.equal(host.calls.filter(call => call.endpoint === 'get').length, 1);
+  } finally { await view.unmount(); }
+});
+
+test('AC-037: rename keeps a dirty draft and persists its content', async () => {
+  const { host, id, view } = await pageFixture('rename');
+  try {
+    await changeValue(view.container.querySelector('textarea'), '<p>draft rename</p>');
+    await click(view.container.querySelector('[aria-label="gallery.more"]'));
+    await click([...view.container.querySelectorAll('[role="menuitem"]')].find(button => button.textContent === 'tab.rename'));
+    const input = view.container.querySelector('[aria-label="tab.rename"]');
+    await changeValue(input, 'Renamed safely');
+    await act(async () => { input.closest('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); await settle(30); });
+    assert.equal(view.container.querySelector('textarea').value, '<p>draft rename</p>');
+    assert.equal(host.state.artifacts.get(id).manifest.title, 'Renamed safely');
+    assert.equal(host.state.artifacts.get(id).content, '<p>draft rename</p>');
+  } finally { await view.unmount(); }
+});
+
+test('AC-038: edits during save wait and use the accepted next version', async () => {
+  const { host, id, view } = await pageFixture('serial');
+  const original = host.rpc.call;
+  const first = deferred();
+  let updates = 0;
+  host.rpc.call = async (...args) => { if (args[1] === 'update' && ++updates === 1) await first.promise; return original(...args); };
+  try {
+    await changeValue(view.container.querySelector('textarea'), '<p>first</p>');
+    await click(view.container.querySelector('[aria-label="tab.save"]'));
+    await changeValue(view.container.querySelector('textarea'), '<p>second</p>');
+    await click(view.container.querySelector('[aria-label="tab.save"]'));
+    assert.equal(updates, 1, 'a second write started before the first settled');
+    await act(async () => { first.resolve(); await settle(60); });
+    assert.equal(host.state.artifacts.get(id).content, '<p>second</p>');
+    assert.deepEqual(host.calls.filter(call => call.endpoint === 'update').map(call => call.payload.baseVersion), [3, 4]);
+    assert.doesNotMatch(view.container.textContent, /tab.conflictTitle/);
+  } finally { first.resolve(); await view.unmount(); }
+});
+
+test('AC-044: stale history responses cannot replace the latest selection', async () => {
+  const { host, view } = await pageFixture('history');
+  const original = host.rpc.call;
+  const reads = new Map();
+  host.rpc.call = async (...args) => {
+    if (args[1] === 'get' && args[2].version !== undefined) {
+      const hold = deferred(); reads.set(args[2].version, hold);
+      await hold.promise;
+      const result = await original(...args);
+      result.value.version = args[2].version; result.value.content = `version ${args[2].version}`;
+      return result;
+    }
+    return original(...args);
+  };
+  try {
+    await click(view.container.querySelector('[aria-label="tab.history"]'));
+    const versions = [...view.container.querySelectorAll('.art-version')];
+    await click(versions.find(button => button.textContent.includes('tab.versionOf|version=1')));
+    await click(versions.find(button => button.textContent.includes('tab.versionOf|version=2')));
+    await act(async () => { reads.get(2).resolve(); await settle(10); reads.get(1).resolve(); await settle(20); });
+    assert.equal(view.container.querySelector('textarea').value, 'version 2');
+  } finally { for (const read of reads.values()) read.resolve(); await view.unmount(); }
+});
+
+test('AC-043: switching projects hides old rows while the matching list is pending', async () => {
+  const host = fakeHost();
+  host.state.artifacts.set('art_ws_oldproject0001', { manifest: host.manifest('art_ws_oldproject0001', 'page', 'Only A', 1), content: '' });
+  const hold = deferred(); const original = host.rpc.call;
+  host.rpc.call = async (...args) => { if (args[1] === 'list' && args[2].workspaceId === 'ws-b') { await hold.promise; return { ok: true, value: { items: [], total: 0, hasMore: false, truncated: false } }; } return original(...args); };
+  const { ctx, records } = stubContext(host);
+  ctx.workspaces.list.getSnapshot = () => snapshot;
+  const snapshot = { items: [{ workspaceId: 'ws-a', title: 'A' }, { workspaceId: 'ws-b', title: 'B' }] };
+  plugin.apply(ctx); const main = slot(records, 'main', 'dsh-artifacts-panel');
+  const view = await render(main.component, main.spec.inject());
+  try {
+    assert.match(view.container.textContent, /Only A/);
+    await act(async () => { const select = view.container.querySelector('[aria-label="panel.workspace"]'); select.value = 'ws-b'; select.dispatchEvent(new Event('change', { bubbles: true })); });
+    assert.equal(view.container.querySelector('.art-row'), null);
+  } finally { hold.resolve(); await view.unmount(); window.localStorage.clear(); }
+});
+
+test('AC-045: back restores the gallery query and scope filter', async () => {
+  const host = fakeHost();
+  host.state.artifacts.set('art_ws_browsecontext01', { manifest: host.manifest('art_ws_browsecontext01', 'page', 'Find me', 1), content: '' });
+  const { ctx, records } = stubContext(host); plugin.apply(ctx);
+  const main = slot(records, 'main', 'dsh-artifacts-panel');
+  const view = await render(main.component, main.spec.inject());
+  try {
+    await changeValue(view.container.querySelector('input[type="search"]'), 'Find');
+    await click([...view.container.querySelectorAll('.art-toolbar button')].find(button => button.textContent === 'scope.workspace'));
+    await act(async () => settle(220));
+    await click(view.container.querySelector('.art-row'));
+    await click(view.container.querySelector('[aria-label="action.back"]'));
+    assert.equal(view.container.querySelector('input[type="search"]').value, 'Find');
+    assert.equal([...view.container.querySelectorAll('.art-toolbar button')].find(button => button.textContent === 'scope.workspace').getAttribute('aria-pressed'), 'true');
+  } finally { await view.unmount(); }
+});
+
+test('AC-036: dirty back can save or cancel and a failed save stays in place', async () => {
+  const host = fakeHost(); const id = 'art_ws_backguard0001';
+  host.state.artifacts.set(id, { manifest: host.manifest(id, 'page', 'Back guard', 1), content: 'original' });
+  const { ctx, records } = stubContext(host); plugin.apply(ctx);
+  const main = slot(records, 'main', 'dsh-artifacts-panel'); const view = await render(main.component, main.spec.inject());
+  try {
+    await click(view.container.querySelector('.art-row'));
+    await click([...view.container.querySelectorAll('.art-segment button')].find(button => button.textContent === 'tab.source'));
+    await changeValue(view.container.querySelector('textarea'), 'keep me');
+    await click(view.container.querySelector('[aria-label="action.back"]'));
+    assert.ok(view.container.querySelector('[role="alertdialog"]'));
+    host.state.failNext = { endpoint: 'update', error: { code: 'artifact/storage-failure', message: 'failed', details: {} } };
+    await click([...view.container.querySelectorAll('button')].find(button => button.textContent === 'tab.saveContinue'));
+    assert.equal(view.container.querySelector('textarea').value, 'keep me');
+    assert.ok(view.container.querySelector('[role="alertdialog"]'));
+    await click([...view.container.querySelectorAll('button')].find(button => button.textContent === 'tab.saveContinue'));
+    assert.equal(view.container.querySelector('[data-artifact-id]'), null);
+    assert.equal(host.state.artifacts.get(id).content, 'keep me');
+  } finally { await view.unmount(); }
+});
+
+test('AC-036: unmount preserves a recoverable draft by artifact identity', async () => {
+  const { host, id, view } = await pageFixture('retain');
+  await changeValue(view.container.querySelector('textarea'), 'retained draft'); await view.unmount();
+  const { ctx, records } = stubContext(host); plugin.apply(ctx);
+  const reopened = await render(slot(records, 'sidebar.right.pane.tab', 'dsh-artifacts/artifact').component, tabProps(`dsh-resource://artifact/workspace/ws-a/${id}`));
+  try {
+    await click([...reopened.container.querySelectorAll('.art-segment button')].find(button => button.textContent === 'tab.source'));
+    assert.equal(reopened.container.querySelector('textarea').value, 'retained draft');
+    await click(reopened.container.querySelector('[aria-label="tab.save"]'));
+  } finally { await reopened.unmount(); }
+});
+
+test('AC-040: export waits for save and pins its version or stops on failure', async () => {
+  const { host, view } = await pageFixture('output');
+  const original = host.rpc.call; const outputs = [];
+  host.rpc.call = async (...args) => { if (args[1] === 'export') { outputs.push(args[2]); return { ok: true, value: { path: '/export.html', fileName: 'export.html', bytes: 0, mediaType: 'text/html', data: '' } }; } return original(...args); };
+  window.HTMLAnchorElement.prototype.click = () => undefined;
+  try {
+    await changeValue(view.container.querySelector('textarea'), 'new output');
+    await click(view.container.querySelector('[aria-label="tab.export"]'));
+    await click([...view.container.querySelectorAll('[role="menuitem"]')].find(button => button.textContent === 'export.html'));
+    assert.equal(outputs[0].version, 4);
+    assert.equal(host.calls.filter(call => call.endpoint === 'update')[0].payload.content, 'new output');
+    await changeValue(view.container.querySelector('textarea'), 'failed output');
+    host.state.failNext = { endpoint: 'update', error: { code: 'artifact/stale-version', message: 'stale', details: { current: 5 } } };
+    await click(view.container.querySelector('[aria-label="tab.export"]'));
+    await click([...view.container.querySelectorAll('[role="menuitem"]')].find(button => button.textContent === 'export.html'));
+    assert.equal(outputs.length, 1);
+  } finally { await view.unmount(); }
+});
+
+test('AC-039: conflict copy failure keeps a selectable draft and requires explicit discard', async () => {
+  const { host, id, view } = await pageFixture('copyconflict');
+  try {
+    await changeValue(view.container.querySelector('textarea'), 'my conflicting draft');
+    host.state.artifacts.get(id).manifest.version += 1;
+    await click(view.container.querySelector('[aria-label="tab.save"]'));
+    await click([...view.container.querySelectorAll('button')].find(button => button.textContent === 'tab.copyDraft'));
+    assert.ok([...view.container.querySelectorAll('textarea')].some(input => input.value === 'my conflicting draft'));
+    await click([...view.container.querySelectorAll('button')].find(button => button.textContent === 'tab.discardReload'));
+    assert.ok(view.container.querySelector('[role="alertdialog"]'));
+  } finally { await view.unmount(); }
+});
+
+test('AC-047: agent edit request is reviewable and never submits or writes', async () => {
+  const { host, id, view } = await pageFixture('agent');
+  try {
+    await click([...view.container.querySelectorAll('button')].find(button => button.textContent === 'agent.edit'));
+    const request = view.container.querySelector('.art-request textarea');
+    assert.ok(request); assert.match(request.value, new RegExp(id)); assert.match(request.value, /version=3/);
+    await changeValue(request, request.value + '\nMake the title shorter');
+    await click([...view.container.querySelectorAll('button')].find(button => button.textContent === 'agent.copy'));
+    assert.match(request.value, /Make the title shorter/);
+    assert.ok(host.calls.every(call => ['get', 'list'].includes(call.endpoint)), 'request preparation wrote or submitted data');
+  } finally { await view.unmount(); }
+});
+
+test('AC-048: visible heading control updates the document and round-trips Markdown', async () => {
+  const changes = [];
+  const view = await render(plugin.DocView, { markdown: 'Heading text', revision: '1', editable: true, label: 'Formatting doc', loadingLabel: 'Loading', failedLabel: 'Failed', onChange: text => changes.push(text), onSave: () => undefined, t });
+  try {
+    await click([...view.container.querySelectorAll('button')].find(button => button.textContent === 'format.heading'));
+    assert.ok(view.container.querySelector('h2'));
+    assert.equal([...view.container.querySelectorAll('button')].find(button => button.textContent === 'format.heading').getAttribute('aria-pressed'), 'true');
+    assert.match(changes.at(-1), /^## Heading text/);
+    const mount = document.createElement('div'); document.body.appendChild(mount);
+    const handle = chunk.mountDocEditor({ element: mount, markdown: changes.at(-1), editable: true, label: 'Roundtrip', onChange: () => undefined });
+    assert.match(handle.getMarkdown(), /^## Heading text/); handle.destroy(); mount.remove();
+  } finally { await view.unmount(); }
+});
+
+test('AC-036: document reload replaces editor content only after the read completes', async () => {
+  const host = fakeHost(); const id = 'art_ws_docreload0001';
+  host.state.artifacts.set(id, { manifest: host.manifest(id, 'doc', 'Reload doc', 1), content: '# Original' });
+  const { ctx, records } = stubContext(host); plugin.apply(ctx);
+  const view = await render(slot(records, 'sidebar.right.pane.tab', 'dsh-artifacts/artifact').component, tabProps(`dsh-resource://artifact/workspace/ws-a/${id}`));
+  try {
+    host.state.artifacts.get(id).content = '# External'; host.state.artifacts.get(id).manifest.version = 2;
+    await click(view.container.querySelector('[aria-label="gallery.more"]'));
+    const original = host.rpc.call; const hold = deferred();
+    host.rpc.call = async (...args) => { if (args[1] === 'get') await hold.promise; return original(...args); };
+    await click([...view.container.querySelectorAll('[role="menuitem"]')].find(button => button.textContent === 'tab.reload'));
+    await act(async () => { hold.resolve(); await settle(40); });
+    assert.match(view.container.querySelector('.art-prose').textContent, /External/);
+  } finally { await view.unmount(); }
+});
+
+test('AC-036: two views share a draft and closing one cannot remove its recovery', async () => {
+  const { host, id, view } = await pageFixture('twoviews');
+  const { ctx, records } = stubContext(host); plugin.apply(ctx);
+  const component = slot(records, 'sidebar.right.pane.tab', 'dsh-artifacts/artifact').component;
+  const props = tabProps(`dsh-resource://artifact/workspace/ws-a/${id}`);
+  const second = await render(component, props);
+  await changeValue(view.container.querySelector('textarea'), 'shared recovered draft');
+  await second.unmount(); await view.unmount();
+  const reopened = await render(component, props);
+  try {
+    await click([...reopened.container.querySelectorAll('.art-segment button')].find(button => button.textContent === 'tab.source'));
+    assert.equal(reopened.container.querySelector('textarea').value, 'shared recovered draft');
+    await click(reopened.container.querySelector('[aria-label="tab.save"]'));
+  } finally { await reopened.unmount(); }
+});
+
+test('AC-039: edits made while restore is pending remain recoverable', async () => {
+  const { host, view } = await pageFixture('restorerace');
+  const original = host.rpc.call; const hold = deferred();
+  host.rpc.call = async (...args) => { if (args[1] === 'restore') await hold.promise; return original(...args); };
+  try {
+    await click(view.container.querySelector('[aria-label="tab.history"]'));
+    await click([...view.container.querySelectorAll('.art-version')].find(button => button.textContent.includes('tab.versionOf|version=1')));
+    await click([...view.container.querySelectorAll('button')].find(button => button.textContent === 'tab.restoreThis'));
+    await click([...view.container.querySelectorAll('button')].find(button => button.textContent === 'tab.backToCurrent'));
+    await changeValue(view.container.querySelector('textarea'), 'typing during restore');
+    await act(async () => { hold.resolve(); await settle(40); });
+    assert.equal(view.container.querySelector('textarea').value, 'typing during restore');
+    assert.match(view.container.textContent, /tab.conflictTitle/);
+  } finally { hold.resolve(); await view.unmount(); }
+});
+
+test('AC-036: retained unmounted drafts still warn before window unload', async () => {
+  const { view } = await pageFixture('unload');
+  await changeValue(view.container.querySelector('textarea'), 'unmounted draft'); await view.unmount();
+  const event = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(event);
+  assert.equal(event.defaultPrevented, true);
+});
+
+test('AC-048: lazy document mount uses the newest content and editability', async () => {
+  const hold = deferred();
+  const main = await loadArtifact('client.js');
+  const delayedRequire = specifier => main.requireModule(specifier);
+  delayedRequire.async = () => hold.promise;
+  const fresh = main.definition.factory(delayedRequire);
+  const props = { markdown: 'Current', revision: 'old', editable: true, label: 'Latest props', loadingLabel: 'Loading', failedLabel: 'Failed', onChange: () => undefined, onSave: () => undefined, t };
+  const view = await render(fresh.DocView, props);
+  try {
+    await view.rerender({ ...props, markdown: 'Historical', revision: 'new', editable: false });
+    await act(async () => { hold.resolve(chunk); await settle(20); });
+    assert.equal(view.container.querySelector('.art-prose').textContent, 'Historical');
+    assert.equal(view.container.querySelector('.art-prose').getAttribute('contenteditable'), 'false');
+  } finally { hold.resolve(chunk); globalThis.__dshArtifactsRequireAsync = main.requireModule.async; await view.unmount(); }
+});
+
+test('AC-038: document views receive the same pending draft', async () => {
+  const host = fakeHost(); const id = 'art_ws_docshared0001';
+  host.state.artifacts.set(id, { manifest: host.manifest(id, 'doc', 'Shared doc', 1), content: '# Original' });
+  const { ctx, records } = stubContext(host); plugin.apply(ctx);
+  const component = slot(records, 'sidebar.right.pane.tab', 'dsh-artifacts/artifact').component;
+  const props = tabProps(`dsh-resource://artifact/workspace/ws-a/${id}`);
+  const first = await render(component, props); const second = await render(component, props);
+  try {
+    await click([...first.container.querySelectorAll('button')].find(button => button.textContent === 'format.bulletList'));
+    assert.ok(first.container.querySelector('.art-prose ul'));
+    assert.ok(second.container.querySelector('.art-prose ul'));
+  } finally { await first.unmount(); await second.unmount(); }
+});
+
+test('AC-040: output is blocked while a historical version is still loading', async () => {
+  const { host, view } = await pageFixture('historyoutput');
+  const original = host.rpc.call; const hold = deferred();
+  host.rpc.call = async (...args) => { if (args[1] === 'get' && args[2].version !== undefined) await hold.promise; return original(...args); };
+  try {
+    await click(view.container.querySelector('[aria-label="tab.history"]'));
+    await click([...view.container.querySelectorAll('.art-version')].find(button => button.textContent.includes('tab.versionOf|version=1')));
+    assert.equal(view.container.querySelector('[aria-label="tab.export"]').disabled, true);
+    assert.equal(host.calls.some(call => call.endpoint === 'export'), false);
+    await act(async () => { hold.resolve(); await settle(20); });
+    assert.equal(view.container.querySelector('[aria-label="tab.export"]').disabled, false);
+  } finally { hold.resolve(); await view.unmount(); }
+});
 
 test('AC-009: page iframe has only allow-scripts', async () => {
   const host = fakeHost();
@@ -472,5 +804,39 @@ test('the composer button opens the gallery page', async () => {
   const view = await render(button.component, { t });
   await click(view.container.querySelector('button'));
   assert.deepEqual(records.openedTabs, ['artifacts']);
+  await view.unmount();
+});
+
+test('AC-034: the left navigation row opens a full artifacts page', async () => {
+  const host = fakeHost();
+  const { ctx, records } = stubContext(host);
+  plugin.apply(ctx);
+  const nav = slot(records, 'sidebar.panellist', 'dsh-artifacts-panel');
+  assert.equal(nav.spec.order, 10, 'the row needs an order between the shipped rows');
+  assert.ok(nav.spec.label, 'the row needs a label');
+  const main = slot(records, 'main', 'dsh-artifacts-panel');
+  const view = await render(main.component, main.spec.inject());
+  const options = view.container.querySelectorAll('[aria-label="panel.workspace"] option');
+  assert.equal(options.length, 1, 'expected one workspace option');
+  assert.equal(options[0].textContent, 'Work A');
+  assert.ok(view.container.querySelector('.art-section'), 'the page rendered no sections');
+  await view.unmount();
+});
+
+test('AC-035: the full page opens an artifact in place and returns', async () => {
+  const host = fakeHost();
+  host.state.artifacts.set('art_ws_page000020', { manifest: host.manifest('art_ws_page000020', 'page', 'Panel page', 1), content: '<h1>Panel</h1>' });
+  const { ctx, records } = stubContext(host);
+  plugin.apply(ctx);
+  const main = slot(records, 'main', 'dsh-artifacts-panel');
+  const view = await render(main.component, main.spec.inject());
+  const row = [...view.container.querySelectorAll('.art-row')].find((element) => element.textContent.includes('Panel page'));
+  assert.ok(row, 'no artifact row rendered');
+  await click(row);
+  assert.ok(view.container.querySelector('iframe'), 'the panel did not open the artifact in place');
+  const back = view.container.querySelector('[aria-label="action.back"]');
+  assert.ok(back, 'the panel has no back control');
+  await click(back);
+  assert.ok(view.container.querySelector('[aria-label="panel.workspace"]'), 'back did not return to the gallery');
   await view.unmount();
 });

@@ -77,21 +77,19 @@ export function useListChanges(): number {
 }
 
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
-let toastNode: HTMLDivElement | null = null;
+const notice = createCell<string | null>(null);
 
-/**
- * Show a short message at the bottom of the window.
- * @param message the text.
- */
 export function notify(message: string): void {
-  if (typeof document === 'undefined') return;
-  if (toastNode === null) {
-    toastNode = document.createElement('div');
-    toastNode.className = 'art-toast';
-    toastNode.setAttribute('role', 'status');
-  }
-  toastNode.textContent = message;
-  if (!toastNode.isConnected) document.body.appendChild(toastNode);
+  notice.set(message);
   if (toastTimer !== undefined) clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => toastNode?.remove(), 3600);
+  toastTimer = setTimeout(() => notice.set(null), 3600);
+}
+
+export function useNotice(): string | null {
+  return useSyncExternalStore(notice.subscribe, notice.get);
+}
+
+export function clearNotice(): void {
+  if (toastTimer !== undefined) clearTimeout(toastTimer);
+  notice.set(null);
 }

@@ -11,7 +11,12 @@ The agent creates pages and documents as versioned files, and you open them besi
 - A save is refused when someone else saved first, so neither the agent nor you can silently overwrite the other.
 - Pages export as HTML. Docs export as Markdown, Word, or HTML. You can print either type or save it as a PDF from the print dialog.
 - A design system reaches pages as `--artifact-*` CSS variables. It has a library default and an optional project override.
-- The chat shows a card for each create and update. The right sidebar has an Artifacts page, and the composer has a button that opens it.
+- The left sidebar opens a full-page Artifacts browser with a project selector. The conversation side panel opens the same editor beside chat. Back preserves gallery search, filters, paging, and scroll.
+- Reload and Back ask whether to save, discard, or cancel when edits are pending. Multiple views share a draft and serialize saves. Draft recovery stays in window memory until saved or discarded. It does not survive a browser restart.
+- Export saves current edits first and uses that exact version. History exports and prints the selected saved version. A failed save stops output.
+- Ask agent to edit prepares an editable request with artifact identity and reference version. Copy it into your chosen conversation. Nothing sends automatically.
+- Documents have heading, emphasis, list, and code controls. Page source uses Save or Ctrl/Cmd+S; documents autosave after typing.
+- The chat shows a card for each create and update. The composer button opens the gallery.
 
 ## Install
 

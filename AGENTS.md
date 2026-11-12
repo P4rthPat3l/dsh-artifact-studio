@@ -10,3 +10,8 @@
 - Every visible string goes through `t()` with EN and ZH entries in `src/client/locale.ts`. Test AC-023 enforces this.
 - Only MIT or Apache-2.0 dependencies. `tests/package.test.mjs` checks the runtime ones.
 - `npm test` builds first. A live check needs the bundle reinstalled, through `remove_bundle` then `install_bundle`, and then a window reload.
+
+- `src/client/editor-model.ts` owns one shared editor per full artifact address. Draft and in-flight write state are separate. Only unsaved models survive the last pane unmount, in window memory. Never persist draft content in localStorage.
+- Document replacement revisions advance only after external content is accepted. Own saves must not rebuild the document or move its caret. The lazy editor must read the latest props when its chunk resolves.
+- Agent edit requests use the approved copy fallback. Do not auto-submit, replace a chat draft, or infer a conversation from an artifact's source session.
+- Export and print accept an optional saved version. Never fall back to latest when a requested version is missing. Scope-root confinement must run before creating directories.

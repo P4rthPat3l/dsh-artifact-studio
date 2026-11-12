@@ -1,3 +1,4 @@
+import { PAGE_CSP, composePage } from '../../render.js';
 import { scopeOfId } from '../../contract.js';
 import type {
   ArtifactPayload,
@@ -158,24 +159,23 @@ export class ArtifactService {
   }
 
   /**
-   * The browser print copy of a document. Pages print from their own preview.
+   * A print copy of the selected saved page or document.
    * @param target the caller's context.
    * @param id the artifact id.
    * @returns printable HTML.
    */
-  async printable(target: Target, id: string): Promise<{ html: string }> {
-    const { manifest, content } = await this.store.read(await this.root(target, id), id);
-    if (manifest.type !== 'doc') {
-      throw new ArtifactError('artifact/unsupported-format', 'Only documents have a print copy; print a page from its preview.');
-    }
+  async printable(target: Target, id: string, version?: number): Promise<{ html: string }> {
+    const { manifest, content } = await this.store.read(await this.root(target, id), id, version);
     const design = await this.designSystem(target);
-    return { html: docToHtml(manifest.title, content, design.css, true) };
+    return { html: manifest.type === 'page'
+      ? composePage(content, design.css, PAGE_CSP, manifest.title)
+      : docToHtml(manifest.title, content, design.css, true) };
   }
 
-  async export(target: Target, id: string, format: ExportFormat): Promise<ExportedFile> {
+  async export(target: Target, id: string, format: ExportFormat, version?: number): Promise<ExportedFile> {
     const root = await this.root(target, id);
-    const { manifest, content } = await this.store.read(root, id);
+    const { manifest, content, version: readVersion } = await this.store.read(root, id, version);
     const design = await this.designSystem(target);
-    return writeExport(root, manifest, content, format, design, this.now());
+    return writeExport(root, { ...manifest, version: readVersion }, content, format, design, this.now());
   }
 }

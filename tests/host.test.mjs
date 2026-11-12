@@ -196,6 +196,60 @@ test('AC-013: exports produce files with the expected signatures', async () => {
   await rejects(svc.export(A, page.id, 'docx'), 'artifact/unsupported-format');
 });
 
+test('AC-040: export selects an exact saved version through service route and tool', async () => {
+  const svc = service();
+  const created = await svc.create(A, { type: 'doc', title: 'Versioned output', content: 'original', source: agent });
+  await svc.update(A, created.id, { baseVersion: 1, content: 'latest', source: agent });
+  const old = await svc.export(A, created.id, 'md', 1);
+  assert.equal(Buffer.from(old.data, 'base64').toString(), 'original');
+  assert.match(old.fileName, /-v1-/);
+  const route = await createHandler(svc)('export', { ...A, id: created.id, format: 'html', version: 1 });
+  assert.equal(route.ok, true);
+  assert.match(Buffer.from(route.value.data, 'base64').toString(), /original/);
+  const { run } = toolsFor('ses-a', wsA, svc);
+  const tool = await run('artifact_export', { id: created.id, format: 'docx', version: 1 });
+  assert.match(tool.path, /-v1-/);
+  await rejects(svc.export(A, created.id, 'md', 99), 'artifact/version-not-found');
+});
+
+test('AC-041: printable selects the requested version for pages and documents', async () => {
+  const svc = service();
+  for (const type of ['page', 'doc']) {
+    const created = await svc.create(A, { type, title: `Print ${type}`, content: 'original print', source: agent });
+    await svc.update(A, created.id, { baseVersion: 1, content: 'latest print', source: agent });
+    const result = await createHandler(svc)('printable', { ...A, id: created.id, version: 1 });
+    assert.equal(result.ok, true);
+    assert.match(result.value.html, /original print/);
+    assert.doesNotMatch(result.value.html, /latest print/);
+  }
+});
+
+test('AC-042: export refuses a symlinked exports directory before an outside write', async () => {
+  const project = path.join(base, 'export-confinement');
+  const outside = path.join(base, 'export-outside');
+  await fs.mkdir(project); await fs.mkdir(outside);
+  const record = { id: 'export-test', path: project };
+  const svc = new ArtifactService(
+    { workspaceDir: '.dsh/artifacts', libraryDir: 'artifacts/v1', home },
+    { get: () => record, list: () => [record] },
+  );
+  const target = { workspaceId: record.id };
+  const created = await svc.create(target, { type: 'doc', title: 'Confined', content: 'private', source: agent });
+  await fs.symlink(outside, path.join(project, '.dsh/artifacts/exports'));
+  await rejects(svc.export(target, created.id, 'md'), 'artifact/forbidden-path');
+  assert.deepEqual(await fs.readdir(outside), []);
+});
+
+test('AC-042: export root resolution refuses linked parents before creating directories', async () => {
+  const project = path.join(base, 'linked-export-parent'); const outside = path.join(base, 'linked-export-outside');
+  await fs.mkdir(project); await fs.mkdir(outside);
+  await fs.symlink(outside, path.join(project, '.dsh'));
+  const record = { id: 'linked-export', path: project };
+  const svc = new ArtifactService({ workspaceDir: '.dsh/artifacts', libraryDir: 'artifacts/v1', home }, { get: () => record, list: () => [record] });
+  await rejects(svc.export({ workspaceId: record.id }, 'art_ws_nonexistent001', 'html'), 'artifact/forbidden-path');
+  assert.deepEqual(await fs.readdir(outside), []);
+});
+
 test('AC-014: traversal and symlink escapes are refused', async () => {
   const svc = service();
   await rejects(svc.read(A, '../../etc/passwd'), 'artifact/forbidden-path');

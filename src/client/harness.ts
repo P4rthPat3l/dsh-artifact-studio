@@ -53,7 +53,18 @@ export type UseTabInfo = () => TabInfo;
 export interface WorkspaceItem {
   workspaceId: string;
   path: string;
-  sessionIds?: string[];
+  title: string;
+  sessionIds?: readonly string[];
+}
+
+/** The workspace registry's client store. */
+export interface WorkspacesSource {
+  getSnapshot(): { items: readonly WorkspaceItem[] };
+  subscribe(listener: () => void): () => void;
+}
+
+export interface WorkspacesService {
+  list: WorkspacesSource;
 }
 
 export interface SessionItem {
@@ -95,6 +106,7 @@ export interface SlotSpec {
   id?: string;
   order?: number;
   locale?: string;
+  label?: string | (() => string);
   inject?: () => Record<string, unknown>;
 }
 
@@ -109,6 +121,7 @@ export interface ClientContext {
   locale: LocaleService;
   slots: SlotsService;
   sidebarRightTabs: { register(definition: TabTypeDefinition): () => void };
+  workspaces: WorkspacesService;
   effect(callback: () => (() => void) | void, label?: string): void;
 }
 

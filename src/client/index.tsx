@@ -1,17 +1,19 @@
 import type { ComponentType, ReactNode } from 'react';
 import { parseArtifactAddress } from '../contract.js';
 import { configureConnection } from './api.js';
+import { installDraftGuard } from './editor-model.js';
 import { ArtifactTab } from './artifact-tab.jsx';
 import { SurfaceBoundary } from './boundary.jsx';
 import { ArtifactCard } from './card.jsx';
 import { ComposerButton, GALLERY_KIND } from './composer.jsx';
 import { DocView } from './doc-view.jsx';
 import { Gallery } from './gallery.jsx';
+import { ArtifactsPanel } from './panel.jsx';
 import type { ClientContext, SessionSlotProps, TabProps, ToolViewProps, Translator, UseTabInfo } from './harness.js';
 import { IconArtifacts, IconDoc } from './icons.jsx';
 import { EN, ZH } from './locale.js';
 import { runtime } from './runtime.js';
-import { titleOf, useTitle } from './store.js';
+import { clearNotice, titleOf, useNotice, useTitle } from './store.js';
 import { installStyles } from './styles.js';
 
 export { ArtifactCard, ArtifactTab, DocView, Gallery };
@@ -20,9 +22,10 @@ const NS = 'artifacts';
 export const GALLERY_ID = 'dsh-artifacts';
 export const ARTIFACT_ID = 'dsh-artifacts/artifact';
 export const ARTIFACT_KIND = 'artifact';
+export const PANEL_ID = 'dsh-artifacts-panel';
 export const CARD_TOOLS = ['artifact_create', 'artifact_update'] as const;
 
-export const inject = ['connection', 'slots', 'locale', 'sidebarRightTabs', 'sidebarRight'];
+export const inject = ['connection', 'slots', 'locale', 'sidebarRightTabs', 'sidebarRight', 'workspaces'];
 
 /**
  * Wrap a body in the boundary that keeps a render failure inside its pane.
@@ -41,6 +44,11 @@ function guarded<P extends { t: Translator }>(Body: ComponentType<P>): Component
       </SurfaceBoundary>
     );
   };
+}
+
+function Notice(): ReactNode {
+  const message = useNotice();
+  return message === null ? null : <div className="art-toast" role="status">{message}</div>;
 }
 
 function GalleryTitle({ t }: { t: Translator }): ReactNode {
@@ -70,6 +78,7 @@ function ArtifactTitle({ useTabInfo }: { useTabInfo: UseTabInfo }): ReactNode {
  */
 export function apply(ctx: ClientContext): void {
   installStyles();
+  ctx.effect(installDraftGuard, 'dsh-artifacts: unsaved draft guard');
   configureConnection(ctx.connection);
   runtime.sidebarRight = ctx.sidebarRight;
   ctx.locale.register(NS, 'en', EN);
@@ -115,6 +124,10 @@ export function apply(ctx: ClientContext): void {
   );
 
   const inject = () => ({ t });
+  ctx.effect(() => clearNotice, 'dsh-artifacts: notification cleanup');
+  ctx.slots.inject('shell.overlay', () =>
+    ctx.slots.register({ name: 'shell.overlay', id: 'dsh-artifacts.notice' }, Notice),
+  );
   ctx.slots.inject('sidebar.right.pane.tab', () =>
     ctx.slots.register<TabProps>({ name: 'sidebar.right.pane.tab', key: GALLERY_ID, locale: NS, inject }, guarded(Gallery)),
   );
@@ -137,5 +150,17 @@ export function apply(ctx: ClientContext): void {
       { name: 'conversation.input.left', id: 'dsh-artifacts', order: 40, locale: NS, inject },
       ComposerButton,
     ),
+  );
+
+  /** The panel row icon receives the size the sidebar resolves. */
+  function PanelIcon({ size }: { size: number }): ReactNode {
+    return <IconArtifacts size={size} />;
+  }
+  const panelInject = () => ({ t, workspaces: ctx.workspaces.list });
+  ctx.slots.inject('main', () =>
+    ctx.slots.register({ name: 'main', key: PANEL_ID, locale: NS, inject: panelInject }, guarded(ArtifactsPanel)),
+  );
+  ctx.slots.inject('sidebar.panellist', () =>
+    ctx.slots.register({ name: 'sidebar.panellist', id: PANEL_ID, order: 10, label: () => t('panel') }, PanelIcon),
   );
 }

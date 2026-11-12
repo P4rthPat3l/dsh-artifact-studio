@@ -379,7 +379,8 @@ export function createTools(host: ToolHost): ToolDefinition[] {
       type: 'object',
       additionalProperties: false,
       required: ['id', 'format'],
-      properties: { id: { type: 'string' }, format: { type: 'string', enum: ['html', 'md', 'docx'] } },
+      properties: { id: { type: 'string' }, format: { type: 'string', enum: ['html', 'md', 'docx'] },
+        version: { type: 'integer', minimum: 1, description: 'Saved version to export. Omit for the current version.' } },
     },
     output: {
       schema: { type: 'object', additionalProperties: false, required: ['path', 'bytes'], properties: { path: { type: 'string' }, bytes: { type: 'integer' } } },
@@ -389,7 +390,7 @@ export function createTools(host: ToolHost): ToolDefinition[] {
       const fields = fieldsOf(args);
       const id = requiredString(fields, 'id');
       const target = await targetFor(host, exec, id.startsWith('art_lib_') ? 'library' : undefined);
-      const file = await service.export(target, id, requiredFormat(fields));
+      const file = await service.export(target, id, requiredFormat(fields), optionalInteger(fields, 'version'));
       return { path: file.path, bytes: file.bytes };
     },
   };

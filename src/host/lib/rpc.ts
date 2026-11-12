@@ -102,9 +102,9 @@ async function dispatch(service: ArtifactService, endpoint: Endpoint, fields: Fi
         ),
       };
     case 'export':
-      return service.export(target, requiredString(fields, 'id'), requiredFormat(fields));
+      return service.export(target, requiredString(fields, 'id'), requiredFormat(fields), optionalInteger(fields, 'version'));
     case 'printable':
-      return service.printable(target, requiredString(fields, 'id'));
+      return service.printable(target, requiredString(fields, 'id'), optionalInteger(fields, 'version'));
     case 'designSystem':
       return service.designSystem(target);
     case 'saveDesignSystem':

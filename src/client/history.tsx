@@ -10,6 +10,7 @@ export interface HistoryPanelProps {
   current: number;
   selected: number;
   onSelect: (version: number) => void;
+  onClose: () => void;
 }
 
 /**
@@ -35,10 +36,10 @@ function describe(t: Translator, entry: VersionEntry): string {
  * @param props versions and selection.
  * @returns the panel.
  */
-export function HistoryPanel({ t, versions, failed, current, selected, onSelect }: HistoryPanelProps) {
+export function HistoryPanel({ t, versions, failed, current, selected, onSelect, onClose }: HistoryPanelProps) {
   return (
     <aside className="art-history" aria-label={t('history.title')}>
-      <div className="art-history-head">{t('history.title')}</div>
+      <div className="art-history-head"><span>{t('history.title')}</span><button type="button" className="art-text-button" onClick={onClose}>{t('history.close')}</button></div>
       {versions === null ? <p className="art-note">{t('empty.loading')}</p> : null}
       {failed ? <p className="art-note">{t('error.generic')}</p> : null}
       {!failed && versions !== null && versions.length <= 1 ? <p className="art-note">{t('history.empty')}</p> : null}

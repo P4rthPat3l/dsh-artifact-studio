@@ -172,17 +172,17 @@ export const api = {
     call('get', { ...fields(where), id, ...(version === undefined ? {} : { version }) }, isPayload, signal),
   create: (where: Where, type: ArtifactType, title: string, content: string) =>
     call('create', { ...fields(where), type, title, content }, hasManifest),
-  update: (where: Where, id: string, baseVersion: number, content: string) =>
-    call('update', { ...fields(where), id, baseVersion, content }, hasManifest),
+  update: (where: Where, id: string, baseVersion: number, content: string, title?: string) =>
+    call('update', { ...fields(where), id, baseVersion, content, ...(title === undefined ? {} : { title }) }, hasManifest),
   rename: (where: Where, id: string, baseVersion: number, title: string) =>
     call('update', { ...fields(where), id, baseVersion, title }, hasManifest),
   remove: (where: Where, id: string) => call('delete', { ...fields(where), id }, isTrashed),
   history: (where: Where, id: string, signal?: AbortSignal) => call('history', { ...fields(where), id }, isHistory, signal),
   restore: (where: Where, id: string, version: number, baseVersion: number) =>
     call('restore', { ...fields(where), id, version, baseVersion }, hasManifest),
-  exportFile: (where: Where, id: string, format: ExportFormat) =>
-    call('export', { ...fields(where), id, format }, isExported),
-  printable: (where: Where, id: string) => call('printable', { ...fields(where), id }, isPrintable),
+  exportFile: (where: Where, id: string, format: ExportFormat, version?: number) =>
+    call('export', { ...fields(where), id, format, version }, isExported),
+  printable: (where: Where, id: string, version?: number) => call('printable', { ...fields(where), id, version }, isPrintable),
   designSystem: (workspaceId: string | null, signal?: AbortSignal) =>
     call('designSystem', workspaceId === null ? {} : { workspaceId }, isDesign, signal),
   saveDesignSystem: (where: Where, tokens: DesignTokens) =>

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useId, useState } from 'react';
+import type { ReactNode } from 'react';
 import { formatArtifactAddress } from '../contract.js';
 import type { ArtifactType, ListResult, Manifest, Scope } from '../contract.js';
 import { api, codeOf, errorKey } from './api.js';
@@ -50,6 +51,7 @@ function Section({
   onOpen,
   onMore,
   onCreate,
+  onRetry,
 }: {
   t: Translator;
   scope: Scope;
@@ -58,8 +60,9 @@ function Section({
   onOpen: (manifest: Manifest) => void;
   onMore: () => void;
   onCreate: (type: ArtifactType, scope: Scope) => void;
+  onRetry: () => void;
 }) {
-  const headingId = `art-section-${scope}`;
+  const headingId = useId();
   return (
     <section className="art-section" aria-labelledby={headingId}>
       <div className="art-section-head">
@@ -73,7 +76,7 @@ function Section({
       {state.status === 'loading' ? <p className="art-note">{t('empty.loading')}</p> : null}
       {state.status === 'failed' ? (
         <div className="art-empty" role="alert">
-          <p className="art-empty-title">{t(errorKey(state.code))}</p>
+          <p className="art-empty-title">{t(errorKey(state.code))}</p><button type="button" className="art-button" onClick={onRetry}>{t('action.retry')}</button>
         </div>
       ) : null}
       {state.status === 'ready' && state.page.items.length === 0 ? (
@@ -133,10 +136,11 @@ function Section({
  * @param changes a counter that forces a reload.
  * @returns the state and a show-more action.
  */
-function useSection(where: Where | null, query: string, changes: number): { state: SectionState; more: () => void } {
-  const [state, setState] = useState<SectionState>({ status: 'loading' });
+function useSection(where: Where | null, query: string, type: ArtifactType | undefined, changes: number): { state: SectionState; more: () => void } {
+  const [result, setResult] = useState<{ key: string; state: SectionState }>({ key: '', state: { status: 'loading' } });
   const [shown, setShown] = useState(1);
-  const key = where === null ? 'none' : `${where.scope}:${where.workspaceId ?? ''}`;
+  const key = `${where === null ? 'none' : `${where.scope}:${where.workspaceId ?? ''}`}:${query}:${type ?? ''}`;
+  const state: SectionState = result.key === key ? result.state : { status: 'loading' };
 
   useEffect(() => setShown(1), [key, query]);
 
@@ -147,14 +151,14 @@ function useSection(where: Where | null, query: string, changes: number): { stat
       try {
         const pages: ListResult[] = [];
         for (let index = 0; index < shown; index += 1) {
-          pages.push(await api.list(where, { query, offset: index * 50 }, controller.signal));
+          pages.push(await api.list(where, { query, type, offset: index * 50 }, controller.signal));
           if (!pages[pages.length - 1]?.hasMore) break;
         }
         const last = pages[pages.length - 1];
         if (last === undefined || controller.signal.aborted) return;
-        setState({ status: 'ready', page: { ...last, items: pages.flatMap((page) => page.items) } });
+        setResult({ key, state: { status: 'ready', page: { ...last, items: pages.flatMap((page) => page.items) } } });
       } catch (error) {
-        if (!controller.signal.aborted) setState({ status: 'failed', code: codeOf(error) });
+        if (!controller.signal.aborted) setResult({ key, state: { status: 'failed', code: codeOf(error) } });
       }
     }, query === '' ? 0 : 180);
     return () => {
@@ -168,26 +172,30 @@ function useSection(where: Where | null, query: string, changes: number): { stat
   return { state, more: () => setShown((value) => value + 1) };
 }
 
+/** Props for the gallery body shared by the tab and the full page. */
+export interface GalleryBodyProps {
+  t: Translator;
+  workspaceId: string | null;
+  open?: (address: string) => void;
+  toolbar?: ReactNode;
+}
+
 /**
- * The Artifacts page: the current workspace and the profile library, each
+ * The Artifacts gallery: the chosen workspace and the profile library, each
  * searchable, with create actions and the design system editor.
- * @param props slot props.
- * @returns the page.
+ * @param props the workspace, the open action, and an optional header control.
+ * @returns the page body.
  */
-export function Gallery(props: TabProps) {
-  const { t, sessionId, useSessions, useWorkspaces, useTabInfo } = props;
-  const info = useTabInfo();
-  const binding = useWorkspaceBinding({ sessionId, useSessions, useWorkspaces });
-  const workspaceId = binding.workspaceId;
+export function GalleryBody({ t, workspaceId, open, toolbar }: GalleryBodyProps) {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
+  const [type, setType] = useState<ArtifactType | undefined>(undefined);
   const [view, setView] = useState<'list' | 'design'>('list');
   const [menu, setMenu] = useState(false);
   const [localChanges, setLocalChanges] = useState(0);
   const changes = useListChanges() + localChanges;
-  const workspace = useSection(workspaceId === null ? null : { scope: 'workspace', workspaceId }, query, changes);
-  const library = useSection({ scope: 'library', workspaceId }, query, changes);
-  const open = info.tab.actions?.openResource;
+  const workspace = useSection(workspaceId === null ? null : { scope: 'workspace', workspaceId }, query, type, changes);
+  const library = useSection({ scope: 'library', workspaceId }, query, type, changes);
 
   const onOpen = useCallback((manifest: Manifest) => openArtifact(open, manifest, workspaceId), [open, workspaceId]);
 
@@ -219,6 +227,7 @@ export function Gallery(props: TabProps) {
           ) : null}
           <span className="art-title">{view === 'design' ? t('design.title') : t('panel')}</span>
         </div>
+        {view === 'list' ? toolbar : null}
         {view === 'list' ? (
           <div className="art-actions">
             <button
@@ -278,7 +287,10 @@ export function Gallery(props: TabProps) {
               value={query}
               onChange={(event) => setQuery(event.target.value)}
             />
-            <div className="art-segment" role="group" aria-label={t('create.scope')}>
+            <select className="art-type-select" aria-label={t('filter.type')} value={type ?? ''} onChange={event => setType(event.target.value === 'page' ? 'page' : event.target.value === 'doc' ? 'doc' : undefined)}>
+              <option value="">{t('type.all')}</option><option value="page">{t('type.page')}</option><option value="doc">{t('type.doc')}</option>
+            </select>
+            <div className="art-segment" role="group" aria-label={t('filter.scope')}>
               {(['all', 'workspace', 'library'] as const).map((value) => (
                 <button key={value} type="button" aria-pressed={filter === value} onClick={() => setFilter(value)}>
                   {value === 'all' ? t('filter.all') : t(`scope.${value}`)}
@@ -300,6 +312,7 @@ export function Gallery(props: TabProps) {
                   query={query}
                   onOpen={onOpen}
                   onMore={workspace.more}
+                  onRetry={() => setLocalChanges(value => value + 1)}
                   onCreate={(type, scope) => void onCreate(type, scope)}
                 />
               )
@@ -312,6 +325,7 @@ export function Gallery(props: TabProps) {
                 query={query}
                 onOpen={onOpen}
                 onMore={library.more}
+                onRetry={() => setLocalChanges(value => value + 1)}
                 onCreate={(type, scope) => void onCreate(type, scope)}
               />
             ) : null}
@@ -320,4 +334,16 @@ export function Gallery(props: TabProps) {
       )}
     </section>
   );
+}
+
+/**
+ * The Artifacts page in the right sidebar: the session's workspace plus the library.
+ * @param props slot props.
+ * @returns the page.
+ */
+export function Gallery(props: TabProps) {
+  const { t, useTabInfo } = props;
+  const info = useTabInfo();
+  const binding = useWorkspaceBinding(props);
+  return <GalleryBody t={t} workspaceId={binding.workspaceId} open={info.tab.actions?.openResource} />;
 }

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { ID_PATTERN, scopeOfId } from '../../contract.js';
 import type { Scope } from '../../contract.js';
 import { ArtifactError, errnoCode } from './errors.js';
+import { assertWithin } from './fsutil.js';
 import type { WorkspaceRecord, WorkspaceRegistry } from './types.js';
 
 /** Root locations, relative to the workspace and to the Harness home. */
@@ -45,6 +46,7 @@ export function resolveHome(explicit?: string): string {
  */
 async function ensureRoot(root: string, mode?: number): Promise<string> {
   const wanted = path.resolve(root);
+  await assertWithin(wanted, wanted);
   await fs.mkdir(wanted, { recursive: true, ...(mode === undefined ? {} : { mode }) });
   const canonical = await fs.realpath(wanted);
   if (canonical !== wanted) {

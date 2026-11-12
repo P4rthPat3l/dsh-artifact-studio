@@ -23,6 +23,7 @@ import { FORMATS_BY_TYPE } from '../../contract.js';
 import type { DesignTokens, ExportFormat, ExportedFile, Manifest } from '../../contract.js';
 import { DOC_CSP, PAGE_CSP, PRINT_CSP, composePage, escapeHtml } from '../../render.js';
 import { ArtifactError } from './errors.js';
+import { assertWithin, withLock } from './fsutil.js';
 import type { ScopeRoot } from './paths.js';
 
 const MEDIA_TYPES: Readonly<Record<ExportFormat, string>> = {
@@ -376,9 +377,13 @@ export async function writeExport(
   else if (manifest.type === 'page') data = Buffer.from(composePage(content, design.css, PAGE_CSP, manifest.title), 'utf8');
   else data = Buffer.from(docToHtml(manifest.title, content, design.css), 'utf8');
   const dir = path.join(root.root, 'exports');
-  await fs.mkdir(dir, { recursive: true });
   const fileName = exportFileName(manifest, format, now);
   const file = path.join(dir, fileName);
-  await fs.writeFile(file, data, { flag: 'wx' });
+  await withLock(dir, async () => {
+    await assertWithin(root.root, dir);
+    await fs.mkdir(dir, { recursive: true });
+    await assertWithin(root.root, file);
+    await fs.writeFile(file, data, { flag: 'wx' });
+  });
   return { path: file, bytes: data.length, fileName, mediaType: MEDIA_TYPES[format], data: data.toString('base64') };
 }
