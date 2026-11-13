@@ -15,6 +15,7 @@ export interface MenuProps {
   label: string;
   items: MenuItem[];
   onClose: () => void;
+  align?: 'left' | 'right';
 }
 
 /**
@@ -23,27 +24,30 @@ export interface MenuProps {
  * @param props the rows and close callback.
  * @returns the menu.
  */
-export function Menu({ label, items, onClose }: MenuProps) {
+export function Menu({ label, items, onClose, align = 'right' }: MenuProps) {
   const ref = useRef<HTMLDivElement | null>(null);
   const returnTo = useRef<Element | null>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
 
   useEffect(() => {
     returnTo.current = document.activeElement;
     ref.current?.querySelector('button')?.focus();
     const onPointer = (event: PointerEvent) => {
-      if (event.target instanceof Node && ref.current?.contains(event.target) !== true) onClose();
+      if (event.target instanceof Node && ref.current?.contains(event.target) !== true) closeRef.current();
     };
     document.addEventListener('pointerdown', onPointer, true);
     return () => {
       document.removeEventListener('pointerdown', onPointer, true);
       if (returnTo.current instanceof HTMLElement) returnTo.current.focus();
     };
-  }, [onClose]);
+  }, []);
 
   return (
     <div
       ref={ref}
       className="art-menu"
+      data-align={align}
       role="menu"
       aria-label={label}
       onKeyDown={(event) => {
@@ -52,7 +56,7 @@ export function Menu({ label, items, onClose }: MenuProps) {
         if (event.key === 'Escape') {
           event.preventDefault();
           event.stopPropagation();
-          onClose();
+          closeRef.current();
         } else if (event.key === 'ArrowDown') {
           event.preventDefault();
           buttons[(index + 1) % buttons.length]?.focus();

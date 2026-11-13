@@ -10,7 +10,6 @@ export interface HistoryPanelProps {
   current: number;
   selected: number;
   onSelect: (version: number) => void;
-  onClose: () => void;
 }
 
 /**
@@ -31,15 +30,14 @@ function describe(t: Translator, entry: VersionEntry): string {
 }
 
 /**
- * The version list beside an artifact. Picking a version previews it; restore
- * happens from the preview bar.
+ * The version list inside the contextual drawer. Picking a version previews
+ * it; restore happens from the preview bar.
  * @param props versions and selection.
- * @returns the panel.
+ * @returns the list.
  */
-export function HistoryPanel({ t, versions, failed, current, selected, onSelect, onClose }: HistoryPanelProps) {
+export function HistoryPanel({ t, versions, failed, current, selected, onSelect }: HistoryPanelProps) {
   return (
-    <aside className="art-history" aria-label={t('history.title')}>
-      <div className="art-history-head"><span>{t('history.title')}</span><button type="button" className="art-text-button" onClick={onClose}>{t('history.close')}</button></div>
+    <div className="art-history-body">
       {versions === null ? <p className="art-note">{t('empty.loading')}</p> : null}
       {failed ? <p className="art-note">{t('error.generic')}</p> : null}
       {!failed && versions !== null && versions.length <= 1 ? <p className="art-note">{t('history.empty')}</p> : null}
@@ -58,6 +56,6 @@ export function HistoryPanel({ t, versions, failed, current, selected, onSelect,
           <span className="art-version-sub">{describe(t, entry)}</span>
         </button>
       ))}
-    </aside>
+    </div>
   );
 }

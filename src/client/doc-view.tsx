@@ -31,6 +31,7 @@ export interface DocViewProps {
   failedLabel: string;
   onChange: (markdown: string) => void;
   onSave: () => void;
+  onSelectionText?: (text: string) => void;
   t?: Translator;
 }
 
@@ -40,11 +41,13 @@ export interface DocViewProps {
  * @param props the content and callbacks.
  * @returns the editor.
  */
-export function DocView({ markdown, revision, editable, label, loadingLabel, failedLabel, onChange, onSave, t }: DocViewProps) {
+export function DocView({ markdown, revision, editable, label, loadingLabel, failedLabel, onChange, onSave, onSelectionText, t }: DocViewProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const handleRef = useRef<DocEditorHandle | null>(null);
   const changeRef = useRef(onChange);
   changeRef.current = onChange;
+  const selectionRef = useRef(onSelectionText);
+  selectionRef.current = onSelectionText;
   const latest = useRef({ markdown, editable, label });
   latest.current = { markdown, editable, label };
   const [active, setActive] = useState<readonly DocFormat[]>([]);
@@ -60,6 +63,7 @@ export function DocView({ markdown, revision, editable, label, loadingLabel, fai
           ...latest.current,
           onChange: (value) => changeRef.current(value),
           onSelectionChange: setActive,
+          onSelectionText: (text) => selectionRef.current?.(text),
         });
         setState('ready');
       })
@@ -86,6 +90,14 @@ export function DocView({ markdown, revision, editable, label, loadingLabel, fai
   useEffect(() => {
     handleRef.current?.setEditable(editable);
   }, [editable]);
+
+  useEffect(() => {
+    // ProseMirror reports a selection transaction on focus; this listener also
+    // covers a selection made while the editor already has focus elsewhere.
+    const onSelection = () => selectionRef.current?.(handleRef.current?.getSelectionText() ?? '');
+    document.addEventListener('selectionchange', onSelection);
+    return () => document.removeEventListener('selectionchange', onSelection);
+  }, []);
 
   return (
     <div

@@ -80,6 +80,12 @@ export const IconCollapse = () => (
   </Glyph>
 );
 
+export const IconClose = () => (
+  <Glyph>
+    <path d="M6 6l12 12M18 6 6 18" />
+  </Glyph>
+);
+
 export const IconMore = () => (
   <Glyph>
     <circle cx="6" cy="12" r=".8" />
@@ -100,6 +106,19 @@ export const IconPalette = () => (
 export const IconBack = () => (
   <Glyph>
     <path d="M14.5 6 8.5 12l6 6" />
+  </Glyph>
+);
+
+export const IconPin = () => (
+  <Glyph>
+    <path d="M9.5 4.5h5l-.8 4.6 2.8 2.7v1.7H7.5v-1.7l2.8-2.7-.8-4.6Z" />
+    <path d="M12 13.5v6" />
+  </Glyph>
+);
+
+export const IconChevron = () => (
+  <Glyph>
+    <path d="m8 10 4 4 4-4" />
   </Glyph>
 );
 

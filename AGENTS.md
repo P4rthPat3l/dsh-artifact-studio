@@ -14,4 +14,7 @@
 - `src/client/editor-model.ts` owns one shared editor per full artifact address. Draft and in-flight write state are separate. Only unsaved models survive the last pane unmount, in window memory. Never persist draft content in localStorage.
 - Document replacement revisions advance only after external content is accepted. Own saves must not rebuild the document or move its caret. The lazy editor must read the latest props when its chunk resolves.
 - Agent edit requests use the approved copy fallback. Do not auto-submit, replace a chat draft, or infer a conversation from an artifact's source session.
+- `src/client/review.ts` builds the request identity and quote. Only the selected text and the user's prompt travel; never include the whole artifact or a stale copy of its content.
+- Gallery covers are scriptless, opaque-origin iframes. Keep `sandbox=""` and strip scripts and inline handlers; a cover is decoration, not a second preview.
+- Pins are local view preferences in `localStorage`. Never write them to a manifest, a version, or the host.
 - Export and print accept an optional saved version. Never fall back to latest when a requested version is missing. Scope-root confinement must run before creating directories.

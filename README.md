@@ -14,7 +14,9 @@ The agent creates pages and documents as versioned files, and you open them besi
 - The left sidebar opens a full-page Artifacts browser with a project selector. The conversation side panel opens the same editor beside chat. Back preserves gallery search, filters, paging, and scroll.
 - Reload and Back ask whether to save, discard, or cancel when edits are pending. Multiple views share a draft and serialize saves. Draft recovery stays in window memory until saved or discarded. It does not survive a browser restart.
 - Export saves current edits first and uses that exact version. History exports and prints the selected saved version. A failed save stops output.
-- Ask agent to edit prepares an editable request with artifact identity and reference version. Copy it into your chosen conversation. Nothing sends automatically.
+- Ask agent builds a request from the artifact identity, the saved version, your words, and optionally the exact text you selected in a document or the page source. The composer separates your prompt from the generated request, keeps a selectable preview, and never sends or stages a chat message. Copy it into your chosen conversation.
+- The gallery shows page covers and document excerpts, a pinned group, starter templates, and one recently updated grid with scope badges. The header version picker lists versions and opens History.
+- When the agent publishes a newer version, an open clean tab reloads and names the new version. A dirty tab keeps its conflict bar instead.
 - Documents have heading, emphasis, list, and code controls. Page source uses Save or Ctrl/Cmd+S; documents autosave after typing.
 - The chat shows a card for each create and update. The composer button opens the gallery.
 

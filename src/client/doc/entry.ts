@@ -9,6 +9,7 @@ export type DocFormat = 'heading' | 'bold' | 'italic' | 'bulletList' | 'orderedL
 /** The handle the tab keeps to one mounted document editor. */
 export interface DocEditorHandle {
   getMarkdown(): string;
+  getSelectionText(): string;
   setMarkdown(markdown: string): void;
   setEditable(editable: boolean): void;
   format(command: DocFormat): void;
@@ -23,6 +24,7 @@ export interface DocEditorOptions {
   label: string;
   onChange: (markdown: string) => void;
   onSelectionChange?: (active: readonly DocFormat[]) => void;
+  onSelectionText?: (text: string) => void;
 }
 
 /**
@@ -53,12 +55,20 @@ export function mountDocEditor(options: DocEditorOptions): DocEditorHandle {
       options.onSelectionChange?.(formats.filter(command => command === 'heading'
         ? current.isActive('heading', { level: 2 }) : current.isActive(command)));
     },
+    onSelectionUpdate: ({ editor: current }) => {
+      const { from, to, empty } = current.state.selection;
+      options.onSelectionText?.(empty ? '' : current.state.doc.textBetween(from, to, '\n'));
+    },
     onUpdate: ({ editor: current }) => {
       if (!applying) options.onChange(current.getMarkdown());
     },
   });
   return {
     getMarkdown: () => editor.getMarkdown(),
+    getSelectionText: () => {
+      const { from, to, empty } = editor.state.selection;
+      return empty ? '' : editor.state.doc.textBetween(from, to, '\n');
+    },
     setMarkdown(markdown) {
       applying = true;
       try {

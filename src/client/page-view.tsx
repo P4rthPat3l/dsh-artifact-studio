@@ -55,6 +55,7 @@ export interface SourceEditorProps {
   label: string;
   onChange: (value: string) => void;
   onSave: () => void;
+  onSelectionText?: (text: string) => void;
 }
 
 /**
@@ -63,7 +64,11 @@ export interface SourceEditorProps {
  * @param props the value and callbacks.
  * @returns the editor.
  */
-export function SourceEditor({ value, readOnly, label, onChange, onSave }: SourceEditorProps) {
+export function SourceEditor({ value, readOnly, label, onChange, onSave, onSelectionText }: SourceEditorProps) {
+  const report = (target: HTMLTextAreaElement) => {
+    if (readOnly) return;
+    onSelectionText?.(target.value.slice(target.selectionStart, target.selectionEnd));
+  };
   return (
     <textarea
       className="art-source"
@@ -71,7 +76,13 @@ export function SourceEditor({ value, readOnly, label, onChange, onSave }: Sourc
       spellCheck={false}
       readOnly={readOnly}
       value={value}
-      onChange={(event) => onChange(event.target.value)}
+      onChange={(event) => {
+        onChange(event.target.value);
+        onSelectionText?.('');
+      }}
+      onSelect={(event) => report(event.currentTarget)}
+      onMouseUp={(event) => report(event.currentTarget)}
+      onKeyUp={(event) => report(event.currentTarget)}
       onKeyDown={(event) => {
         if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
           event.preventDefault();
