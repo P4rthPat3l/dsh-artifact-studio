@@ -38,9 +38,24 @@ after(async () => {
   await fs.rm(base, { recursive: true, force: true });
 });
 
+const WORKSPACE_BASE = 'artifacts/workspaces';
+
+function storeHome(workspaceId, at = home) {
+  return path.join(at, WORKSPACE_BASE, workspaceId);
+}
+
+async function exists(target) {
+  try {
+    await fs.lstat(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function service(limits = {}, now) {
   return new ArtifactService(
-    { workspaceDir: '.dsh/artifacts', libraryDir: 'artifacts/v1', home },
+    { workspaceBase: WORKSPACE_BASE, libraryDir: 'artifacts/v1', home },
     registry,
     new ArtifactStore(limits, now),
     now,
@@ -75,7 +90,11 @@ test('AC-001: artifact_create writes a page artifact at version 1', async () => 
   assert.equal(value.version, 1);
   assert.equal(value.scope, 'workspace');
   assert.match(value.id, /^art_ws_[a-z0-9]{16}$/);
-  const dir = path.join(wsA, '.dsh/artifacts', value.id);
+  const dir = path.join(storeHome('ws-a'), value.id);
+  assert.equal(await exists(path.join(wsA, '.dsh')), false, 'the project must stay clean');
+  if (process.platform !== 'win32') {
+    assert.equal((await fs.stat(storeHome('ws-a'))).mode & 0o777, 0o700);
+  }
   const manifest = JSON.parse(await fs.readFile(path.join(dir, 'artifact.json'), 'utf8'));
   assert.equal(manifest.version, 1);
   assert.equal(manifest.contentFile, 'index.html');
@@ -84,7 +103,7 @@ test('AC-001: artifact_create writes a page artifact at version 1', async () => 
 
 test('AC-002: invalid create input is refused and leaves no directory', async () => {
   const svc = service({ maxContentBytes: 64 });
-  const root = path.join(wsA, '.dsh/artifacts');
+  const root = storeHome('ws-a');
   const before = (await fs.readdir(root)).length;
   await rejects(svc.create(A, { type: 'sheet', title: 'x', content: '', source: agent }), 'artifact/bad-request');
   await rejects(svc.create(A, { type: 'page', title: 'x'.repeat(121), content: '', source: agent }), 'artifact/bad-request');
@@ -178,7 +197,7 @@ test('AC-013: exports produce files with the expected signatures', async () => {
   const htmlText = await fs.readFile(html.path, 'utf8');
   assert.match(htmlText, /data-artifact-tokens/);
   assert.match(htmlText, /--artifact-color-primary/);
-  assert.ok(html.path.startsWith(path.join(wsA, '.dsh/artifacts/exports')));
+  assert.ok(html.path.startsWith(path.join(storeHome('ws-a'), 'exports')));
   const doc = await svc.create(A, {
     type: 'doc',
     title: 'Export doc',
@@ -230,22 +249,22 @@ test('AC-042: export refuses a symlinked exports directory before an outside wri
   await fs.mkdir(project); await fs.mkdir(outside);
   const record = { id: 'export-test', path: project };
   const svc = new ArtifactService(
-    { workspaceDir: '.dsh/artifacts', libraryDir: 'artifacts/v1', home },
+    { workspaceBase: WORKSPACE_BASE, libraryDir: 'artifacts/v1', home },
     { get: () => record, list: () => [record] },
   );
   const target = { workspaceId: record.id };
   const created = await svc.create(target, { type: 'doc', title: 'Confined', content: 'private', source: agent });
-  await fs.symlink(outside, path.join(project, '.dsh/artifacts/exports'));
+  await fs.symlink(outside, path.join(storeHome(record.id), 'exports'));
   await rejects(svc.export(target, created.id, 'md'), 'artifact/forbidden-path');
   assert.deepEqual(await fs.readdir(outside), []);
 });
 
 test('AC-042: export root resolution refuses linked parents before creating directories', async () => {
-  const project = path.join(base, 'linked-export-parent'); const outside = path.join(base, 'linked-export-outside');
-  await fs.mkdir(project); await fs.mkdir(outside);
-  await fs.symlink(outside, path.join(project, '.dsh'));
-  const record = { id: 'linked-export', path: project };
-  const svc = new ArtifactService({ workspaceDir: '.dsh/artifacts', libraryDir: 'artifacts/v1', home }, { get: () => record, list: () => [record] });
+  const linkedHome = path.join(base, 'home-linked-export'); const outside = path.join(base, 'linked-export-outside');
+  await fs.mkdir(path.join(linkedHome, 'artifacts'), { recursive: true }); await fs.mkdir(outside);
+  await fs.symlink(outside, path.join(linkedHome, WORKSPACE_BASE));
+  const record = { id: 'linked-export', path: path.join(base, 'linked-export-project') };
+  const svc = new ArtifactService({ workspaceBase: WORKSPACE_BASE, libraryDir: 'artifacts/v1', home: linkedHome }, { get: () => record, list: () => [record] });
   await rejects(svc.export({ workspaceId: record.id }, 'art_ws_nonexistent001', 'html'), 'artifact/forbidden-path');
   assert.deepEqual(await fs.readdir(outside), []);
 });
@@ -257,10 +276,10 @@ test('AC-014: traversal and symlink escapes are refused', async () => {
   const outside = path.join(base, 'outside');
   await fs.mkdir(outside, { recursive: true });
   const linkId = 'art_ws_linklinklinklink';
-  await fs.symlink(outside, path.join(wsA, '.dsh/artifacts', linkId));
+  await fs.symlink(outside, path.join(storeHome('ws-a'), linkId));
   await rejects(svc.read(A, linkId), 'artifact/forbidden-path');
   const created = await svc.create(A, { type: 'doc', title: 'Linked content', content: 'safe', source: agent });
-  const contentFile = path.join(wsA, '.dsh/artifacts', created.id, 'content/document.md');
+  const contentFile = path.join(storeHome('ws-a'), created.id, 'content/document.md');
   await fs.rm(contentFile);
   await fs.writeFile(path.join(outside, 'secret.md'), 'secret');
   await fs.symlink(path.join(outside, 'secret.md'), contentFile);
@@ -371,14 +390,12 @@ test('AC-026: scope prefixes and roots are enforced', async () => {
   assert.equal(bad.ok, false);
   assert.equal(bad.error.code, 'artifact/unknown-scope');
   const plantedRoot = path.join(base, 'planted');
-  await fs.mkdir(path.join(plantedRoot, 'project'), { recursive: true });
-  await fs.mkdir(path.join(plantedRoot, 'elsewhere'), { recursive: true });
-  await fs.mkdir(path.join(plantedRoot, 'project/.dsh'), { recursive: true });
-  await fs.symlink(path.join(plantedRoot, 'elsewhere'), path.join(plantedRoot, 'project/.dsh/artifacts'));
-  const plantedRegistry = { get: () => ({ id: 'p', path: path.join(plantedRoot, 'project') }), list: () => [] };
-  const planted = new ArtifactService({ workspaceDir: '.dsh/artifacts', libraryDir: 'artifacts/v1', home }, plantedRegistry);
-  await rejects(planted.create({ workspaceId: 'p' }, { type: 'doc', title: 'x', content: '', source: agent }), 'artifact/forbidden-path');
-  assert.deepEqual(await fs.readdir(path.join(plantedRoot, 'elsewhere')), []);
+  const escapeHome = path.join(plantedRoot, 'home-escape');
+  await fs.mkdir(plantedRoot, { recursive: true });
+  const plantedRegistry = { get: () => ({ id: '../escape', path: plantedRoot }), list: () => [] };
+  const planted = new ArtifactService({ workspaceBase: WORKSPACE_BASE, libraryDir: 'artifacts/v1', home: escapeHome }, plantedRegistry);
+  await rejects(planted.create({ workspaceId: '../escape' }, { type: 'doc', title: 'x', content: '', source: agent }), 'artifact/forbidden-path');
+  assert.equal(await exists(escapeHome), false, 'an unsafe workspace id must not create a store');
 });
 
 test('AC-027: design system inherits and overrides per scope', async () => {
@@ -445,7 +462,7 @@ test('AC-030: artifact addresses round-trip and reject foreign shapes', () => {
 test('AC-031: a crash between the content and manifest rename is repaired from the snapshot', async () => {
   const svc = service();
   const created = await svc.create(A, { type: 'doc', title: 'Crash', content: 'v1', source: agent });
-  const dir = path.join(wsA, '.dsh/artifacts', created.id);
+  const dir = path.join(storeHome('ws-a'), created.id);
   // Simulate: the new content landed, the manifest did not, and snapshot 2 was left behind.
   await svc.update(A, created.id, { baseVersion: 1, content: 'v2', source: agent });
   await fs.writeFile(path.join(dir, 'content/document.md'), 'interrupted half-write');
@@ -467,7 +484,7 @@ test('AC-032: a link inside the tree cannot redirect writes or deletes', async (
   await fs.mkdir(outside, { recursive: true });
   const svc = service();
   const created = await svc.create(A, { type: 'doc', title: 'Linked tree', content: 'safe', source: agent });
-  const dir = path.join(wsA, '.dsh/artifacts', created.id);
+  const dir = path.join(storeHome('ws-a'), created.id);
   // Plant content/ as a link, then try to write through it.
   await fs.rename(path.join(dir, 'content'), path.join(dir, 'content-real'));
   await fs.symlink(outside, path.join(dir, 'content'));
@@ -475,11 +492,12 @@ test('AC-032: a link inside the tree cannot redirect writes or deletes', async (
   assert.deepEqual(await fs.readdir(outside), []);
   await fs.rm(path.join(dir, 'content'));
   await fs.rename(path.join(dir, 'content-real'), path.join(dir, 'content'));
-  // A link at the scope root itself is refused, not followed.
-  await fs.mkdir(path.join(base, 'linked-project/.dsh'), { recursive: true });
-  await fs.symlink(outside, path.join(base, 'linked-project/.dsh/artifacts'));
+  // A link at the workspace store itself is refused, not followed.
+  const linkedHome = path.join(base, 'home-linked-root');
+  await fs.mkdir(path.join(linkedHome, WORKSPACE_BASE), { recursive: true });
+  await fs.symlink(outside, path.join(linkedHome, WORKSPACE_BASE, 'lp'));
   const linkedRegistry = { get: () => ({ id: 'lp', path: path.join(base, 'linked-project') }), list: () => [] };
-  const linked = new ArtifactService({ workspaceDir: '.dsh/artifacts', libraryDir: 'artifacts/v1', home }, linkedRegistry);
+  const linked = new ArtifactService({ workspaceBase: WORKSPACE_BASE, libraryDir: 'artifacts/v1', home: linkedHome }, linkedRegistry);
   await rejects(linked.create({ workspaceId: 'lp' }, { type: 'doc', title: 'x', content: '', source: agent }), 'artifact/forbidden-path');
   assert.deepEqual(await fs.readdir(outside), []);
 });
@@ -487,17 +505,17 @@ test('AC-032: a link inside the tree cannot redirect writes or deletes', async (
 test('AC-033: a token save is atomic and never leaves a partial file', async () => {
   const svc = service();
   await svc.saveDesignSystem({ ...B, scope: 'workspace' }, { colors: { primary: '#010203' } });
-  const file = path.join(wsB, '.dsh/artifacts/design-system.json');
+  const file = path.join(storeHome('ws-b'), 'design-system.json');
   const text = await fs.readFile(file, 'utf8');
   assert.doesNotThrow(() => JSON.parse(text));
-  const leftovers = (await fs.readdir(path.join(wsB, '.dsh/artifacts'))).filter((name) => name.includes('.tmp'));
+  const leftovers = (await fs.readdir(storeHome('ws-b'))).filter((name) => name.includes('.tmp'));
   assert.deepEqual(leftovers, []);
 });
 
 test('corrupt manifests are skipped by list', async () => {
   const svc = service();
   const created = await svc.create(A, { type: 'doc', title: 'Will corrupt', content: '', source: agent });
-  await fs.writeFile(path.join(wsA, '.dsh/artifacts', created.id, 'artifact.json'), '{not json');
+  await fs.writeFile(path.join(storeHome('ws-a'), created.id, 'artifact.json'), '{not json');
   const page = await svc.list(A, {});
   assert.ok(page.items.every((item) => item.id !== created.id));
   await rejects(svc.read(A, created.id), 'artifact/corrupt');

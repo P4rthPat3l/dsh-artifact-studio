@@ -3,9 +3,9 @@ import type { RootConfig } from './paths.js';
 import { ArtifactService } from './service.js';
 import type { WorkspaceRegistry } from './types.js';
 
-/** Root locations for this deployment: `.dsh/artifacts` in a workspace, `artifacts/v1` in the Harness home. */
+/** Root locations for this deployment: per-workspace stores and the library, both under the Harness home. */
 export function rootConfig(): RootConfig {
-  return { workspaceDir: '.dsh/artifacts', libraryDir: 'artifacts/v1', home: resolveHome() };
+  return { workspaceBase: 'artifacts/workspaces', libraryDir: 'artifacts/v1', home: resolveHome() };
 }
 
 /**

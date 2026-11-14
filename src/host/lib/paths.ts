@@ -7,12 +7,15 @@ import { ArtifactError, errnoCode } from './errors.js';
 import { assertWithin } from './fsutil.js';
 import type { WorkspaceRecord, WorkspaceRegistry } from './types.js';
 
-/** Root locations, relative to the workspace and to the Harness home. */
+/** Root locations: the per-workspace store parent and the library, both under the Harness home. */
 export interface RootConfig {
-  readonly workspaceDir: string;
+  readonly workspaceBase: string;
   readonly libraryDir: string;
   readonly home: string;
 }
+
+/** One workspace id is one directory name: no separators, no traversal, no hidden name. */
+const WORKSPACE_KEY = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 /** A scope root that exists on disk, canonicalised. */
 export interface ScopeRoot {
@@ -37,9 +40,10 @@ export function resolveHome(explicit?: string): string {
  * Create a root directory if needed and return its canonical path.
  *
  * A root is only accepted when `realpath` returns the path it was asked for. A
- * link anywhere in the chain, such as a repository that ships `.dsh` as a
- * symlink, changes the canonical path and is refused, so no scope can be
- * redirected to another directory.
+ * link anywhere in the chain changes the canonical path and is refused, so no
+ * scope can be redirected to another directory. The existing part of the chain
+ * is checked before the recursive create, so a link is refused before anything
+ * is written through it.
  * @param root the configured root.
  * @param mode the directory mode for a new root.
  * @returns the canonical root.
@@ -47,6 +51,7 @@ export function resolveHome(explicit?: string): string {
 async function ensureRoot(root: string, mode?: number): Promise<string> {
   const wanted = path.resolve(root);
   await assertWithin(wanted, wanted);
+  await assertNoLinkChain(wanted);
   await fs.mkdir(wanted, { recursive: true, ...(mode === undefined ? {} : { mode }) });
   const canonical = await fs.realpath(wanted);
   if (canonical !== wanted) {
@@ -79,7 +84,55 @@ export async function libraryRoot(config: RootConfig): Promise<ScopeRoot> {
 }
 
 /**
- * The workspace root under a registered workspace.
+ * Refuse a link in the part of a root's chain that already exists, before the
+ * recursive create can write through it.
+ * @param target the configured root.
+ */
+async function assertNoLinkChain(target: string): Promise<void> {
+  let current = path.resolve(target);
+  const chain: string[] = [];
+  for (;;) {
+    chain.unshift(current);
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  for (const dir of chain) {
+    let stat;
+    try {
+      stat = await fs.lstat(dir);
+    } catch (error) {
+      if (errnoCode(error) === 'ENOENT') return;
+      throw error;
+    }
+    if (stat.isSymbolicLink()) {
+      throw new ArtifactError('artifact/forbidden-path', 'The artifact root resolves through a link.', {
+        root: path.resolve(target),
+        link: dir,
+      });
+    }
+  }
+}
+
+/**
+ * Turn a workspace id into its store directory name. The id is the key, so it
+ * must survive a project rename and cannot name a path.
+ * @param workspaceId the registered workspace id.
+ * @returns the directory name.
+ */
+function workspaceKey(workspaceId: string): string {
+  if (!WORKSPACE_KEY.test(workspaceId)) {
+    throw new ArtifactError('artifact/forbidden-path', 'The workspace id cannot name an artifact directory.', {
+      workspaceId,
+    });
+  }
+  return workspaceId;
+}
+
+/**
+ * The store for one registered workspace, under the Harness home. The
+ * directory is keyed by the workspace id, not by its path, so a moved project
+ * keeps its artifacts and two workspaces never share a store.
  * @param config the root config.
  * @param workspace the workspace record.
  * @returns the workspace scope root.
@@ -88,22 +141,22 @@ export async function workspaceRoot(config: RootConfig, workspace: WorkspaceReco
   return {
     scope: 'workspace',
     workspaceId: workspace.id,
-    root: await ensureRoot(path.join(workspace.path, config.workspaceDir)),
+    root: await ensureRoot(path.join(config.home, config.workspaceBase, workspaceKey(workspace.id)), 0o700),
   };
 }
 
 /**
  * The workspace root only when it already exists, without creating anything.
- * Reading a library design system must not leave an empty folder in a project.
+ * Reading the design system must not leave an empty store behind.
  * @param config the root config.
  * @param workspace the workspace record.
- * @returns the root, or undefined when the workspace has no artifact folder yet.
+ * @returns the root, or undefined when the workspace has no store yet.
  */
 export async function workspaceRootExisting(
   config: RootConfig,
   workspace: WorkspaceRecord,
 ): Promise<ScopeRoot | undefined> {
-  const wanted = path.resolve(path.join(workspace.path, config.workspaceDir));
+  const wanted = path.resolve(path.join(config.home, config.workspaceBase, workspaceKey(workspace.id)));
   try {
     const canonical = await fs.realpath(wanted);
     if (canonical !== wanted) return undefined;

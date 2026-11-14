@@ -65,7 +65,7 @@ const SCOPE_PARAM = {
   type: 'string',
   enum: ['workspace', 'library'],
   description:
-    'workspace (default) stores it in this project under .dsh/artifacts. library stores it in the user profile, shared by every project; use it only when the user asks for something reusable across projects.',
+    'workspace (default) stores it under the Harness home for this workspace. library stores it in the user profile, shared by every project; use it only when the user asks for something reusable across projects.',
 };
 
 const PAGE_GUIDE = [

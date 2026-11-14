@@ -6,7 +6,7 @@ The agent creates pages and documents as versioned files, and you open them besi
 
 - Eight agent tools: `artifact_create`, `artifact_read`, `artifact_update`, `artifact_list`, `artifact_delete`, `artifact_export`, `design_system_read`, and `design_system_update`.
 - Two artifact types. A page is a self-contained HTML document rendered in a sandboxed frame with no network. A doc is Markdown edited in a Tiptap rich-text editor.
-- Two storage scopes. Project artifacts live in `<workspace>/.dsh/artifacts/`. Library artifacts live in `$DSH_HOME/artifacts/v1/`, and every project can see them.
+- Two storage scopes. Workspace artifacts live in `$DSH_HOME/artifacts/workspaces/<workspaceId>/`, keyed by the registered workspace, so the project folder stays clean. Library artifacts live in `$DSH_HOME/artifacts/v1/`, and every project can see them.
 - Every save creates a version. You can preview an older version and restore it, which adds a new version.
 - A save is refused when someone else saved first, so neither the agent nor you can silently overwrite the other.
 - Pages export as HTML. Docs export as Markdown, Word, or HTML. You can print either type or save it as a PDF from the print dialog.
