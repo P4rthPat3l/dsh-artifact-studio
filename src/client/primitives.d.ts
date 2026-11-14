@@ -4,7 +4,7 @@
  * declarations, so the props here follow its source in the installed Harness.
  */
 declare module '@deepseek-ai/dsh-client-ui-primitives' {
-  import type { ButtonHTMLAttributes, ComponentType, ForwardRefExoticComponent, ReactElement, ReactNode, RefAttributes } from 'react';
+  import type { ButtonHTMLAttributes, ComponentType, ForwardRefExoticComponent, InputHTMLAttributes, ReactElement, ReactNode, RefAttributes } from 'react';
 
   export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
     variant?: 'primary' | 'ghost' | 'outline' | 'toolbar';
@@ -72,6 +72,54 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
     disabled?: boolean;
     title?: string;
   }
+  export interface SegmentedTabItem<V extends string> {
+    value: V;
+    label: string;
+    id: string;
+    panelId: string;
+  }
+  export function SegmentedTabs<V extends string>(props: {
+    items: readonly SegmentedTabItem<V>[];
+    value: V;
+    onChange: (value: V) => void;
+    label: string;
+    className?: string;
+    size?: 'sm' | 'md';
+  }): ReactElement;
+
+  export interface ZoomControlsHandle {
+    showZoom(zoom: number | undefined): void;
+  }
+  export interface ZoomControlsLabels {
+    controls: string;
+    out: string;
+    into: string;
+    menu: string;
+    value(percent: number): string;
+  }
+  export interface ZoomControlsProps {
+    zoom: number;
+    fit?: { label: string; selected: boolean; onSelect(): void };
+    className?: string;
+    labels: ZoomControlsLabels;
+    visible: boolean;
+    onZoom(zoom: number): void;
+    onActiveChange(active: boolean): void;
+  }
+  export const ZoomControls: ForwardRefExoticComponent<ZoomControlsProps & RefAttributes<ZoomControlsHandle>>;
+
+  export interface SwitchProps {
+    checked: boolean;
+    onChange(next: boolean): void;
+    label: string;
+    disabled?: boolean;
+    title?: string;
+    className?: string;
+  }
+  export function Switch(props: SwitchProps): ReactElement;
+
+  export const Input: ForwardRefExoticComponent<InputHTMLAttributes<HTMLInputElement> & { icon?: ReactNode } & RefAttributes<HTMLInputElement>>;
+
   export function SegmentedControl<V extends string>(props: {
     id: string;
     value: V;
@@ -119,4 +167,7 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
   export const IconSaveOutlineRegular: Icon;
   export const IconSearchOutlineRegular: Icon;
   export const IconCodeOutlineRegular: Icon;
+  export const IconSlidersTwoOutlineRegular: Icon;
+  export const IconFlatListOutlineRegular: Icon;
+  export const IconCheckOutlineRegular: Icon;
 }

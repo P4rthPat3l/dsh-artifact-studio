@@ -72,12 +72,46 @@ function StateDot({ state }) {
   return h('span', { 'aria-hidden': 'true', 'data-state': state });
 }
 
+function SegmentedTabs({ items, value, onChange, label, className, size = 'md' }) {
+  return h('div', { role: 'tablist', 'aria-label': label, className, 'data-size': size }, items.map((item) => h('button', {
+    key: item.value, id: item.id, type: 'button', role: 'tab', 'aria-controls': item.panelId,
+    'aria-selected': item.value === value, onClick: () => onChange(item.value),
+  }, item.label)));
+}
+
+const ZoomControls = React.forwardRef(function ZoomControls({ zoom, fit, className, labels, visible, onZoom, onActiveChange }, ref) {
+  const [open, setOpen] = React.useState(false);
+  React.useImperativeHandle(ref, () => ({ showZoom: () => undefined }));
+  React.useEffect(() => { onActiveChange?.(open); }, [open]);
+  const presets = [0.25, 0.5, 1, 1.5, 2];
+  const rows = [];
+  if (fit !== undefined) {
+    rows.push(h('button', { key: 'fit', type: 'button', role: 'menuitem', 'data-selected': fit.selected, onClick: () => { setOpen(false); fit.onSelect(); } }, fit.label));
+  }
+  for (const preset of presets) {
+    rows.push(h('button', { key: preset, type: 'button', role: 'menuitem', onClick: () => { setOpen(false); onZoom(preset); } }, labels.value(preset * 100)));
+  }
+  return h('div', { role: 'toolbar', 'aria-label': labels.controls, className, 'data-document-zoom-controls': true, 'data-visible': visible ? '' : undefined },
+    h('button', { type: 'button', 'aria-label': labels.out, disabled: zoom <= 0.25, onClick: () => onZoom(Math.max(0.25, zoom - 0.25)) }),
+    h('button', { type: 'button', 'aria-label': labels.menu, 'aria-expanded': open, onClick: () => setOpen((value) => !value) }, labels.value(Math.round(zoom * 100))),
+    open ? h('div', { role: 'menu' }, rows) : null,
+    h('button', { type: 'button', 'aria-label': labels.into, disabled: zoom >= 4, onClick: () => onZoom(Math.min(4, zoom + 0.25)) }));
+});
+
+function Switch({ checked, onChange, label, disabled = false, title, className }) {
+  return h('button', { type: 'button', role: 'switch', 'aria-checked': checked, 'aria-label': label, title, disabled, className, onClick: () => onChange(!checked) }, h('span', null));
+}
+
+const Input = React.forwardRef(function Input({ icon, className, ...rest }, ref) {
+  return h('span', { className }, icon, h('input', { ref, ...rest }));
+});
+
 const icon = (name) => function Icon({ size, className }) {
   return h('svg', { 'aria-hidden': 'true', 'data-icon': name, width: size, height: size, className });
 };
 
 module.exports = {
-  Button, Tooltip, Menu, Modal, Toast, SegmentedControl, CodeBlock, TextShimmer, StateDot,
+  Button, Tooltip, Menu, Modal, Toast, SegmentedControl, SegmentedTabs, ZoomControls, Switch, Input, CodeBlock, TextShimmer, StateDot,
   IconChevronLeftOutlineRegular: icon('IconChevronLeftOutlineRegular'),
   IconChevronDownOutlineRegular: icon('IconChevronDownOutlineRegular'),
   IconChevronRightOutlineRegular: icon('IconChevronRightOutlineRegular'),
@@ -98,4 +132,7 @@ module.exports = {
   IconSaveOutlineRegular: icon('IconSaveOutlineRegular'),
   IconSearchOutlineRegular: icon('IconSearchOutlineRegular'),
   IconCodeOutlineRegular: icon('IconCodeOutlineRegular'),
+  IconSlidersTwoOutlineRegular: icon('IconSlidersTwoOutlineRegular'),
+  IconFlatListOutlineRegular: icon('IconFlatListOutlineRegular'),
+  IconCheckOutlineRegular: icon('IconCheckOutlineRegular'),
 };

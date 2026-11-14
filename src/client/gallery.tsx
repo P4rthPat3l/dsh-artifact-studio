@@ -125,6 +125,46 @@ function coverKey(view: ArtifactView): string {
 const coverCache = new Map<string, CoverData>();
 const coverPending = new Map<string, Promise<CoverData>>();
 
+/** The most mockup covers that may fetch at once, matching the host's render limit. */
+const COVER_CONCURRENCY = 2;
+
+/** Mockup cover data URLs, keyed by address and version, for this window. */
+const designCoverCache = new Map<string, string>();
+const designCoverQueue: Array<{ start(): void }> = [];
+let designCoverActive = 0;
+
+/** Start queued cover fetches until the limit is reached. */
+function pumpDesignCovers(): void {
+  while (designCoverActive < COVER_CONCURRENCY && designCoverQueue.length > 0) {
+    const task = designCoverQueue.shift();
+    if (task === undefined) return;
+    designCoverActive += 1;
+    task.start();
+  }
+}
+
+/**
+ * Ask for one mockup cover, running at most two requests at once.
+ * @param start the request; it must settle the promise it returns.
+ * @returns a cancel action that also drops a queued request.
+ */
+function queueDesignCover(start: () => Promise<void>): () => void {
+  const task = {
+    start: () => {
+      void start().finally(() => {
+        designCoverActive -= 1;
+        pumpDesignCovers();
+      });
+    },
+  };
+  designCoverQueue.push(task);
+  pumpDesignCovers();
+  return () => {
+    const index = designCoverQueue.indexOf(task);
+    if (index !== -1) designCoverQueue.splice(index, 1);
+  };
+}
+
 /**
  * Read one artifact payload for its cover, sharing the request between cards.
  * @param view the artifact.
@@ -208,6 +248,7 @@ function ArtifactCover({ t, view }: { t: Translator; view: ArtifactView }) {
   const [failed, setFailed] = useState(false);
   const [visible, setVisible] = useState(typeof IntersectionObserver === 'undefined');
   const [url, setUrl] = useState<string | null>(null);
+  const [designUrl, setDesignUrl] = useState<string | null>(null);
   const ref = useRef<HTMLSpanElement | null>(null);
   const dark = useHarnessDark();
   const key = coverKey(view);
@@ -229,8 +270,43 @@ function ArtifactCover({ t, view }: { t: Translator; view: ArtifactView }) {
     return () => observer.disconnect();
   }, [visible]);
 
+  // A mockup cover is the saved PNG from the host, fetched only once the tile is
+  // near the viewport, at most two at a time, and kept for the window session.
   useEffect(() => {
-    // A design has no cheap local cover; its preview is rendered on the host when opened.
+    if (!visible || type !== 'design') return undefined;
+    const cacheKey = key + '@' + version;
+    const cached = designCoverCache.get(cacheKey);
+    if (cached !== undefined) {
+      setDesignUrl(cached);
+      setFailed(false);
+      return undefined;
+    }
+    const controller = new AbortController();
+    let cancelled = false;
+    const cancel = queueDesignCover(async () => {
+      try {
+        const preview = await api.preview(view.where, view.manifest.id, version, controller.signal);
+        if (cancelled) return;
+        const next = 'data:' + preview.mediaType + ';base64,' + preview.data;
+        if (designCoverCache.size >= 40) designCoverCache.clear();
+        designCoverCache.set(cacheKey, next);
+        setDesignUrl(next);
+        setFailed(false);
+      } catch {
+        if (!cancelled) setFailed(true);
+      }
+    });
+    return () => {
+      cancelled = true;
+      controller.abort();
+      cancel();
+    };
+    // The address and version fully describe the preview this card needs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, key, version, type]);
+
+  useEffect(() => {
+    // Pages and documents read their own content; only mockups ask for a PNG.
     if (!visible || type === 'design') return undefined;
     let cancelled = false;
     loadCover(view)
@@ -262,6 +338,13 @@ function ArtifactCover({ t, view }: { t: Translator; view: ArtifactView }) {
 
   const icon = type === 'page' ? <IconPage /> : type === 'doc' ? <IconDoc /> : <IconDesign />;
   if (failed) return <span className="art-cover" ref={ref} aria-hidden="true"><span className="art-cover-fallback">{icon}</span></span>;
+  if (type === 'design') {
+    return (
+      <span className="art-cover" ref={ref} aria-hidden="true">
+        {designUrl === null ? <span className="art-cover-fallback">{icon}</span> : <img className="art-cover-design" src={designUrl} alt="" />}
+      </span>
+    );
+  }
   if (type === 'page') {
     return (
       <span className="art-cover" ref={ref} aria-hidden="true">

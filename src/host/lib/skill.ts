@@ -32,6 +32,8 @@ Use \`artifact_create\` when the user asks for an artifact, an artifact page, an
 
 A design is OpenPencil Design JSX, not React DOM and not HTML. There are no imports, no HTML tags, and no CSS classes. Icons use the bundled Material Design Icons set.
 
+Call this artifact a mockup when you talk to the user. The tools still take type \`design\`.
+
 - Elements: \`Frame\`, \`Text\`, \`Rectangle\`, \`Ellipse\`, \`Line\`, \`Star\`, \`Polygon\`, \`Vector\`, \`Group\`, \`Section\`.
 - Layout props: \`w\`, \`h\`, \`p\`, \`px\`, \`py\`, \`gap\`, \`flex\` (\`row\` or \`col\`), \`items\`, \`justify\`, \`bg\`, \`rounded\`, \`stroke\`, \`strokeWidth\`, \`opacity\`.
 - Use \`flex\`, not \`dir\`. \`dir\` is accepted and does nothing, so every child sits at the same origin. A frame with \`flex\` sizes itself to its children unless you give it \`w\` or \`h\`.

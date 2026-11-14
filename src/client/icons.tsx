@@ -10,7 +10,7 @@ function Glyph({ children, size = 16 }: { children: ReactNode; size?: number }):
       height={size}
       fill="none"
       stroke="currentColor"
-      strokeWidth={1.7}
+      strokeWidth={1.5}
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"
@@ -59,5 +59,110 @@ export const IconPalette = ({ size }: { size?: number }) => (
     <circle cx="10" cy="6.8" r="1.1" fill="currentColor" stroke="none" />
     <circle cx="14" cy="7" r="1.1" fill="currentColor" stroke="none" />
     <circle cx="17" cy="10.2" r="1.1" fill="currentColor" stroke="none" />
+  </Glyph>
+);
+
+/** A square with crossing guides: a frame or section layer. */
+export const IconLayerFrame = ({ size }: { size?: number }) => (
+  <Glyph size={size}>
+    <path d="M7 3v18M17 3v18M3 7h18M3 17h18" />
+  </Glyph>
+);
+
+/** A capital letter: a text layer. */
+export const IconLayerText = ({ size }: { size?: number }) => (
+  <Glyph size={size}>
+    <path d="M5 6h14M12 6v13" />
+  </Glyph>
+);
+
+/** A rounded square and a circle: a rectangle, ellipse, line, or vector layer. */
+export const IconLayerShape = ({ size }: { size?: number }) => (
+  <Glyph size={size}>
+    <rect x="3.5" y="3.5" width="11" height="11" rx="2" />
+    <circle cx="15.5" cy="15.5" r="5" />
+  </Glyph>
+);
+
+/** Two overlapping frames: a group, component, or instance layer. */
+export const IconLayerGroup = ({ size }: { size?: number }) => (
+  <Glyph size={size}>
+    <rect x="3.5" y="3.5" width="12" height="12" rx="2" />
+    <path d="M8.5 8.5h12v12h-12z" />
+  </Glyph>
+);
+
+/** An arrow pointer: the selection tool. */
+export const IconCursor = ({ size }: { size?: number }) => (
+  <Glyph size={size}>
+    <path d="M5 3.5l12.5 8.2-5.7 1.2L14 19l-2.4 1-2.1-5.1L5 18.2z" />
+  </Glyph>
+);
+
+/** A hand: the pan tool. */
+export const IconHand = ({ size }: { size?: number }) => (
+  <Glyph size={size}>
+    <path d="M8 12V5.5a1.5 1.5 0 0 1 3 0V11M11 10.5V4.5a1.5 1.5 0 0 1 3 0V11M14 10.5V6.5a1.5 1.5 0 0 1 3 0V13c0 4-2.4 7-6 7-3.3 0-4.6-1.6-6.5-5.2L3.2 11.5a1.5 1.5 0 0 1 2.5-1.6L8 12.5" />
+  </Glyph>
+);
+
+/** A frame tool. */
+export const IconFrame = ({ size }: { size?: number }) => (
+  <Glyph size={size}>
+    <rect x="4.5" y="4.5" width="15" height="15" rx="2" />
+    <path d="M8.5 4.5v15M15.5 4.5v15M4.5 8.5h15M4.5 15.5h15" />
+  </Glyph>
+);
+
+/** A text tool. */
+export const IconText = ({ size }: { size?: number }) => (
+  <Glyph size={size}>
+    <path d="M4.5 6.5h15M12 6.5v12" />
+  </Glyph>
+);
+
+/** A counter-clockwise arrow: undo. */
+export const IconUndo = ({ size }: { size?: number }) => (
+  <Glyph size={size}>
+    <path d="M4 9.5h9.5a5.5 5.5 0 0 1 0 11H9M4 9.5l4-4M4 9.5l4 4" />
+  </Glyph>
+);
+
+/** A clockwise arrow: redo. */
+export const IconRedo = ({ size }: { size?: number }) => (
+  <Glyph size={size}>
+    <path d="M20 9.5h-9.5a5.5 5.5 0 0 0 0 11H15M20 9.5l-4-4M20 9.5l-4 4" />
+  </Glyph>
+);
+
+/** An open eye: a visible layer. */
+export const IconEye = ({ size }: { size?: number }) => (
+  <Glyph size={size}>
+    <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" />
+    <circle cx="12" cy="12" r="2.6" />
+  </Glyph>
+);
+
+/** A crossed eye: a hidden layer. */
+export const IconEyeOff = ({ size }: { size?: number }) => (
+  <Glyph size={size}>
+    <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" />
+    <path d="M4 4l16 16" />
+  </Glyph>
+);
+
+/** A closed padlock: a locked layer. */
+export const IconLock = ({ size }: { size?: number }) => (
+  <Glyph size={size}>
+    <rect x="5" y="10.5" width="14" height="9.5" rx="2" />
+    <path d="M8 10.5V7a4 4 0 0 1 8 0v3.5" />
+  </Glyph>
+);
+
+/** An open padlock: an unlocked layer. */
+export const IconLockOpen = ({ size }: { size?: number }) => (
+  <Glyph size={size}>
+    <rect x="5" y="10.5" width="14" height="9.5" rx="2" />
+    <path d="M8 10.5V7a4 4 0 0 1 7.4-2" />
   </Glyph>
 );

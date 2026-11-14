@@ -11,17 +11,22 @@ import {
   IconEditOutlineRegular,
   IconEllipsisOutlineRegular,
   IconSaveOutlineRegular,
+  IconSlidersTwoOutlineRegular,
   IconSparkleRegular,
   Menu,
   Modal,
   SegmentedControl,
+  SegmentedTabs,
   Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives';
 import { FORMATS_BY_TYPE, formatArtifactAddress, parseArtifactAddress } from '../contract.js';
 import type { ArtifactAddress, ArtifactPayload, ExportFormat, VersionEntry } from '../contract.js';
 import { api, codeOf, download, errorKey } from './api.js';
+import type { CanvasSnapshot, DesignCanvasHandle, SelectedLayer } from './canvas/entry.js';
 import { DesignCanvasView } from './design-canvas-view.jsx';
+import { DesignInspector, layerGlyph, layerTypeLabel } from './design-inspector.jsx';
+import type { InspectorTab } from './design-inspector.jsx';
 import { DesignView } from './design-view.jsx';
 import { DocView } from './doc-view.jsx';
 import { useEditor } from './editor-model.js';
@@ -30,7 +35,7 @@ import type { InputActions, TabInfo, TabProps, Translator, UseTabInfo } from './
 import { HistoryPanel } from './history.jsx';
 import { announceListChange, announceVersion, notify, useAnnouncedVersion } from './store.js';
 import { PageFrame, SourceEditor } from './page-view.jsx';
-import { buildReference, plainRequest, quoteText } from './review.js';
+import { buildDesignQuote, buildReference, plainRequest, quoteText } from './review.js';
 import type { Quote } from './review.js';
 import { useHarnessDark } from './theme.js';
 
@@ -74,16 +79,44 @@ function SelectionBar({ quote, askLabel, dismissLabel, onAsk, onDismiss }: {
 }
 
 /**
+ * The bar over a design's canvas that turns a selected layer into an edit request.
+ * @param props the layer and the two actions.
+ * @returns the bar.
+ */
+function LayerBar({ t, layer, askLabel, dismissLabel, onAsk, onDismiss }: {
+  t: Translator;
+  layer: SelectedLayer;
+  askLabel: string;
+  dismissLabel: string;
+  onAsk: () => void;
+  onDismiss: () => void;
+}) {
+  const type = layerTypeLabel(t, layer.type);
+  return (
+    <div className="art-selection-bar art-layer-bar" role="toolbar" aria-label={askLabel}>
+      <span className="art-layer-bar-glyph" aria-hidden="true">{layerGlyph(layer.type)}</span>
+      <span className="art-layer-bar-text">
+        <span className="art-layer-bar-name" title={layer.name}>{layer.name}</span>
+        <span className="art-layer-bar-sub">{layer.parentName === '' ? type : t('layer.parentLine', { type, parent: layer.parentName })}</span>
+      </span>
+      <Button size="sm" variant="primary" icon={<IconSparkleRegular size={14} />} onClick={onAsk}>{askLabel}</Button>
+      <IconButton label={dismissLabel} icon={<IconCloseOutlineRegular size={14} />} onClick={onDismiss} />
+    </div>
+  );
+}
+
+/**
  * The history side panel. It is inline in a wide pane and a modal overlay in a
  * narrow one, where it carries a scrim and keeps Tab inside.
  * @param props the label, close action, and content.
  * @returns the drawer.
  */
-function DrawerShell({ label, closeLabel, overlay, onClose, children }: {
+function DrawerShell({ label, closeLabel, overlay, onClose, head, children }: {
   label: string;
   closeLabel: string;
   overlay: boolean;
   onClose: () => void;
+  head?: ReactNode;
   children: ReactNode;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
@@ -135,7 +168,7 @@ function DrawerShell({ label, closeLabel, overlay, onClose, children }: {
         }}
       >
         <div className="art-drawer-head">
-          <h2>{label}</h2>
+          {head ?? <h2>{label}</h2>}
           <IconButton label={closeLabel} icon={<IconCloseOutlineRegular size={14} />} onClick={onClose} />
         </div>
         <div className="art-drawer-body">{children}</div>
@@ -172,7 +205,7 @@ type LeaveAction = () => void | Promise<void>;
 
 /** The full page has no tab; the hook is still called once per render. */
 const useNoTab = (): TabInfo | undefined => undefined;
-type Mode = 'preview' | 'source';
+type Mode = 'view' | 'edit' | 'source';
 
 function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inputActions }: ArtifactBodyProps) {
   const { model, state } = useEditor(address);
@@ -180,9 +213,16 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
   const where = model.where;
   const id = address.id;
   const dark = useHarnessDark();
-  const [mode, setMode] = useState<Mode>('preview');
+  const [mode, setMode] = useState<Mode>('view');
   const [editing, setEditing] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [inspectorTab, setInspectorTab] = useState<InspectorTab>('layers');
+  const [canvasHandle, setCanvasHandle] = useState<DesignCanvasHandle | null>(null);
+  const [canvasSnapshot, setCanvasSnapshot] = useState<CanvasSnapshot | null>(null);
+  const [canvasSelection, setCanvasSelection] = useState<SelectedLayer[]>([]);
+  const [canvasFailure, setCanvasFailure] = useState<string | null>(null);
+  const [canvasAttempt, setCanvasAttempt] = useState(0);
   const [overlay, setOverlay] = useState(false);
   const [versions, setVersions] = useState<VersionEntry[] | null>(null);
   const [historyFailed, setHistoryFailed] = useState(false);
@@ -221,7 +261,28 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
   // A quote names text in the version it came from; a new version makes it stale.
   useEffect(() => {
     setSelection(null);
+    setCanvasSelection([]);
   }, [payload?.version, viewing?.version, state.revision]);
+
+  // The inspector reads the canvas handle's snapshots; the view owns its own
+  // subscription and only reports the selection it shows in the layer bar.
+  useEffect(() => {
+    if (canvasHandle === null) {
+      setCanvasSnapshot(null);
+      return undefined;
+    }
+    setCanvasSnapshot(canvasHandle.getSnapshot());
+    return canvasHandle.subscribe(setCanvasSnapshot);
+  }, [canvasHandle]);
+
+  // An old version has no editor, so it stays in View.
+  const showingOldVersion = viewing !== null;
+  useEffect(() => {
+    if (showingOldVersion && mode === 'edit') {
+      setMode('view');
+      setInspectorOpen(false);
+    }
+  }, [showingOldVersion, mode]);
 
   const loaded = payload !== null;
   /* Measured at open time as well as on resize: a missed observer callback must not leave a modal drawer non-modal. */
@@ -298,6 +359,12 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
     return () => document.removeEventListener('selectionchange', onSelection);
   }, [mode, payload?.manifest.type]);
 
+  const onCanvasHandle = useCallback((handle: DesignCanvasHandle | null) => setCanvasHandle(handle), []);
+  const onCanvasSelection = useCallback((layers: SelectedLayer[]) => setCanvasSelection(layers), []);
+  const onCanvasFailure = useCallback((message: string | null) => setCanvasFailure(message), []);
+
+  const closeInspector = () => setInspectorOpen(false);
+
   const closeHistory = () => {
     ++historySequence.current;
     setHistoryLoading(false);
@@ -311,6 +378,7 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
     setHistoryLoading(false);
     setViewing(null);
     setMenu(null);
+    setInspectorOpen(false);
     setHistoryOpen(true);
   };
 
@@ -379,7 +447,7 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
    * Put the selection and an artifact reference into this session's composer.
    * The user finishes the request and sends it; nothing is sent here.
    */
-  const askAgent = async (quote: Quote | null) => {
+  const askAgent = async (quote: Quote | null, truncatedNotice = 'agent.addedTruncated') => {
     if (busy || conflict || historyLoading || payload === null) return;
     setBusy(true);
     try {
@@ -389,13 +457,15 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
       const reference = buildReference(t, { title: current.manifest.title, id, version, current: current.version });
       const text = quote?.text ?? '';
       setSelection(null);
+      setCanvasSelection([]);
+      canvasHandle?.clearSelection();
       if (inputActions === undefined) {
         await copy(plainRequest(text, reference), 'agent.copied');
         return;
       }
       const quoted = text === '' || inputActions.insertQuote(text);
       if (quoted && inputActions.insertText(reference, inputActions.captureInsertion())) {
-        notify(t(quote?.truncated === true ? 'agent.addedTruncated' : 'agent.added'));
+        notify(t(quote?.truncated === true ? truncatedNotice : 'agent.added'));
         return;
       }
       await copy(plainRequest(text, reference), 'agent.insertFailed');
@@ -489,7 +559,27 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
     else void selectVersion(Number(entry.slice(1)));
   };
 
-  const editWithAgent = <Button size="sm" variant="primary" className="art-ask" icon={<IconSparkleRegular size={14} />} disabled={busy || conflict || historyLoading} onClick={() => void askAgent(selection)}>{t('agent.ask')}</Button>;
+  const editWithAgent = (
+    <Button
+      size="sm"
+      variant="primary"
+      className="art-ask"
+      icon={<IconSparkleRegular size={14} />}
+      disabled={busy || conflict || historyLoading}
+      onClick={() => {
+        if (type === 'design') {
+          const layer = canvasHandle?.quoteSelection();
+          if (layer !== null && layer !== undefined) {
+            void askAgent(buildDesignQuote(t, layer), 'agent.addedTruncatedDesign');
+            return;
+          }
+        }
+        void askAgent(selection);
+      }}
+    >
+      {t('agent.ask')}
+    </Button>
+  );
 
   return (
     <section className="art-root" data-dsh-artifact-studio="" data-artifact-id={id} aria-busy={busy} ref={rootRef}>
@@ -526,10 +616,23 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
               className="art-segment"
               label={t('tab.mode')}
               value={mode}
-              options={[{ value: 'preview', label: type === 'design' ? t('canvas.mode') : t('tab.preview') }, { value: 'source', label: t('tab.source') }]}
-              onChange={(next) => { setMode(next); setSelection(null); }}
+              options={type === 'design'
+                ? [
+                    { value: 'view', label: t('canvas.viewMode') },
+                    { value: 'edit', label: t('canvas.editMode'), disabled: readOnly, title: readOnly ? t('canvas.editOldVersion') : undefined },
+                    { value: 'source', label: t('tab.source') },
+                  ]
+                : [{ value: 'view', label: t('tab.preview') }, { value: 'source', label: t('tab.source') }]}
+              onChange={(next) => {
+                setMode(next);
+                setSelection(null);
+                setInspectorOpen(type === 'design' && next === 'edit' && !readOnly);
+              }}
             />
           )}
+          {type === 'design' && mode === 'edit' && !readOnly ? (
+            <IconButton label={t('canvas.inspector')} icon={<IconSlidersTwoOutlineRegular size={16} />} pressed={inspectorOpen} onClick={() => { if (inspectorOpen) setInspectorOpen(false); else { setHistoryOpen(false); setInspectorOpen(true); } }} />
+          ) : null}
           {draft === null || readOnly ? null : <IconButton label={t('tab.save')} icon={<IconSaveOutlineRegular size={16} />} disabled={conflict} onClick={() => void model.save()} />}
           <IconButton buttonRef={historyButton} label={t('tab.history')} icon={<IconClockOutlineRegular size={16} />} pressed={historyOpen} onClick={() => { if (historyOpen) closeHistory(); else openHistory(); }} />
           {overlay ? null : (
@@ -566,6 +669,12 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
       {conflict ? <div className="art-bar" data-tone="warn" role="alert"><span className="art-bar-text"><strong>{t('tab.conflictTitle')}</strong><span>{t('tab.conflictHint')}</span></span><span className="art-bar-actions"><Button size="sm" variant="outline" onClick={() => void copy(draft ?? '', 'action.copied')}>{t('tab.copyDraft')}</Button><Button size="sm" variant="outline" onClick={() => guarded(reload)}>{t('tab.discardReload')}</Button></span></div> : null}
       {!conflict && failure !== undefined ? <div className="art-bar" data-tone="error" role="alert"><span>{failureMessage ?? t(errorKey(failure))}</span><Button size="sm" variant="outline" onClick={() => void model.save()}>{t('action.retry')}</Button></div> : null}
       {viewing === null ? null : <div className="art-bar" role="status"><span>{t('tab.viewingOld', { version: viewing.version, current: payload.version })}</span><span className="art-bar-actions"><Button size="sm" variant="outline" onClick={() => { ++historySequence.current; setHistoryLoading(false); setViewing(null); setSelection(null); }}>{t('tab.backToCurrent')}</Button><Button size="sm" variant="outline" disabled={busy} onClick={() => void restore()}>{t('tab.restoreThis')}</Button></span></div>}
+      {type !== 'design' || canvasFailure === null ? null : (
+        <div className="art-bar" data-tone="error" role="alert">
+          <span>{t('canvas.startFailed')}</span>
+          <span className="art-bar-actions"><Button size="sm" variant="outline" onClick={() => { setCanvasFailure(null); setCanvasAttempt(value => value + 1); }}>{t('action.retry')}</Button></span>
+        </div>
+      )}
       <div className="art-body">
         <div
           className="art-stage"
@@ -573,14 +682,40 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
           id={type === 'doc' ? undefined : 'art-mode-' + id + '-' + mode + '-panel'}
           aria-labelledby={type === 'doc' ? undefined : 'art-mode-' + id + '-' + mode}
         >
-          {type !== 'page' || selection === null || historyOpen ? null : <SelectionBar quote={selection.text} askLabel={t('agent.ask')} dismissLabel={t('tab.dismiss')} onAsk={() => void askAgent(selection)} onDismiss={() => setSelection(null)} />}
+          {type === 'page' && selection !== null && !historyOpen ? <SelectionBar quote={selection.text} askLabel={t('agent.ask')} dismissLabel={t('tab.dismiss')} onAsk={() => void askAgent(selection)} onDismiss={() => setSelection(null)} /> : null}
+          {type === 'design' && mode !== 'source' && !readOnly && canvasSelection[0] !== undefined ? (
+            <LayerBar
+              t={t}
+              layer={canvasSelection[0]}
+              askLabel={t('agent.ask')}
+              dismissLabel={t('tab.dismiss')}
+              onAsk={() => {
+                const quote = canvasHandle?.quoteSelection();
+                if (quote !== null && quote !== undefined) void askAgent(buildDesignQuote(t, quote), 'agent.addedTruncatedDesign');
+              }}
+              onDismiss={() => canvasHandle?.clearSelection()}
+            />
+          ) : null}
           {type === 'doc' ? (
             <DocView markdown={text} revision={(viewing?.version ?? 0) + ':' + state.revision} editable={!readOnly && !conflict} label={payload.manifest.title} loadingLabel={t('empty.loading')} failedLabel={t('error.generic')} design={payload.design} dark={dark} t={t} onChange={value => model.edit(value)} onSave={() => void model.save()} onSelectionText={reportSelection} selectionAction={selection === null ? null : <Button size="sm" variant="primary" icon={<IconSparkleRegular size={14} />} onMouseDown={event => event.preventDefault()} onClick={() => void askAgent(selection)}>{t('agent.ask')}</Button>} />
-          ) : mode === 'preview' ? (
+          ) : mode !== 'source' ? (
             type === 'design'
               ? readOnly
                 ? <DesignView t={t} where={where} id={id} version={version} title={payload.manifest.title} />
-                : <DesignCanvasView t={t} source={text} revision={'0:' + state.revision} title={payload.manifest.title} onChange={value => model.edit(value)} onSave={() => void model.save()} fallback={<DesignView t={t} where={where} id={id} version={version} title={payload.manifest.title} />} />
+                : <DesignCanvasView
+                    t={t}
+                    source={text}
+                    revision={'0:' + state.revision}
+                    title={payload.manifest.title}
+                    mode={mode === 'edit' ? 'edit' : 'view'}
+                    onChange={value => model.edit(value)}
+                    onSave={() => void model.save()}
+                    onFailure={onCanvasFailure}
+                    onHandle={onCanvasHandle}
+                    onSelection={onCanvasSelection}
+                    attempt={canvasAttempt}
+                    fallback={<DesignView t={t} where={where} id={id} version={version} title={payload.manifest.title} />}
+                  />
               : <PageFrame content={text} designCss={payload.designCss} title={payload.manifest.title} frameTitle={t('tab.frameTitle', { title: payload.manifest.title })} dark={dark} onSelectionText={reportSelection} />
           ) : showEditor ? (
             <SourceEditor value={text} readOnly={false} label={t('tab.source')} hint={type === 'design' ? t('tab.manualSaveDesign') : t('tab.manualSave')} onChange={value => model.edit(value)} onSave={() => void model.save()} onSelectionText={reportSelection} />
@@ -594,9 +729,33 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
             </div>
           )}
         </div>
-        {!historyOpen ? null : <DrawerShell label={t('history.title')} closeLabel={t('history.close')} overlay={overlay} onClose={closeHistory}>
-          <HistoryPanel t={t} versions={versions} failed={historyFailed} current={payload.version} selected={viewing?.version ?? payload.version} onSelect={version => void selectVersion(version)} />
-        </DrawerShell>}
+        {!historyOpen && !inspectorOpen ? null : (
+          <DrawerShell
+            label={historyOpen ? t('history.title') : t('canvas.inspector')}
+            closeLabel={historyOpen ? t('history.close') : t('canvas.closeInspector')}
+            overlay={overlay}
+            onClose={historyOpen ? closeHistory : closeInspector}
+            head={!historyOpen ? (
+              <SegmentedTabs<InspectorTab>
+                className="art-inspector-tabs"
+                items={[
+                  { value: 'layers', label: t('panel.layers'), id: 'art-inspector-' + id + '-layers-tab', panelId: 'art-inspector-' + id + '-layers' },
+                  { value: 'properties', label: t('panel.properties'), id: 'art-inspector-' + id + '-properties-tab', panelId: 'art-inspector-' + id + '-properties' },
+                ]}
+                value={inspectorTab}
+                onChange={setInspectorTab}
+                label={t('canvas.inspectorTabs')}
+                size="sm"
+              />
+            ) : undefined}
+          >
+            {historyOpen ? <HistoryPanel t={t} versions={versions} failed={historyFailed} current={payload.version} selected={viewing?.version ?? payload.version} onSelect={version => void selectVersion(version)} /> : (
+              <div className="art-inspector" role="tabpanel" id={'art-inspector-' + id + '-' + inspectorTab} aria-labelledby={'art-inspector-' + id + '-' + inspectorTab + '-tab'}>
+                <DesignInspector t={t} handle={canvasHandle} snapshot={canvasSnapshot} tab={inspectorTab} />
+              </div>
+            )}
+          </DrawerShell>
+        )}
       </div>
       <Modal
         open={leave !== null}

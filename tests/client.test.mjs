@@ -19,7 +19,24 @@ let canvasFake;
 let blobs;
 
 /** What the fake canvas chunk does for the current test. */
-const canvasDispatch = { enabled: false, mounts: [], gate: null, fail: null };
+const canvasDispatch = { enabled: false, mounts: [], attempts: 0, gate: null, fail: null, snapshot: null, quote: null };
+
+/** A snapshot with no layers, matching an empty canvas. */
+function emptyCanvasSnapshot() {
+  return {
+    selection: [],
+    rows: [],
+    properties: { ids: [], name: null, type: null, x: null, y: null, width: null, height: null, rotation: null, radius: null, opacity: null, visible: null, text: null },
+    isText: false,
+    canUndo: false,
+    canRedo: false,
+    zoom: 1,
+    tool: 'select',
+    fit: true,
+  };
+}
+
+const CANVAS_QUOTE = { name: 'Card', path: 'Card', type: 'FRAME', parentName: '', jsx: '<Frame w={320} p={24} bg="#ffffff" />' };
 
 /**
  * Evaluate a built client artifact the way the harness module loader does.
@@ -63,19 +80,74 @@ before(async () => {
   ({ createRoot } = require('react-dom/client'));
   canvasFake = {
     async mountDesignCanvas(options) {
+      canvasDispatch.attempts += 1;
       if (!canvasDispatch.enabled) throw new Error('The canvas chunk is not available in this test.');
       if (canvasDispatch.gate !== null) await canvasDispatch.gate.promise;
       if (canvasDispatch.fail !== null) throw new Error(canvasDispatch.fail);
+      const listeners = [];
       const handle = {
         options,
         sources: [],
         destroyed: false,
+        snapshot: canvasDispatch.snapshot ?? emptyCanvasSnapshot(),
         setSource(source) { this.sources.push(source); },
+        setMode(mode) { this.mode = mode; },
         setTool(tool) { this.tool = tool; },
-        setPanels(open) { this.panels = open; },
         undo() { this.undos = (this.undos ?? 0) + 1; },
         redo() { this.redos = (this.redos ?? 0) + 1; },
-        zoomToFit() { this.fits = (this.fits ?? 0) + 1; },
+        zoomToFit() { this.fits = (this.fits ?? 0) + 1; this.emit({ ...this.snapshot, fit: true }); },
+        setZoom(zoom) { this.zooms = [...(this.zooms ?? []), zoom]; this.emit({ ...this.snapshot, zoom, fit: false }); },
+        getSnapshot() { return this.snapshot; },
+        subscribe(listener) {
+          listeners.push(listener);
+          return () => {
+            const index = listeners.indexOf(listener);
+            if (index !== -1) listeners.splice(index, 1);
+          };
+        },
+        emit(next) {
+          this.snapshot = next;
+          for (const listener of [...listeners]) listener(next);
+        },
+        select(id, mode) {
+          this.selects = [...(this.selects ?? []), { id, mode }];
+          const rows = this.snapshot.rows.map(row => ({
+            ...row,
+            selected: mode === 'add' ? (row.id === id ? !row.selected : row.selected) : row.id === id,
+          }));
+          this.emit({ ...this.snapshot, rows, properties: { ...this.snapshot.properties, ids: rows.filter(row => row.selected).map(row => row.id) } });
+        },
+        clearSelection() {
+          this.cleared = (this.cleared ?? 0) + 1;
+          const rows = this.snapshot.rows.map(row => ({ ...row, selected: false }));
+          this.emit({ ...this.snapshot, selection: [], rows, properties: { ...this.snapshot.properties, ids: [] } });
+        },
+        toggleExpand(id) {
+          this.expanded = [...(this.expanded ?? []), id];
+          const rows = this.snapshot.rows.map(row => row.id === id ? { ...row, expanded: !row.expanded } : row);
+          this.emit({ ...this.snapshot, rows });
+        },
+        toggleVisibility(id) {
+          this.visibilities = [...(this.visibilities ?? []), id];
+          const rows = this.snapshot.rows.map(row => row.id === id ? { ...row, visible: !row.visible } : row);
+          this.emit({ ...this.snapshot, rows });
+        },
+        toggleLock(id) {
+          this.locks = [...(this.locks ?? []), id];
+          const rows = this.snapshot.rows.map(row => row.id === id ? { ...row, locked: !row.locked } : row);
+          this.emit({ ...this.snapshot, rows });
+        },
+        rename(id, name) {
+          this.renames = [...(this.renames ?? []), { id, name }];
+          const rows = this.snapshot.rows.map(row => row.id === id ? { ...row, name } : row);
+          this.emit({ ...this.snapshot, rows });
+        },
+        setVisible(visible) { this.visible = visible; },
+        setFamily(family) { this.families = [...(this.families ?? []), family]; },
+        setWeight(weight) { this.weights = [...(this.weights ?? []), weight]; },
+        preview(prop, value) { this.previews = [...(this.previews ?? []), [prop, value]]; },
+        commit(prop, value, previous) { this.commits = [...(this.commits ?? []), [prop, value, previous]]; },
+        quoteSelection() { return canvasDispatch.quote ?? CANVAS_QUOTE; },
         destroy() { this.destroyed = true; },
       };
       canvasDispatch.mounts.push(handle);
@@ -94,8 +166,11 @@ beforeEach(() => {
   window.localStorage.clear();
   canvasDispatch.enabled = false;
   canvasDispatch.mounts.length = 0;
+  canvasDispatch.attempts = 0;
   canvasDispatch.gate = null;
   canvasDispatch.fail = null;
+  canvasDispatch.snapshot = null;
+  canvasDispatch.quote = null;
 });
 
 const DESIGN_INFO = {
@@ -125,6 +200,7 @@ function fakeHost() {
     artifacts: new Map(),
     designCss: ':root { --artifact-color-primary: #1a4d8f; }',
     failNext: null,
+    previewHandler: null,
   };
   const manifest = (id, type, title, version, scope = 'workspace') => ({
     schemaVersion: 1,
@@ -198,6 +274,7 @@ function fakeHost() {
           return { ok: true, value: { manifest: { ...item.manifest } } };
         }
         case 'preview':
+          if (state.previewHandler !== null) return state.previewHandler(payload);
           return {
             ok: true,
             value: { mediaType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB', width: 320, height: 120, info: item.designInfo ?? DESIGN_INFO },
@@ -1737,7 +1814,7 @@ test('FEAT-007 AC-014: a design tab shows the rendered preview and its source', 
 
 
 /** Open a design tab whose canvas chunk is available. */
-async function canvasFixture(suffix) {
+async function canvasFixture(suffix, extra = {}) {
   const host = fakeHost();
   const id = 'art_ws_canvas' + suffix;
   host.state.artifacts.set(id, { manifest: host.manifest(id, 'design', 'Card', 1), content: DESIGN_SOURCE, designInfo: DESIGN_INFO });
@@ -1745,7 +1822,7 @@ async function canvasFixture(suffix) {
   const { ctx, records } = stubContext(host);
   plugin.apply(ctx);
   const tab = slot(records, 'sidebar.right.pane.tab', 'dsh-artifact-studio/artifact');
-  const view = await render(tab.component, tabProps('dsh-resource://artifact/workspace/ws-a/' + id));
+  const view = await render(tab.component, { ...tabProps('dsh-resource://artifact/workspace/ws-a/' + id), ...extra });
   return { host, id, view };
 }
 
@@ -1759,7 +1836,7 @@ test('FEAT-007 AC-017: the design tab mounts the canvas over the PNG', async () 
   const { view } = await canvasFixture('01701');
   try {
     assert.ok(view.container.querySelector('img.art-design-image'), 'the PNG did not show first');
-    assert.ok(view.container.querySelector('.art-canvas-loading'), 'the loading note is missing');
+    assert.ok(view.container.querySelector('.art-canvas-opening'), 'the opening note is missing');
     assert.equal(canvasDispatch.mounts.length, 0);
     await act(async () => { gate.resolve(); await settle(40); });
     const mount = view.container.querySelector('.art-canvas-mount');
@@ -1801,8 +1878,8 @@ test('FEAT-007 AC-020: a canvas failure keeps the PNG and the source editor', as
   const { view } = await canvasFixture('02001');
   try {
     assert.ok(view.container.querySelector('img.art-design-image'));
-    assert.match(view.container.textContent, /canvas.failed/);
-    assert.match(view.container.textContent, /WebGL is not available/);
+    assert.match(view.container.textContent, /canvas.startFailed/);
+    assert.ok(view.container.querySelector('.art-bar[data-tone="error"]'), 'the failure bar has no error tone');
     assert.ok(findButton(view, 'action.retry'));
     await openSource(view);
     assert.ok(view.container.querySelector('textarea'));
@@ -1836,37 +1913,500 @@ test('FEAT-007 AC-022: an old design version shows the PNG and mounts no canvas'
   } finally { await view.unmount(); }
 });
 
-test('FEAT-007 AC-023: the canvas toolbar drives the handle', async () => {
-  const gate = deferred();
-  canvasDispatch.gate = gate;
-  const { view } = await canvasFixture('02301');
-  try {
-    assert.equal(findButton(view, 'canvas.undo').disabled, true);
-    await act(async () => { gate.resolve(); await settle(40); });
-    const handle = canvasDispatch.mounts[0];
-    await click(findButton(view, 'canvas.undo'));
-    await click(findButton(view, 'canvas.redo'));
-    await click(findButton(view, 'canvas.fit'));
-    const frame = [...view.container.querySelectorAll('button')].find(button => button.textContent === 'canvas.frame');
-    await click(frame);
-    assert.equal(handle.undos, 1);
-    assert.equal(handle.redos, 1);
-    assert.equal(handle.fits, 1);
-    assert.equal(handle.tool, 'frame');
-  } finally { gate.resolve(); await view.unmount(); }
-});
 
 
-test('FEAT-007 AC-030: the panel toggle drives the rail and leaves the draft alone', async () => {
-  const { host, view } = await canvasFixture('03001');
+
+/** A button, link, or control with an accessible label. */
+function byLabel(view, label) {
+  return view.container.querySelector('[aria-label="' + label + '"]');
+}
+
+/** Change a select's value and announce it. */
+async function changeSelect(select, value) {
+  await act(async () => {
+    select.value = value;
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    await settle(30);
+  });
+}
+
+/** A snapshot carrying layer rows and the selection they imply. */
+function rowsSnapshot(rows, extra = {}) {
+  const base = emptyCanvasSnapshot();
+  const selected = rows.filter(row => row.selected).map(row => row.id);
+  const properties = { ...base.properties, ...(extra.properties ?? {}), ids: (extra.properties ?? {}).ids ?? selected };
+  return { ...base, rows, ...extra, properties };
+}
+
+/** One row for the fake layer tree. */
+function layerRow(id, name, type, level, extra = {}) {
+  return { id, name, type, level, hasChildren: false, expanded: false, visible: true, locked: false, selected: false, ...extra };
+}
+
+/** Open the design's Edit mode from its header. */
+async function openEdit(view) {
+  const button = [...view.container.querySelectorAll('.art-segment button')].find(entry => entry.textContent === 'canvas.editMode');
+  assert.ok(button, 'the Edit mode control is missing');
+  await click(button);
+}
+
+/** Switch the inspector to its Properties tab. */
+async function openProperties(view) {
+  const tab = [...view.container.querySelectorAll('[role="tab"]')].find(entry => entry.textContent === 'panel.properties');
+  assert.ok(tab, 'the Properties tab is missing');
+  await click(tab);
+}
+
+/** The single drawer's accessible name. */
+function drawerLabel(view) {
+  const drawer = drawerOf(view);
+  return drawer === null ? null : drawer.getAttribute('aria-label');
+}
+
+test('FEAT-007 AC-043: a mockup opens in View with no tool buttons', async () => {
+  const { view } = await canvasFixture('04301');
   try {
     const handle = canvasDispatch.mounts[0];
-    assert.equal(findButton(view, 'panel.toggle').getAttribute('aria-pressed'), 'false');
-    await click(findButton(view, 'panel.toggle'));
-    assert.equal(handle.panels, true);
-    assert.equal(findButton(view, 'panel.toggle').getAttribute('aria-pressed'), 'true');
-    assert.equal(host.calls.filter((call) => call.endpoint === 'update').length, 0);
-    await click(findButton(view, 'panel.toggle'));
-    assert.equal(handle.panels, false);
+    assert.equal(handle.options.mode, 'view');
+    assert.deepEqual([...view.container.querySelectorAll('.art-segment button')].map(button => button.textContent), ['canvas.viewMode', 'canvas.editMode', 'tab.source']);
+    assert.ok(view.container.querySelector('.art-canvas-dock'), 'no floating dock');
+    assert.ok(byLabel(view, 'canvas.zoomControls'), 'the dock has no zoom controls');
+    assert.equal(byLabel(view, 'canvas.select'), null, 'View shows the select tool');
+    assert.equal(byLabel(view, 'canvas.hand'), null, 'View shows the hand tool');
+    assert.equal(byLabel(view, 'canvas.undo'), null, 'View shows undo');
   } finally { await view.unmount(); }
 });
+
+test('FEAT-007 AC-044: pages keep Preview and Code', async () => {
+  const host = fakeHost();
+  const id = 'art_ws_page0440001';
+  host.state.artifacts.set(id, { manifest: host.manifest(id, 'page', 'Page', 1), content: '<p>x</p>' });
+  const { ctx, records } = stubContext(host);
+  plugin.apply(ctx);
+  const tab = slot(records, 'sidebar.right.pane.tab', 'dsh-artifact-studio/artifact');
+  const view = await render(tab.component, tabProps('dsh-resource://artifact/workspace/ws-a/' + id));
+  try {
+    assert.deepEqual([...view.container.querySelectorAll('.art-segment button')].map(button => button.textContent), ['tab.preview', 'tab.source']);
+    assert.equal(view.container.querySelector('.art-canvas-dock'), null);
+    assert.equal(view.container.querySelector('.art-layer-tree'), null);
+  } finally { await view.unmount(); }
+});
+
+test('FEAT-007 AC-045: opening fits the content and the dock reports the scale', async () => {
+  const { view } = await canvasFixture('04501');
+  try {
+    const handle = canvasDispatch.mounts[0];
+    await click(byLabel(view, 'canvas.zoomMenu'));
+    let fit = [...view.container.querySelectorAll('[role="menuitem"]')].find(item => item.textContent === 'canvas.fit');
+    assert.ok(fit, 'the zoom menu has no Fit entry');
+    await click(fit);
+    assert.equal(handle.fits, 1, 'Fit did not reach the handle');
+    await click(byLabel(view, 'canvas.zoomMenu'));
+    fit = [...view.container.querySelectorAll('[role="menuitem"]')].find(item => item.textContent === 'canvas.fit');
+    assert.equal(fit.getAttribute('data-selected'), 'true', 'Fit is not marked selected');
+    assert.match(byLabel(view, 'canvas.zoomMenu').textContent, /canvas.zoomValue\|percent=100/);
+  } finally { await view.unmount(); }
+});
+
+test('FEAT-007 AC-046: Edit mode adds the tools and opens the inspector', async () => {
+  const { view } = await canvasFixture('04601');
+  try {
+    const handle = canvasDispatch.mounts[0];
+    await openEdit(view);
+    assert.equal(handle.mode, 'edit', 'Entering Edit did not reach the handle');
+    for (const label of ['canvas.select', 'canvas.hand', 'canvas.frame', 'canvas.text', 'canvas.undo', 'canvas.redo']) {
+      assert.ok(byLabel(view, label), label + ' is missing from the Edit dock');
+    }
+    assert.equal(byLabel(view, 'canvas.undo').disabled, true, 'Undo is enabled with no history');
+    assert.equal(byLabel(view, 'canvas.redo').disabled, true, 'Redo is enabled with no history');
+    assert.equal(drawerLabel(view), 'canvas.inspector', 'Edit did not open the inspector');
+    await click(byLabel(view, 'canvas.frame'));
+    assert.equal(handle.tool, 'frame', 'the frame tool did not reach the handle');
+    await act(async () => { handle.emit({ ...handle.snapshot, canUndo: true }); await settle(20); });
+    assert.equal(byLabel(view, 'canvas.undo').disabled, false, 'Undo stays disabled with history');
+  } finally { await view.unmount(); }
+});
+
+test('FEAT-007 AC-047: a selected layer shows the layer bar', async () => {
+  const { view } = await canvasFixture('04701');
+  try {
+    const handle = canvasDispatch.mounts[0];
+    const layer = { id: 'n1', name: 'Pro plan', type: 'TEXT', parentName: 'Pricing' };
+    await act(async () => { handle.emit({ ...handle.snapshot, selection: [layer] }); await settle(30); });
+    const bar = view.container.querySelector('.art-layer-bar');
+    assert.ok(bar, 'no layer bar for the selection');
+    assert.match(bar.textContent, /Pro plan/);
+    assert.match(bar.textContent, /layer\.parentLine\|type=layer\.type\.text\|parent=Pricing/);
+    assert.ok([...bar.querySelectorAll('button')].some(button => button.textContent === 'agent.ask'), 'the layer bar has no Edit with agent');
+    await click(bar.querySelector('[aria-label="tab.dismiss"]'));
+    assert.equal(handle.cleared, 1, 'dismiss did not clear the selection');
+  } finally { await view.unmount(); }
+});
+
+test('FEAT-007 AC-048: Edit with agent quotes the selected layer', async () => {
+  const composer = composerActions();
+  const { host, view } = await canvasFixture('04801', { inputActions: composer.actions });
+  try {
+    const handle = canvasDispatch.mounts[0];
+    canvasDispatch.quote = { name: 'Pro plan', path: 'Pricing / Plan row / Pro plan', type: 'TEXT', parentName: 'Plan row', jsx: '<Text size={16}>Pro</Text>' };
+    await act(async () => { handle.options.onChange('SERIALIZED_CARD'); await settle(20); });
+    await act(async () => {
+      handle.emit({ ...handle.snapshot, selection: [{ id: 'n1', name: 'Pro plan', type: 'TEXT', parentName: 'Plan row' }] });
+      await settle(20);
+    });
+    const bar = view.container.querySelector('.art-layer-bar');
+    await click([...bar.querySelectorAll('button')].find(button => button.textContent === 'agent.ask'));
+    assert.equal(host.state.artifacts.get('art_ws_canvas04801').content, 'SERIALIZED_CARD', 'the draft was not saved first');
+    assert.deepEqual(composer.calls.map(call => call[0]), ['insertQuote', 'captureInsertion', 'insertText']);
+    assert.match(composer.calls[0][1], /agent\.quoteDesign\|name=Pro plan\|path=Pricing \/ Plan row \/ Pro plan/);
+    assert.match(composer.calls[0][1], /<Text size=\{16\}>Pro<\/Text>/);
+    assert.match(composer.calls[2][1], /agent\.reference/);
+    assert.equal(view.container.querySelector('.art-layer-bar'), null, 'the layer bar stayed after asking');
+  } finally { await view.unmount(); }
+});
+
+test('FEAT-007 AC-049: a long layer quote is truncated', async () => {
+  const { buildDesignQuote, DESIGN_QUOTE_LIMIT } = await import('../src/client/review.ts');
+  const short = buildDesignQuote(t, { name: 'Card', path: 'Card', type: 'FRAME', parentName: '', jsx: '<Frame />' });
+  assert.equal(short.truncated, false);
+  const long = buildDesignQuote(t, { name: 'Card', path: 'Card', type: 'FRAME', parentName: '', jsx: '<Frame />'.repeat(1000) });
+  assert.equal(long.truncated, true);
+  assert.ok(long.text.length <= DESIGN_QUOTE_LIMIT, 'the truncated quote is over the limit');
+  assert.match(long.text, /agent\.quoteCut\|limit=4000/);
+});
+
+test('FEAT-007 AC-050: the inspector and History share one drawer', async () => {
+  const { view } = await canvasFixture('05001');
+  try {
+    await openEdit(view);
+    assert.equal(drawerLabel(view), 'canvas.inspector');
+    await click(byLabel(view, 'tab.history'));
+    assert.equal(drawerLabel(view), 'history.title', 'History did not replace the inspector');
+    assert.equal(view.container.querySelectorAll('.art-drawer').length, 1, 'two drawers are open at once');
+    await click(view.container.querySelector('.art-header [aria-label="canvas.inspector"]'));
+    assert.equal(drawerLabel(view), 'canvas.inspector', 'the inspector toggle did not reopen the inspector');
+    assert.equal(view.container.querySelectorAll('.art-drawer').length, 1);
+  } finally { await view.unmount(); }
+});
+
+test('FEAT-007 AC-051: Layer rows drive the handle', async () => {
+  canvasDispatch.snapshot = rowsSnapshot([
+    layerRow('f1', 'Pricing', 'FRAME', 1, { hasChildren: true, expanded: true }),
+    layerRow('t1', 'Pro plan', 'TEXT', 2, { selected: true }),
+  ], { properties: { name: 'Pro plan', type: 'TEXT' } });
+  const { view } = await canvasFixture('05101');
+  try {
+    const handle = canvasDispatch.mounts[0];
+    await openEdit(view);
+    const row = view.container.querySelector('[data-layer-id="t1"]');
+    assert.ok(row, 'the Text row is missing');
+    assert.equal(row.getAttribute('aria-selected'), 'true');
+    assert.ok(row.classList.contains('is-selected'), 'the selected row has no selected style');
+    await click(row);
+    assert.deepEqual(handle.selects.at(-1), { id: 't1', mode: 'replace' });
+    await click(view.container.querySelector('[data-layer-id="f1"] [aria-label="panel.collapse"]'));
+    assert.deepEqual(handle.expanded, ['f1']);
+    await click(view.container.querySelector('[data-layer-id="t1"] [aria-label="panel.hide"]'));
+    assert.deepEqual(handle.visibilities, ['t1']);
+    await click(view.container.querySelector('[data-layer-id="t1"] [aria-label="panel.lock"]'));
+    assert.deepEqual(handle.locks, ['t1']);
+    await click(row);
+    await act(async () => {
+      row.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+      await settle(20);
+    });
+    const input = byLabel(view, 'panel.rename');
+    assert.ok(input, 'double-click did not open the rename field');
+    await changeValue(input, 'Upgrade');
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await settle(20);
+    });
+    assert.deepEqual(handle.renames, [{ id: 't1', name: 'Upgrade' }]);
+  } finally { await view.unmount(); }
+});
+
+test('FEAT-007 AC-052: Layers are keyboard reachable', async () => {
+  canvasDispatch.snapshot = rowsSnapshot([
+    layerRow('f1', 'Pricing', 'FRAME', 1, { hasChildren: true }),
+    layerRow('t1', 'Pro plan', 'TEXT', 2),
+  ]);
+  const { view } = await canvasFixture('05201');
+  try {
+    await openEdit(view);
+    const tree = view.container.querySelector('[role="tree"]');
+    assert.ok(tree, 'no tree');
+    tree.focus();
+    await act(async () => {
+      tree.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+      await settle(20);
+    });
+    const first = view.container.querySelector('[data-layer-id="f1"]');
+    assert.equal(first.getAttribute('aria-selected'), 'true', 'arrow down did not select the first row');
+    assert.equal(first.getAttribute('aria-level'), '1');
+    await act(async () => {
+      tree.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+      await settle(20);
+    });
+    assert.equal(first.getAttribute('aria-expanded'), 'true', 'arrow right did not expand the frame');
+    await act(async () => {
+      tree.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+      await settle(20);
+    });
+    assert.equal(view.container.querySelector('[data-layer-id="t1"]').getAttribute('aria-selected'), 'true');
+    await act(async () => {
+      tree.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await settle(20);
+    });
+    assert.ok(byLabel(view, 'panel.rename'), 'Enter did not start a rename');
+  } finally { await view.unmount(); }
+});
+
+test('FEAT-007 AC-053: a number field previews and commits once', async () => {
+  canvasDispatch.snapshot = rowsSnapshot([
+    layerRow('t1', 'Pro plan', 'RECTANGLE', 1, { selected: true }),
+  ], { properties: { name: 'Pro plan', type: 'RECTANGLE', x: 0, y: 0, width: 130, height: 20, rotation: 0, radius: 4, opacity: 100, visible: true } });
+  const { view } = await canvasFixture('05301');
+  try {
+    const handle = canvasDispatch.mounts[0];
+    await openEdit(view);
+    await openProperties(view);
+    const input = byLabel(view, 'panel.w');
+    assert.ok(input, 'the width field is missing');
+    assert.equal(input.value, '130');
+    await act(async () => { input.focus(); await settle(10); });
+    await changeValue(input, '200');
+    assert.deepEqual(handle.previews.at(-1), ['width', 200], 'typing did not preview the width');
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await settle(30);
+    });
+    assert.deepEqual(handle.commits.at(-1), ['width', 200, 130], 'the width did not commit once with its previous value');
+    assert.equal(handle.commits.filter(call => call[0] === 'width').length, 1);
+  } finally { await view.unmount(); }
+});
+
+test('FEAT-007 AC-054: Mixed values read as Mixed', async () => {
+  canvasDispatch.snapshot = rowsSnapshot([
+    layerRow('a', 'One', 'RECTANGLE', 1, { selected: true }),
+    layerRow('b', 'Two', 'RECTANGLE', 1, { selected: true }),
+  ], { properties: { name: 'One', type: 'RECTANGLE', x: 0, y: 0, width: null, height: 20, rotation: 0, radius: 4, opacity: null, visible: true } });
+  const { view } = await canvasFixture('05401');
+  try {
+    const handle = canvasDispatch.mounts[0];
+    await openEdit(view);
+    await openProperties(view);
+    const width = byLabel(view, 'panel.w');
+    assert.equal(width.value, '');
+    assert.equal(width.getAttribute('placeholder'), 'panel.mixed');
+    await act(async () => { width.focus(); await settle(10); });
+    await changeValue(width, '50');
+    await act(async () => {
+      width.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await settle(30);
+    });
+    assert.deepEqual(handle.commits.at(-1), ['width', 50, 0], 'a mixed field did not apply to the selection');
+  } finally { await view.unmount(); }
+});
+
+test('FEAT-007 AC-055: the inspector explains the empty states', async () => {
+  const { view } = await canvasFixture('05501');
+  try {
+    const handle = canvasDispatch.mounts[0];
+    await openEdit(view);
+    await openProperties(view);
+    assert.match(view.container.textContent, /panel\.selectLayerHint/);
+    await act(async () => {
+      handle.emit(rowsSnapshot([
+        layerRow('f1', 'Pricing', 'FRAME', 1, { selected: true }),
+      ], { properties: { name: 'Pricing', type: 'FRAME', x: 0, y: 0, width: 320, height: 200, rotation: 0, radius: 0, opacity: 100, visible: true } }));
+      await settle(20);
+    });
+    assert.match(view.container.textContent, /panel\.selectTextHint/);
+  } finally { await view.unmount(); }
+});
+
+test('FEAT-007 AC-056: Text fields edit one text layer', async () => {
+  canvasDispatch.snapshot = rowsSnapshot([
+    layerRow('t1', 'Pro plan', 'TEXT', 1, { selected: true }),
+  ], {
+    isText: true,
+    properties: { name: 'Pro plan', type: 'TEXT', x: 0, y: 0, width: 120, height: 20, rotation: 0, radius: 0, opacity: 100, visible: true, text: { family: 'Inter', weight: 400, fontSize: 16 } },
+  });
+  const { view } = await canvasFixture('05601');
+  try {
+    const handle = canvasDispatch.mounts[0];
+    await openEdit(view);
+    await openProperties(view);
+    const family = byLabel(view, 'panel.family');
+    assert.ok(family, 'the family control is missing');
+    assert.deepEqual([...family.options].map(option => option.value), ['Inter', 'Roboto', 'Noto Naskh Arabic']);
+    await changeSelect(family, 'Roboto');
+    assert.deepEqual(handle.families, ['Roboto']);
+    const weight = byLabel(view, 'panel.weight');
+    assert.deepEqual([...weight.options].map(option => option.value), ['400', '500', '600', '700']);
+    await changeSelect(weight, '700');
+    assert.deepEqual(handle.weights, [700]);
+    const size = byLabel(view, 'panel.fontSize');
+    await changeValue(size, '22');
+    assert.deepEqual(handle.previews.at(-1), ['fontSize', 22]);
+  } finally { await view.unmount(); }
+});
+
+test('FEAT-007 AC-057: an old version opens in View only', async () => {
+  const host = fakeHost();
+  const id = 'art_ws_canvas05701';
+  host.state.artifacts.set(id, { manifest: host.manifest(id, 'design', 'Card', 2), content: DESIGN_SOURCE, designInfo: DESIGN_INFO });
+  canvasDispatch.enabled = true;
+  const { ctx, records } = stubContext(host);
+  plugin.apply(ctx);
+  const tab = slot(records, 'sidebar.right.pane.tab', 'dsh-artifact-studio/artifact');
+  const view = await render(tab.component, tabProps('dsh-resource://artifact/workspace/ws-a/' + id));
+  try {
+    await click(byLabel(view, 'tab.history'));
+    await click([...view.container.querySelectorAll('.art-version')].find(button => button.textContent.includes('tab.versionOf|version=1')));
+    await flushCanvas();
+    const edit = [...view.container.querySelectorAll('.art-segment button')].find(button => button.textContent === 'canvas.editMode');
+    assert.equal(edit.disabled, true, 'Edit is offered for an old version');
+    assert.equal(byLabel(view, 'canvas.inspector'), null, 'the inspector toggle is offered for an old version');
+    assert.match(view.container.textContent, /tab\.viewingOld/);
+  } finally { await view.unmount(); }
+});
+
+test('FEAT-007 AC-058: a canvas failure keeps the PNG with a retry bar', async () => {
+  canvasDispatch.fail = 'The canvas chunk did not load.';
+  const { view } = await canvasFixture('05801');
+  try {
+    assert.ok(view.container.querySelector('img.art-design-image'));
+    const bar = view.container.querySelector('.art-bar[data-tone="error"]');
+    assert.ok(bar, 'no error bar');
+    assert.match(bar.textContent, /canvas\.startFailed/);
+    await click(findButton(view, 'action.retry'));
+    assert.equal(canvasDispatch.attempts, 2, 'Retry did not remount the canvas');
+  } finally { await view.unmount(); }
+});
+
+test('FEAT-007 AC-059: the type is called Mockup in both languages', async () => {
+  const { EN, ZH } = await import('../src/client/locale.ts');
+  assert.equal(EN['type.design'], 'Mockup');
+  assert.equal(ZH['type.design'], '原型');
+  assert.equal(EN['gallery.newDesign'], 'New mockup');
+  assert.equal(ZH['gallery.newDesign'], '新建原型');
+  assert.equal(EN['create.untitledDesign'], 'Untitled mockup');
+  assert.equal(ZH['create.untitledDesign'], '未命名原型');
+  assert.equal(EN['gallery.design'], 'Design system', 'the token editor was renamed');
+  assert.equal(ZH['design.title'], '设计系统');
+});
+
+test('FEAT-007 AC-060: Gallery covers fetch only for visible mockups', async () => {
+  const host = fakeHost();
+  for (const suffix of ['a', 'b', 'c']) {
+    const id = 'art_ws_mock060' + suffix.repeat(3);
+    host.state.artifacts.set(id, { manifest: host.manifest(id, 'design', 'Mockup ' + suffix, 1), content: DESIGN_SOURCE, designInfo: DESIGN_INFO });
+  }
+  const { ctx, records } = stubContext(host);
+  plugin.apply(ctx);
+
+  const pending = [];
+  let previews = 0;
+  host.state.previewHandler = async () => {
+    previews += 1;
+    const gate = deferred();
+    pending.push(gate);
+    await gate.promise;
+    return { ok: true, value: { mediaType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB', width: 320, height: 120, info: DESIGN_INFO } };
+  };
+
+  try {
+    const view = await galleryView(records);
+    await act(async () => settle(400));
+    assert.equal(previews, 2, 'more than two covers started at once');
+    pending[0].resolve();
+    await act(async () => settle(160));
+    assert.equal(previews, 3, 'the queued cover did not start after a slot freed');
+    pending[1].resolve();
+    pending[2].resolve();
+    await act(async () => settle(200));
+    await view.unmount();
+    const before = previews;
+    const again = await galleryView(records);
+    await act(async () => settle(150));
+    assert.equal(previews, before, 'a second gallery render refetched a cached cover');
+    await again.unmount();
+  } finally {
+    host.state.previewHandler = null;
+  }
+});
+
+test('FEAT-007 AC-060: mockup covers wait for visibility', async () => {
+  const host = fakeHost();
+  const id = 'art_ws_mock060visible';
+  host.state.artifacts.set(id, { manifest: host.manifest(id, 'design', 'Hidden mockup', 1), content: DESIGN_SOURCE, designInfo: DESIGN_INFO });
+  const { ctx, records } = stubContext(host);
+  plugin.apply(ctx);
+  global.IntersectionObserver = class {
+    constructor(callback) { this.callback = callback; }
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+  try {
+    const view = await galleryView(records);
+    await act(async () => settle(220));
+    assert.ok(view.container.querySelector('.art-cover'), 'no cover mounted');
+    assert.equal(host.calls.filter(call => call.endpoint === 'preview').length, 0, 'an off-screen cover fetched its PNG');
+    assert.ok(view.container.querySelector('.art-cover-fallback'), 'the hidden cover has no fallback glyph');
+    await view.unmount();
+  } finally {
+    delete global.IntersectionObserver;
+  }
+});
+
+test('FEAT-007 AC-061: the skill calls the type a mockup', async () => {
+  const { ARTIFACT_DESIGN_SKILL } = await import('../src/host/lib/skill.ts');
+  assert.match(ARTIFACT_DESIGN_SKILL.content, /Call this artifact a mockup when you talk to the user/);
+  assert.match(ARTIFACT_DESIGN_SKILL.content, /tools still take type/);
+});
+
+test('FEAT-007 AC-062: an empty design shows a hint in the canvas', async () => {
+  const { view } = await canvasFixture('06201');
+  try {
+    const hint = view.container.querySelector('.art-canvas-empty');
+    assert.ok(hint, 'no empty-canvas hint');
+    assert.match(hint.textContent, /canvas\.empty/);
+    assert.ok(view.container.querySelector('.art-canvas-dock'), 'the dock disappeared on an empty design');
+  } finally { await view.unmount(); }
+});
+
+test('FEAT-007 AC-063: the inspector toggle reopens the drawer', async () => {
+  const { view } = await canvasFixture('06301');
+  try {
+    await openEdit(view);
+    await click(byLabel(view, 'canvas.closeInspector'));
+    assert.equal(drawerOf(view), null, 'the inspector stayed open');
+    const edit = [...view.container.querySelectorAll('.art-segment button')].find(button => button.textContent === 'canvas.editMode');
+    assert.equal(edit.getAttribute('aria-selected'), 'true', 'closing the inspector left Edit mode');
+    await click(view.container.querySelector('.art-header [aria-label="canvas.inspector"]'));
+    assert.equal(drawerLabel(view), 'canvas.inspector', 'the toggle did not reopen the inspector');
+    assert.equal(edit.getAttribute('aria-selected'), 'true');
+  } finally { await view.unmount(); }
+});
+
+test('FEAT-007 AC-064: Narrow panels keep the header controls', async () => {
+  const css = await fs.readFile(path.join(root, 'src/client/styles.ts'), 'utf8');
+  assert.match(css, /\.art-canvas-dock \{[^}]*position: absolute;/s);
+  assert.match(css, /@container \(max-width: 600px\) \{[\s\S]*?\.art-canvas-dock \{/s);
+  assert.match(css, /@container \(max-width: 600px\) \{[\s\S]*?\.art-layer-bar \{/s);
+  assert.match(css, /\.art-editor-header \{[^}]*flex-wrap: wrap;/s);
+  assert.doesNotMatch(css, /\.art-canvas-toolbar/);
+});
+
+test('FEAT-007 AC-065: Every new inspector and dock string is localized', async () => {
+  const { EN, ZH } = await import('../src/client/locale.ts');
+  for (const key of ['canvas.viewMode', 'canvas.editMode', 'canvas.opening', 'canvas.startFailed', 'canvas.empty', 'canvas.inspector', 'canvas.inspectorTabs', 'canvas.editOldVersion', 'agent.quoteDesign', 'agent.quoteCut', 'agent.addedTruncatedDesign', 'layer.parentLine', 'layer.type.frame', 'panel.positionSize', 'panel.appearance', 'panel.text', 'panel.selectLayerHint', 'panel.selectTextHint']) {
+    assert.ok(EN[key], 'en is missing ' + key);
+    assert.ok(ZH[key], 'zh is missing ' + key);
+  }
+  assert.deepEqual(Object.keys(EN).sort(), Object.keys(ZH).sort());
+});
+
