@@ -1,4 +1,6 @@
 {
-  "title": "Artifacts",
-  "description": "Pages and documents the agent creates as versioned files, opened beside the chat with history, export, and a shared design system."
+  "meta": {
+    "title": "Artifacts",
+    "description": "Pages and documents the agent creates as versioned files, opened beside the chat with history, export, and a shared design system."
+  }
 }
