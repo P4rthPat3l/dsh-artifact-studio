@@ -1,8 +1,7 @@
-import { createApp, defineComponent, h, reactive } from 'vue';
+import { createApp, defineComponent, h, reactive, ref } from 'vue';
 import type { App } from 'vue';
 import { createDefaultEditorState, createEditor } from '@open-pencil/core/editor';
 import type { Editor, Tool } from '@open-pencil/core/editor';
-import type { IconData, IconProvider } from '@open-pencil/core/icons';
 import { getCanvasKit } from '@open-pencil/core/canvaskit';
 import { designJSXRenderer } from '@open-pencil/core/design-jsx';
 import { fontManager } from '@open-pencil/core/text';
@@ -10,6 +9,8 @@ import { SceneGraph } from '@open-pencil/scene-graph';
 import type { SceneNode } from '@open-pencil/scene-graph';
 import { selectionToJSX } from '@open-pencil/design-jsx';
 import { CanvasRoot, provideEditor } from '@open-pencil/vue';
+import { bundledIconProvider } from '../../icon-set.js';
+import { DesignPanels } from './panels.js';
 import { CanvasSurface } from './surface.js';
 
 declare const __CANVAS_ASSET_VERSION__: string;
@@ -36,14 +37,25 @@ const CANVAS_TOOLS: Partial<Record<Tool, CanvasTool>> = {
   TEXT: 'text',
 };
 
-/** Design JSX may not reach an icon provider; the canvas runs offline. */
-const NO_ICONS: IconProvider = {
-  search: async () => ({ icons: [], total: 0, collections: {} }),
-  icons: async () => new Map<string, IconData>(),
-  previews: async () => new Map<string, string>(),
-  collections: async () => [],
-  browse: async () => [],
-};
+/** The Roboto faces the package ships, by style. */
+const EXTRA_FONTS: ReadonlyArray<readonly [string, string]> = [
+  ['Regular', 'Roboto-Regular.woff2'],
+  ['Medium', 'Roboto-Medium.woff2'],
+  ['Bold', 'Roboto-Bold.woff2'],
+];
+
+/**
+ * Load the extra bundled faces before compiling. The engine's manifest only knows
+ * Inter and Noto, so a family is added by loading its file.
+ * @returns nothing, once every face is registered.
+ */
+async function loadExtraFonts(): Promise<void> {
+  for (const [style, file] of EXTRA_FONTS) {
+    const response = await fetch(assetUrl('fonts/' + file));
+    if (!response.ok) throw new Error('The bundled font ' + file + ' is missing.');
+    fontManager.markLoaded('Roboto', style, await response.arrayBuffer());
+  }
+}
 
 /** What the tab gives the canvas. */
 export interface DesignCanvasOptions {
@@ -53,6 +65,8 @@ export interface DesignCanvasOptions {
   onSave(): void;
   onTool?(tool: CanvasTool): void;
   onFailure?(message: string): void;
+  panels: boolean;
+  t(key: string): string;
 }
 
 /** What the tab can ask the canvas to do. */
@@ -62,6 +76,7 @@ export interface DesignCanvasHandle {
   undo(): void;
   redo(): void;
   zoomToFit(): void;
+  setPanels(open: boolean): void;
   destroy(): void;
 }
 
@@ -101,7 +116,13 @@ function messageOf(error: unknown): string {
  */
 async function compile(source: string): Promise<Compiled> {
   const graph = new SceneGraph();
-  await designJSXRenderer(NO_ICONS).renderJSX(graph, source);
+  await designJSXRenderer(
+    bundledIconProvider(async () => {
+      const response = await fetch(assetUrl('icons.json'));
+      if (!response.ok) throw new Error('The bundled icon set is missing.');
+      return response.json();
+    }),
+  ).renderJSX(graph, source);
   const page = graph.getPages()[0];
   if (page === undefined) throw new Error('The design has no page.');
   return { graph, page };
@@ -115,9 +136,10 @@ async function compile(source: string): Promise<Compiled> {
  */
 export async function mountDesignCanvas(options: DesignCanvasOptions): Promise<DesignCanvasHandle> {
   const element = options.element;
-  let compiled = await compile(options.source);
   await getCanvasKit({ locateFile: (file) => assetUrl(file) });
   fontManager.setBundledFontLocator((file) => assetUrl('fonts/' + file));
+  await loadExtraFonts();
+  let compiled = await compile(options.source);
 
   const editor: Editor = createEditor({
     graph: compiled.graph,
@@ -129,10 +151,15 @@ export async function mountDesignCanvas(options: DesignCanvasOptions): Promise<D
   });
   editor.zoomToFit();
 
+  const panelsOpen = ref(options.panels);
   const Root = defineComponent({
     setup() {
       provideEditor(editor);
-      return () => h(CanvasRoot, null, { default: () => h(CanvasSurface) });
+      return () =>
+        h('div', { class: 'op-root' }, [
+          h('div', { class: 'op-canvas' }, [h(CanvasRoot, null, { default: () => h(CanvasSurface) })]),
+          panelsOpen.value ? h(DesignPanels, { t: options.t }) : null,
+        ]);
     },
   });
   const app: App<Element> = createApp(Root);
@@ -218,6 +245,9 @@ export async function mountDesignCanvas(options: DesignCanvasOptions): Promise<D
     },
     zoomToFit(): void {
       editor.zoomToFit();
+    },
+    setPanels(open: boolean): void {
+      panelsOpen.value = open;
     },
     destroy(): void {
       if (destroyed) return;

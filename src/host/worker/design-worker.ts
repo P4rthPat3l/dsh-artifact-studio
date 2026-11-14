@@ -1,27 +1,43 @@
 import { Buffer } from 'node:buffer';
+import fs from 'node:fs/promises';
 import { SceneGraph } from '@open-pencil/scene-graph';
 import type { SceneNode } from '@open-pencil/scene-graph';
 import { designJSXRenderer } from '@open-pencil/core/design-jsx';
-import type { IconData, IconProvider } from '@open-pencil/core/icons';
+import { fontManager } from '@open-pencil/core/text';
 import { computeContentBounds, headlessRenderNodes } from '@open-pencil/core/io/formats/raster';
 import { renderNodesToSVG } from '@open-pencil/core/io/formats/svg';
 import { exportFigFile } from '@open-pencil/core/io/formats/fig';
 import type { DesignInfo } from '../../contract.js';
+import { bundledIconProvider } from '../../icon-set.js';
 import type { WorkerRequest, WorkerResponse } from './protocol.js';
 
-/** Fonts that ship with the engine; any other family is substituted. */
-const BUNDLED_FONTS: ReadonlySet<string> = new Set(['Inter', 'Noto Naskh Arabic']);
+/** Fonts that ship with the package; any other family is substituted. */
+const BUNDLED_FONTS: ReadonlySet<string> = new Set(['Inter', 'Noto Naskh Arabic', 'Roboto']);
 
-/** Design JSX may not reach an icon provider: previews run offline and without writes. */
-const NO_ICONS: IconProvider = {
-  search: async () => ({ icons: [], total: 0, collections: {} }),
-  icons: async () => new Map<string, IconData>(),
-  previews: async () => new Map<string, string>(),
-  collections: async () => [],
-  browse: async () => [],
-};
+/** The Roboto faces the package ships, by style. */
+const EXTRA_FONTS: ReadonlyArray<readonly [string, string]> = [
+  ['Regular', 'Roboto-Regular.woff2'],
+  ['Medium', 'Roboto-Medium.woff2'],
+  ['Bold', 'Roboto-Bold.woff2'],
+];
 
-const { renderJSX } = designJSXRenderer(NO_ICONS);
+/**
+ * Load the extra bundled faces into the font manager before anything compiles.
+ * The engine's own manifest only knows Inter and Noto, so a family is added here.
+ */
+async function loadExtraFonts(): Promise<void> {
+  for (const [style, file] of EXTRA_FONTS) {
+    const bytes = await fs.readFile(new URL('../../../assets/fonts/' + file, import.meta.url));
+    const copy = new Uint8Array(bytes.byteLength);
+    copy.set(bytes);
+    fontManager.markLoaded('Roboto', style, copy.buffer);
+  }
+}
+
+/** The bundled Material Design Icons set, read on the first icon. */
+const { renderJSX } = designJSXRenderer(
+  bundledIconProvider(async () => JSON.parse(await fs.readFile(new URL('../../../assets/icons.json', import.meta.url), 'utf8'))),
+);
 
 interface Compiled {
   graph: SceneGraph;
@@ -133,12 +149,12 @@ async function handle(source: string, request: WorkerRequest): Promise<WorkerRes
     compiled = await compile(source);
   } catch (error) {
     const message = messageOf(error);
-    if (/^Icon "[^"]+" not found$/.test(message)) {
-      return {
-        ok: false,
-        code: 'artifact/design-icon-unsupported',
-        message: 'Icons are not available in design previews yet. Replace <Icon ... /> with a shape or text.',
-      };
+    const missing = /^Icon "([^"]+)" not found$/.exec(message);
+    if (missing !== null) {
+      return { ok: false, code: 'artifact/design-icon-not-found', message: 'The bundled mdi set has no "' + (missing[1] ?? '') + '". Use a name from the mdi set.' };
+    }
+    if (/^Icon set "[^"]+" is not bundled\./.test(message)) {
+      return { ok: false, code: 'artifact/design-icon-not-found', message };
     }
     return { ok: false, code: 'artifact/design-invalid', message };
   }
@@ -200,6 +216,7 @@ async function readRequest(): Promise<WorkerRequest> {
   };
 }
 
+await loadExtraFonts();
 const request = await readRequest();
 const response = await handle(request.source, request);
 process.stdout.write(request.nonce + JSON.stringify(response) + '\n', () => process.exit(0));

@@ -13,7 +13,7 @@ import { createTools } from '../dist/host/lib/tools.js';
 const WORKSPACE_BASE = 'artifacts/workspaces';
 const DESIGN = '<Frame name="Card" w={320} p={24} bg="#ffffff" rounded={16} flex="col" gap={8}><Text size={24} weight={700} color="#111111">Quarterly</Text><Text size={14} color="#666666">Revenue is up.</Text></Frame>';
 const ICON = '<Frame name="Icon" w={320} h={120}><Icon name="lucide:heart" size={24} /></Frame>';
-const FONT = '<Frame w={320} h={120}><Text font="Roboto" size={16}>Hello</Text></Frame>';
+const FONT = '<Frame w={320} h={120}><Text font="Georgia" size={16}>Hello</Text></Frame>';
 const HOSTILE = '<Frame w={120} h={80}>{(() => { process.exit(7); return null; })()}</Frame>';
 const agent = { origin: 'agent', action: 'create' };
 const editor = { origin: 'agent', action: 'update' };
@@ -226,11 +226,11 @@ test('FEAT-007 AC-010: unsupported formats are refused', async () => {
   );
 });
 
-test('FEAT-007 AC-011: icons are rejected with guidance', async () => {
+test('FEAT-007 AC-011: an icon set outside the bundle is refused with guidance', async () => {
   const { service, target } = await fixture();
   await assert.rejects(
     service.create(target, { type: 'design', title: 'Icon', content: ICON, source: agent }),
-    (error) => error.code === 'artifact/design-icon-unsupported' && /Icon/.test(error.message),
+    (error) => error.code === 'artifact/design-icon-not-found' && /lucide/.test(error.message),
   );
 });
 
@@ -238,7 +238,7 @@ test('FEAT-007 AC-012: unbundled fonts warn', async () => {
   const { service, target } = await fixture();
   const manifest = await service.create(target, { type: 'design', title: 'Font', content: FONT, source: agent });
   const payload = await service.read(target, manifest.id);
-  assert.ok(payload.designInfo.warnings.some((warning) => warning.includes('Roboto')), JSON.stringify(payload.designInfo));
+  assert.ok(payload.designInfo.warnings.some((warning) => warning.includes('Georgia')), JSON.stringify(payload.designInfo));
 });
 
 test('FEAT-007 AC-012b: the starter and the skill teach flex layout, not dir', async () => {
@@ -308,7 +308,7 @@ test('FEAT-007 AC-001b: the create tool reports design info and warnings', async
   const exec = { agent: { id: 'ses-a' }, signal: new AbortController().signal };
   const value = await byName.artifact_create.execute({ type: 'design', title: 'Font', content: FONT }, exec);
   assert.equal(value.type, 'design');
-  assert.ok(value.warnings.some((warning) => warning.includes('Roboto')));
+  assert.ok(value.warnings.some((warning) => warning.includes('Georgia')));
   const read = await byName.artifact_read.execute({ id: value.id }, exec);
   assert.equal(read.content, FONT);
   assert.ok(read.designInfo.nodes >= 1);
@@ -317,4 +317,40 @@ test('FEAT-007 AC-001b: the create tool reports design info and warnings', async
   const listed = await byName.artifact_list.execute({ type: 'design' }, exec);
   assert.equal(listed.total, 1);
   assert.equal(target.workspaceId, 'ws-a');
+});
+
+
+test('FEAT-007 AC-037: bundled icons compile to vectors and render', async () => {
+  const { service, target } = await fixture();
+  const source = '<Frame name="Icon" w={120} h={120} bg="#ffffff"><Icon name="mdi:heart" size={48} color="#e11d48" /></Frame>';
+  const manifest = await service.create(target, { type: 'design', title: 'Icon card', content: source, source: agent });
+  const payload = await service.read(target, manifest.id);
+  assert.ok((payload.designInfo.types.VECTOR ?? 0) >= 1, JSON.stringify(payload.designInfo.types));
+  const preview = await service.preview(target, manifest.id);
+  assert.equal(preview.mediaType, 'image/png');
+  assert.ok(preview.data.length > 500);
+});
+
+test('FEAT-007 AC-039: an icon name outside the bundled set is refused', async () => {
+  const { home, service, target } = await fixture();
+  const source = '<Frame w={40} h={40}><Icon name="mdi:not-a-real-icon" size={24} /></Frame>';
+  await assert.rejects(
+    service.create(target, { type: 'design', title: 'Missing icon', content: source, source: agent }),
+    (error) => error.code === 'artifact/design-icon-not-found' && /not-a-real-icon/.test(error.message),
+  );
+  const root = path.join(home, WORKSPACE_BASE, 'ws-a');
+  const names = await fs.readdir(root).catch(() => []);
+  assert.deepEqual(names.filter((name) => name.startsWith('art_')), []);
+});
+
+test('FEAT-007 AC-041: Roboto renders without a warning and differs from Inter', async () => {
+  const { service, target } = await fixture();
+  const wrap = (family) => '<Frame w={320} h={80} bg="#ffffff"><Text font="' + family + '" size={32} color="#111111">Quarterly</Text></Frame>';
+  const roboto = await service.create(target, { type: 'design', title: 'Roboto', content: wrap('Roboto'), source: agent });
+  const inter = await service.create(target, { type: 'design', title: 'Inter', content: wrap('Inter'), source: agent });
+  const info = await service.read(target, roboto.id);
+  assert.deepEqual(info.designInfo.warnings, []);
+  const robotoPng = await service.preview(target, roboto.id);
+  const interPng = await service.preview(target, inter.id);
+  assert.ok(!Buffer.from(robotoPng.data, 'base64').equals(Buffer.from(interPng.data, 'base64')), 'Roboto and Inter rendered the same pixels');
 });

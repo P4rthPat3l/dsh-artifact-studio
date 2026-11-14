@@ -15,5 +15,5 @@
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["./**/*.ts", "./**/*.tsx", "../contract.ts", "../render.ts"]
+  "include": ["./**/*.ts", "./**/*.tsx", "../contract.ts", "../icon-set.ts", "../render.ts"]
 }

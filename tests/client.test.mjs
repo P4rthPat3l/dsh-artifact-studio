@@ -72,6 +72,7 @@ before(async () => {
         destroyed: false,
         setSource(source) { this.sources.push(source); },
         setTool(tool) { this.tool = tool; },
+        setPanels(open) { this.panels = open; },
         undo() { this.undos = (this.undos ?? 0) + 1; },
         redo() { this.redos = (this.redos ?? 0) + 1; },
         zoomToFit() { this.fits = (this.fits ?? 0) + 1; },
@@ -1853,4 +1854,19 @@ test('FEAT-007 AC-023: the canvas toolbar drives the handle', async () => {
     assert.equal(handle.fits, 1);
     assert.equal(handle.tool, 'frame');
   } finally { gate.resolve(); await view.unmount(); }
+});
+
+
+test('FEAT-007 AC-030: the panel toggle drives the rail and leaves the draft alone', async () => {
+  const { host, view } = await canvasFixture('03001');
+  try {
+    const handle = canvasDispatch.mounts[0];
+    assert.equal(findButton(view, 'panel.toggle').getAttribute('aria-pressed'), 'false');
+    await click(findButton(view, 'panel.toggle'));
+    assert.equal(handle.panels, true);
+    assert.equal(findButton(view, 'panel.toggle').getAttribute('aria-pressed'), 'true');
+    assert.equal(host.calls.filter((call) => call.endpoint === 'update').length, 0);
+    await click(findButton(view, 'panel.toggle'));
+    assert.equal(handle.panels, false);
+  } finally { await view.unmount(); }
 });

@@ -243,6 +243,8 @@ export function errorKey(code: string | undefined): string {
       return 'error.designInvalid';
     case 'artifact/design-icon-unsupported':
       return 'error.designIcon';
+    case 'artifact/design-icon-not-found':
+      return 'error.designIconNotFound';
     case 'artifact/design-render-failed':
       return 'error.designRender';
     case 'artifact/design-timeout':

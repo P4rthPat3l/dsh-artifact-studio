@@ -521,6 +521,35 @@ const CSS = `
 .art-canvas-loading { position: absolute; left: 8px; bottom: 8px; padding: 4px 8px; border-radius: 6px; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-secondary); font-size: 12px; }
 .art-canvas-error { position: absolute; left: 8px; right: 8px; bottom: 8px; display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: .5px solid var(--dsw-alias-border-l2); border-radius: 8px; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); font-size: 12px; }
 .art-canvas-detail { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dsw-alias-label-secondary); }
+.op-root { display: flex; width: 100%; height: 100%; min-width: 0; }
+.op-canvas { position: relative; flex: 1; min-width: 0; height: 100%; }
+.op-panels { display: flex; flex-direction: column; width: 220px; flex: none; overflow: hidden; border-left: .5px solid var(--dsw-alias-border-l2); background: var(--dsw-alias-bg-base); }
+.op-panel { display: flex; flex-direction: column; min-height: 0; }
+.op-panel-layers { flex: 1; border-bottom: .5px solid var(--dsw-alias-border-l2); }
+.op-panel-properties { flex: 1; }
+.op-panel-title { margin: 0; padding: 8px 10px 4px; color: var(--dsw-alias-label-secondary); font-size: 10px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+.op-layer-tree { display: flex; flex: 1; flex-direction: column; min-height: 0; }
+.op-layer-list { flex: 1; min-height: 0; overflow: auto; padding-bottom: 6px; }
+.op-layer-row { display: flex; align-items: center; gap: 4px; height: 26px; padding-right: 6px; color: var(--dsw-alias-label-primary); font-size: 12px; }
+.op-layer-row:hover { background: var(--dsw-alias-bg-layer-2); }
+.op-layer-row.is-selected { background: color-mix(in srgb, var(--dsw-alias-brand-primary) 16%, transparent); }
+.op-layer-caret { display: flex; align-items: center; justify-content: center; width: 16px; height: 16px; padding: 0; border: 0; background: none; color: var(--dsw-alias-label-secondary); cursor: pointer; }
+.op-layer-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.op-layer-rename { flex: 1; min-width: 0; height: 20px; border: .5px solid var(--dsw-alias-brand-primary); border-radius: 4px; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); font: inherit; }
+.op-layer-actions { display: none; gap: 2px; }
+.op-layer-row:hover .op-layer-actions, .op-layer-row.is-selected .op-layer-actions { display: flex; }
+.op-icon-button { display: flex; align-items: center; justify-content: center; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 4px; background: none; color: var(--dsw-alias-label-secondary); cursor: pointer; }
+.op-icon-button:hover { background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); }
+.op-properties { display: flex; flex: 1; flex-direction: column; gap: 8px; min-height: 0; overflow: auto; padding: 4px 10px 12px; }
+.op-panel-node { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; }
+.op-field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.op-field { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.op-field-label { color: var(--dsw-alias-label-secondary); font-size: 10px; }
+.op-field input, .op-field select { width: 100%; min-width: 0; height: 24px; padding: 0 6px; border: .5px solid var(--dsw-alias-border-l2); border-radius: 5px; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); font: inherit; font-size: 12px; }
+.op-field.is-mixed input { font-style: italic; }
+.op-panel-toggle { height: 24px; padding: 0 8px; border: .5px solid var(--dsw-alias-border-l2); border-radius: 5px; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.op-panel-toggle[aria-pressed="true"] { border-color: var(--dsw-alias-brand-primary); }
+.op-panel-empty { margin: 0; padding: 10px; color: var(--dsw-alias-label-secondary); font-size: 12px; }
 `;
 
 /** Install the plugin stylesheet once. */

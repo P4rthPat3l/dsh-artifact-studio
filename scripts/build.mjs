@@ -14,6 +14,9 @@ const SHADERS_STUB = path.join(ROOT, 'src/client/canvas/shaders-stub.ts');
 const WASM = path.join(ROOT, 'node_modules/canvaskit-wasm/bin/canvaskit.wasm');
 const FONT_SOURCE = path.join(ROOT, 'node_modules/@open-pencil/core/assets');
 const FONTS = ['Inter-Regular.ttf', 'Inter-Medium.ttf', 'Inter-SemiBold.ttf', 'Inter-Bold.ttf', 'Inter-ExtraBold.ttf', 'NotoNaskhArabic-Regular.ttf'];
+const ICONS = path.join(ROOT, 'node_modules/@iconify-json/mdi/icons.json');
+const ROBOTO_SOURCE = path.join(ROOT, 'node_modules/roboto-fontface/fonts/roboto');
+const ROBOTO = ['Roboto-Regular.woff2', 'Roboto-Medium.woff2', 'Roboto-Bold.woff2'];
 
 /**
  * Bundle one entry and return its CommonJS text.
@@ -73,7 +76,9 @@ async function copyAssets() {
   const assets = path.join(ROOT, 'assets');
   await fs.mkdir(path.join(assets, 'fonts'), { recursive: true });
   await fs.copyFile(WASM, path.join(assets, 'canvaskit.wasm'));
+  await fs.copyFile(ICONS, path.join(assets, 'icons.json'));
   for (const font of FONTS) await fs.copyFile(path.join(FONT_SOURCE, font), path.join(assets, 'fonts', font));
+  for (const font of ROBOTO) await fs.copyFile(path.join(ROBOTO_SOURCE, font), path.join(assets, 'fonts', font));
 }
 
 const manifest = JSON.parse(await fs.readFile(path.join(ROOT, 'package.json'), 'utf8'));

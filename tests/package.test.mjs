@@ -21,7 +21,7 @@ test('the patch loads the route plugin and the tools plugin', async () => {
 });
 test('the canvas build dependencies stay out of runtime dependencies and ship a notice', async () => {
   const manifest = JSON.parse(await fs.readFile(new URL('../package.json', import.meta.url), 'utf8'));
-  for (const name of ['@open-pencil/vue', 'vue', 'canvaskit-wasm']) {
+  for (const name of ['@open-pencil/vue', 'vue', 'canvaskit-wasm', '@iconify-json/mdi', 'roboto-fontface']) {
     assert.equal(manifest.dependencies[name], undefined, `${name} is a runtime dependency`);
     assert.ok(manifest.devDependencies[name], `${name} is not a build dependency`);
   }
@@ -31,4 +31,7 @@ test('the canvas build dependencies stay out of runtime dependencies and ship a 
   assert.match(notices, /CanvasKit/);
   assert.match(notices, /BSD/);
   assert.match(notices, /Vue/);
+  assert.match(notices, /Material Design Icons/);
+  assert.match(notices, /Roboto/);
+  assert.match(notices, /Apache/);
 });

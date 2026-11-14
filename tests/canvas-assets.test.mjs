@@ -116,3 +116,15 @@ test('FEAT-007 AC-025: a declared file that is missing on disk is a 404', async 
   assert.equal(answer.status, 404);
   assert.ok(ASSET_FILES.has('fonts/Inter-Regular.ttf'));
 });
+
+
+test('FEAT-007 AC-040: the route serves the icon set and the Roboto files', async () => {
+  await fs.writeFile(path.join(root, 'icons.json'), '{"prefix":"mdi","icons":{}}');
+  await fs.writeFile(path.join(root, 'fonts', 'Roboto-Regular.woff2'), 'font-bytes');
+  const icons = await call('GET', ASSET_PREFIX + '/icons.json');
+  assert.equal(icons.status, 200);
+  assert.equal(icons.headers['content-type'], 'application/json');
+  const roboto = await call('GET', ASSET_PREFIX + '/fonts/Roboto-Regular.woff2');
+  assert.equal(roboto.status, 200);
+  assert.equal(roboto.headers['content-type'], 'font/woff2');
+});

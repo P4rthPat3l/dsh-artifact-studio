@@ -10,6 +10,7 @@ export const ASSET_PREFIX = '/artifacts-canvas';
 /** The engine files the route serves, relative to the package's assets directory, with their media types. */
 export const ASSET_FILES: ReadonlyMap<string, string> = new Map([
   ['canvas.engine.js', 'text/javascript'],
+  ['icons.json', 'application/json'],
   ['canvaskit.wasm', 'application/wasm'],
   ['fonts/Inter-Regular.ttf', 'font/ttf'],
   ['fonts/Inter-Medium.ttf', 'font/ttf'],
@@ -17,6 +18,9 @@ export const ASSET_FILES: ReadonlyMap<string, string> = new Map([
   ['fonts/Inter-Bold.ttf', 'font/ttf'],
   ['fonts/Inter-ExtraBold.ttf', 'font/ttf'],
   ['fonts/NotoNaskhArabic-Regular.ttf', 'font/ttf'],
+  ['fonts/Roboto-Regular.woff2', 'font/woff2'],
+  ['fonts/Roboto-Medium.woff2', 'font/woff2'],
+  ['fonts/Roboto-Bold.woff2', 'font/woff2'],
 ]);
 
 /** Where the build copies the engine files, beside the compiled host. */

@@ -115,4 +115,12 @@ test('FEAT-007 AC-026: the build emits a loader chunk and ships the engine asset
     const file = await fs.readFile(path.join(root, 'assets', 'fonts', font));
     assert.ok(file.byteLength > 150_000, font);
   }
+
+  const icons = JSON.parse(await fs.readFile(path.join(root, 'assets', 'icons.json'), 'utf8'));
+  assert.equal(icons.prefix, 'mdi');
+  assert.ok(Object.keys(icons.icons).length > 7000, 'the icon set is smaller than expected');
+  for (const font of ['Roboto-Regular.woff2', 'Roboto-Medium.woff2', 'Roboto-Bold.woff2']) {
+    const file = await fs.readFile(path.join(root, 'assets', 'fonts', font));
+    assert.ok(file.byteLength > 10_000, font);
+  }
 });

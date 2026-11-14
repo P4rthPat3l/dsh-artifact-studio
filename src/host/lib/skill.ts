@@ -30,7 +30,7 @@ Use \`artifact_create\` when the user asks for an artifact, an artifact page, an
 
 ## Designs (OpenPencil Design JSX)
 
-A design is OpenPencil Design JSX, not React DOM and not HTML. There are no imports, no HTML tags, no CSS classes, and no \`<Icon>\`; an icon is rejected with a clear error. Use shapes and text instead.
+A design is OpenPencil Design JSX, not React DOM and not HTML. There are no imports, no HTML tags, and no CSS classes. Icons use the bundled Material Design Icons set.
 
 - Elements: \`Frame\`, \`Text\`, \`Rectangle\`, \`Ellipse\`, \`Line\`, \`Star\`, \`Polygon\`, \`Vector\`, \`Group\`, \`Section\`.
 - Layout props: \`w\`, \`h\`, \`p\`, \`px\`, \`py\`, \`gap\`, \`flex\` (\`row\` or \`col\`), \`items\`, \`justify\`, \`bg\`, \`rounded\`, \`stroke\`, \`strokeWidth\`, \`opacity\`.
@@ -38,7 +38,8 @@ A design is OpenPencil Design JSX, not React DOM and not HTML. There are no impo
 - Text props: \`size\`, \`weight\`, \`color\`, \`font\`, \`lineHeight\`, \`letterSpacing\`, \`textAlign\`, \`maxLines\`.
 - Put a background on the outer \`Frame\`; the preview crops transparent space around the content.
 - Example: \`<Frame w={720} p={40} bg="#ffffff" flex="col" gap={12}><Text size={40} weight={700} color="#16181d">Title</Text><Text size={16} color="#5b6170">One line of context.</Text></Frame>\`
-- Text uses Inter, which ships with the engine. Any other family substitutes a default face and returns a warning; keep Inter.
+- Icons: \`<Icon name="mdi:home" size={24} color="#1b1712" />\`. Only the \`mdi:\` set is bundled. Common names: \`home\`, \`search\`, \`user\`, \`heart\`, \`star\`, \`check\`, \`close\`, \`plus\`, \`arrow-right\`, \`settings\`, \`bell\`, \`calendar\`, \`mail\`, \`image\`, \`file\`, \`folder\`, \`trash\`, \`edit\`, \`download\`, \`lock\`, \`eye\`, \`cart\`, \`chart-bar\`, \`alert\`, \`clock\`, \`map-marker\`, \`menu\`, \`chevron-right\`. An unknown set or name refuses the save. Icons draw as vectors and keep their 24 unit box.
+- Text uses Inter, Roboto, or Noto Naskh Arabic, which ship with the package. Any other family substitutes a default face and returns a warning.
 - A design has no network and no external images. Use solid and gradient fills, shapes, and text.
 - The stored artifact is the JSX source. Send the complete source as \`content\` when you update a design. The host compiles and validates before saving, so a compile error refuses the write and returns the compiler message.
 - Export is PNG, SVG, or \`.fig\`. The user can open the \`.fig\` in OpenPencil for a full canvas editor.

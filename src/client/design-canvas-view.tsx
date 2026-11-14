@@ -64,12 +64,17 @@ export function DesignCanvasView({ t, source, revision, title, onChange, onSave,
   callbacks.current = { onChange, onSave };
   const [state, setState] = useState<State>({ status: 'loading' });
   const [tool, setTool] = useState<CanvasTool>('select');
+  const [panels, setPanels] = useState(false);
+  const panelsRef = useRef(false);
   const [attempt, setAttempt] = useState(0);
   const toolId = useId();
 
   useEffect(() => {
     const element = mountRef.current;
     if (element === null) return undefined;
+    const initialPanels = element.clientWidth >= 640;
+    panelsRef.current = initialPanels;
+    setPanels(initialPanels);
     let cancelled = false;
     setState({ status: 'loading' });
     void (async () => {
@@ -86,6 +91,8 @@ export function DesignCanvasView({ t, source, revision, title, onChange, onSave,
           onSave: () => callbacks.current.onSave(),
           onTool: setTool,
           onFailure: (message) => setState({ status: 'failed', message }),
+          panels: panelsRef.current,
+          t,
         });
         if (cancelled) {
           handle.destroy();
@@ -144,6 +151,20 @@ export function DesignCanvasView({ t, source, revision, title, onChange, onSave,
         <Button size="sm" variant="outline" disabled={!ready} onClick={() => call((handle) => handle.undo())}>{t('canvas.undo')}</Button>
         <Button size="sm" variant="outline" disabled={!ready} onClick={() => call((handle) => handle.redo())}>{t('canvas.redo')}</Button>
         <Button size="sm" variant="outline" disabled={!ready} onClick={() => call((handle) => handle.zoomToFit())}>{t('canvas.fit')}</Button>
+        <Button
+          size="sm"
+          variant="outline"
+          aria-pressed={panels}
+          disabled={!ready}
+          onClick={() => {
+            const next = !panels;
+            panelsRef.current = next;
+            setPanels(next);
+            call((handle) => handle.setPanels(next));
+          }}
+        >
+          {t('panel.toggle')}
+        </Button>
       </div>
       <div className="art-canvas-stage">
         <div className="art-canvas-mount" ref={mountRef} role="application" aria-label={title} tabIndex={0} hidden={state.status === 'failed'} data-ready={ready ? '1' : undefined} />
