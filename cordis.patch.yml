@@ -5,3 +5,6 @@
     - id: dsh-artifacts-tools
       name: 'dsh-artifacts/tools'
       config: {}
+    - id: dsh-artifacts-skill
+      name: 'dsh-artifacts/skill'
+      config: {}

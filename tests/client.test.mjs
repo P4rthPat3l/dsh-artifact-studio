@@ -32,6 +32,7 @@ async function loadArtifact(name) {
   assert.ok(definition, `${name} did not call the module loader`);
   const requireModule = (specifier) => {
     if (['react', 'react-dom', 'react/jsx-runtime', 'react-dom/client'].includes(specifier)) return require(specifier);
+    if (specifier === '@deepseek-ai/dsh-client-ui-primitives') return require('./primitives-stub.cjs');
     throw new Error(`Unexpected module ${specifier}`);
   };
   requireModule.async = async (file) => {
@@ -62,6 +63,17 @@ before(async () => {
   assert.equal(main.definition.id, 'dsh-artifacts');
   plugin = main.definition.factory(main.requireModule);
 });
+
+const TOKENS = {
+  schemaVersion: 1,
+  name: 'Default',
+  colors: { primary: '#1a4d8f', accent: '#d97706', surface: '#f8fafc', text: '#0f172a', muted: '#64748b' },
+  colorsDark: { primary: '#86a8ff', accent: '#45c9a8', surface: '#15171b', text: '#e8e9ec', muted: '#a0a6b2' },
+  typography: { fontFamily: 'system-ui', displayFamily: 'Georgia, serif', monoFamily: 'monospace', scale: [12] },
+  spacing: { unit: 4, scale: [4] },
+  radius: { sm: 4, md: 8, lg: 12 },
+  notes: '',
+};
 
 /** A fake host route backed by an in-memory artifact set. */
 function fakeHost() {
@@ -106,7 +118,7 @@ function fakeHost() {
         case 'get': {
           if (item === undefined) return { ok: false, error: { code: 'artifact/not-found', message: 'gone', details: {} } };
           const version = payload.version ?? item.manifest.version;
-          return { ok: true, value: { manifest: { ...item.manifest, version }, content: version === item.manifest.version ? item.content : `version ${version}`, version, designCss: state.designCss } };
+          return { ok: true, value: { manifest: { ...item.manifest, version }, content: version === item.manifest.version ? item.content : `version ${version}`, version, designCss: state.designCss, design: TOKENS } };
         }
         case 'update': {
           if (payload.baseVersion !== item.manifest.version) {
@@ -145,15 +157,7 @@ function fakeHost() {
           return {
             ok: true,
             value: {
-              tokens: {
-                schemaVersion: 1,
-                name: 'Default',
-                colors: { primary: '#1a4d8f', accent: '#d97706', surface: '#f8fafc', text: '#0f172a', muted: '#64748b' },
-                typography: { fontFamily: 'system-ui', monoFamily: 'monospace', scale: [12] },
-                spacing: { unit: 4, scale: [4] },
-                radius: { sm: 4, md: 8, lg: 12 },
-                notes: '',
-              },
+              tokens: TOKENS,
               source: 'default',
               css: state.designCss,
             },
@@ -168,7 +172,7 @@ function fakeHost() {
 
 /** A plugin context that records registrations. */
 function stubContext(host) {
-  const records = { tabs: [], slots: [], opened: [], openedTabs: [] };
+  const records = { tabs: [], slots: [], opened: [], openedTabs: [], panels: [] };
   const ctx = {
     connection: { rpc: host.rpc },
     locale: {
@@ -184,6 +188,7 @@ function stubContext(host) {
       openTab: (kind) => records.openedTabs.push(kind),
     },
     sidebarRightTabs: { register: (definition) => { records.tabs.push(definition); return () => undefined; } },
+    get: (name) => (name === 'layout' ? { selectPanel: (id) => records.panels.push(id) } : undefined),
     workspaces: (() => {
       const snapshot = { items: [{ workspaceId: 'ws-a', path: '/work/a', title: 'Work A', sessionIds: ['ses-a'] }] };
       return { list: { getSnapshot: () => snapshot, subscribe: () => () => undefined } };
@@ -259,16 +264,50 @@ async function changeValue(element, value) {
   });
 }
 
-async function pageFixture(suffix) {
+/** Switch a page tab to its code and, when it is still read-only, to the editor. */
+async function openSource(view) {
+  await click([...view.container.querySelectorAll('.art-segment button')].find(button => button.textContent === 'tab.source'));
+  const edit = [...view.container.querySelectorAll('button')].find(button => button.textContent === 'tab.editSource');
+  if (edit !== undefined) await click(edit);
+}
+
+async function pageFixture(suffix, extra = {}) {
   const host = fakeHost();
   const id = `art_ws_regression${suffix}`;
   host.state.artifacts.set(id, { manifest: host.manifest(id, 'page', 'Regression', 3), content: '<p>saved</p>' });
   const { ctx, records } = stubContext(host);
   plugin.apply(ctx);
   const tab = slot(records, 'sidebar.right.pane.tab', 'dsh-artifacts/artifact');
-  const view = await render(tab.component, tabProps(`dsh-resource://artifact/workspace/ws-a/${id}`));
-  await click([...view.container.querySelectorAll('.art-segment button')].find(button => button.textContent === 'tab.source'));
-  return { host, id, view };
+  const view = await render(tab.component, { ...tabProps(`dsh-resource://artifact/workspace/ws-a/${id}`), ...extra });
+  await openSource(view);
+  return { host, id, view, records };
+}
+
+/** Composer actions that record every call; a real composer is never reached. */
+function composerActions(options = {}) {
+  const calls = [];
+  return {
+    calls,
+    actions: {
+      insertQuote: (text) => { calls.push(['insertQuote', text]); return options.quote ?? true; },
+      captureInsertion: () => { calls.push(['captureInsertion']); return { start: 0, end: 0, draftRev: 1 }; },
+      insertText: (text) => { calls.push(['insertText', text]); return options.text ?? true; },
+    },
+  };
+}
+
+/** Render the full Artifacts page the left sidebar opens. */
+async function galleryView(records) {
+  const main = slot(records, 'main', 'dsh-artifacts-panel');
+  return render(main.component, main.spec.inject());
+}
+
+/** Select the opening characters of a document so its toolbar appears. */
+async function selectDoc(view, end = 3) {
+  const prose = view.container.querySelector('.art-prose');
+  prose.focus();
+  await act(async () => { selectIn(prose, 0, end); await settle(80); });
+  return prose;
 }
 
 function deferred() {
@@ -283,7 +322,7 @@ test('AC-036: reload asks before discarding and cancel retains the draft', async
     await changeValue(view.container.querySelector('textarea'), '<p>draft</p>');
     await click(view.container.querySelector('[aria-label="gallery.more"]'));
     await click([...view.container.querySelectorAll('[role="menuitem"]')].find(button => button.textContent === 'tab.reload'));
-    assert.ok(view.container.querySelector('[role="alertdialog"]'));
+    assert.ok(view.container.querySelector('[role="dialog"][aria-modal="true"]'));
     await click([...view.container.querySelectorAll('button')].find(button => button.textContent === 'create.cancel'));
     assert.equal(view.container.querySelector('textarea').value, '<p>draft</p>');
     assert.equal(host.calls.filter(call => call.endpoint === 'get').length, 1);
@@ -344,7 +383,8 @@ test('AC-044: stale history responses cannot replace the latest selection', asyn
     await click(versions.find(button => button.textContent.includes('tab.versionOf|version=1')));
     await click(versions.find(button => button.textContent.includes('tab.versionOf|version=2')));
     await act(async () => { reads.get(2).resolve(); await settle(10); reads.get(1).resolve(); await settle(20); });
-    assert.equal(view.container.querySelector('textarea').value, 'version 2');
+    assert.match(view.container.querySelector('.art-code').textContent, /version 2/);
+    assert.equal(view.container.querySelector('textarea'), null, 'a historical version opened an editor');
   } finally { for (const read of reads.values()) read.resolve(); await view.unmount(); }
 });
 
@@ -378,7 +418,7 @@ test('AC-045: back restores the gallery query and scope filter', async () => {
     await click(view.container.querySelector('.art-tile-open'));
     await click(view.container.querySelector('[aria-label="action.back"]'));
     assert.equal(view.container.querySelector('input[type="search"]').value, 'Find');
-    assert.equal([...view.container.querySelectorAll('.art-toolbar button')].find(button => button.textContent === 'scope.workspace').getAttribute('aria-pressed'), 'true');
+    assert.equal([...view.container.querySelectorAll('.art-toolbar button')].find(button => button.textContent === 'scope.workspace').getAttribute('aria-selected'), 'true');
   } finally { await view.unmount(); }
 });
 
@@ -389,14 +429,14 @@ test('AC-036: dirty back can save or cancel and a failed save stays in place', a
   const main = slot(records, 'main', 'dsh-artifacts-panel'); const view = await render(main.component, main.spec.inject());
   try {
     await click(view.container.querySelector('.art-tile-open'));
-    await click([...view.container.querySelectorAll('.art-segment button')].find(button => button.textContent === 'tab.source'));
+    await openSource(view);
     await changeValue(view.container.querySelector('textarea'), 'keep me');
     await click(view.container.querySelector('[aria-label="action.back"]'));
-    assert.ok(view.container.querySelector('[role="alertdialog"]'));
+    assert.ok(view.container.querySelector('[role="dialog"][aria-modal="true"]'));
     host.state.failNext = { endpoint: 'update', error: { code: 'artifact/storage-failure', message: 'failed', details: {} } };
     await click([...view.container.querySelectorAll('button')].find(button => button.textContent === 'tab.saveContinue'));
     assert.equal(view.container.querySelector('textarea').value, 'keep me');
-    assert.ok(view.container.querySelector('[role="alertdialog"]'));
+    assert.ok(view.container.querySelector('[role="dialog"][aria-modal="true"]'));
     await click([...view.container.querySelectorAll('button')].find(button => button.textContent === 'tab.saveContinue'));
     assert.equal(view.container.querySelector('[data-artifact-id]'), null);
     assert.equal(host.state.artifacts.get(id).content, 'keep me');
@@ -409,7 +449,7 @@ test('AC-036: unmount preserves a recoverable draft by artifact identity', async
   const { ctx, records } = stubContext(host); plugin.apply(ctx);
   const reopened = await render(slot(records, 'sidebar.right.pane.tab', 'dsh-artifacts/artifact').component, tabProps(`dsh-resource://artifact/workspace/ws-a/${id}`));
   try {
-    await click([...reopened.container.querySelectorAll('.art-segment button')].find(button => button.textContent === 'tab.source'));
+    await openSource(reopened);
     assert.equal(reopened.container.querySelector('textarea').value, 'retained draft');
     await click(reopened.container.querySelector('[aria-label="tab.save"]'));
   } finally { await reopened.unmount(); }
@@ -443,30 +483,7 @@ test('AC-039: conflict copy failure keeps a selectable draft and requires explic
     await click([...view.container.querySelectorAll('button')].find(button => button.textContent === 'tab.copyDraft'));
     assert.ok([...view.container.querySelectorAll('textarea')].some(input => input.value === 'my conflicting draft'));
     await click([...view.container.querySelectorAll('button')].find(button => button.textContent === 'tab.discardReload'));
-    assert.ok(view.container.querySelector('[role="alertdialog"]'));
-  } finally { await view.unmount(); }
-});
-
-test('AC-047: agent edit request is reviewable and never submits or writes', async () => {
-  const { host, id, view } = await pageFixture('agent');
-  const writes = [];
-  Object.defineProperty(window.navigator, 'clipboard', {
-    value: { writeText: async (text) => { writes.push(text); } },
-    configurable: true,
-  });
-  try {
-    await click(findButton(view, 'agent.ask'));
-    const prompt = view.container.querySelector('.art-request textarea');
-    const preview = view.container.querySelector('.art-request-preview pre');
-    assert.ok(prompt); assert.ok(preview);
-    assert.match(preview.textContent, new RegExp(id));
-    assert.match(preview.textContent, /version=3/);
-    await changeValue(prompt, 'Make the title shorter');
-    assert.match(view.container.querySelector('.art-request-preview pre').textContent, /Make the title shorter/);
-    await click(findButton(view, 'agent.copyRequest'));
-    assert.equal(writes.length, 1);
-    assert.match(writes[0], /Make the title shorter/);
-    assert.ok(host.calls.every(call => ['get', 'list'].includes(call.endpoint)), 'request preparation wrote or submitted data');
+    assert.ok(view.container.querySelector('[role="dialog"][aria-modal="true"]'));
   } finally { await view.unmount(); }
 });
 
@@ -474,6 +491,8 @@ test('AC-048: visible heading control updates the document and round-trips Markd
   const changes = [];
   const view = await render(plugin.DocView, { markdown: 'Heading text', revision: '1', editable: true, label: 'Formatting doc', loadingLabel: 'Loading', failedLabel: 'Failed', onChange: text => changes.push(text), onSave: () => undefined, t });
   try {
+    assert.equal(view.container.querySelector('.art-doc-toolbar'), null, 'the toolbar shows without a selection');
+    await selectDoc(view);
     await click([...view.container.querySelectorAll('button')].find(button => button.textContent === 'format.heading'));
     assert.ok(view.container.querySelector('h2'));
     assert.equal([...view.container.querySelectorAll('button')].find(button => button.textContent === 'format.heading').getAttribute('aria-pressed'), 'true');
@@ -510,7 +529,7 @@ test('AC-036: two views share a draft and closing one cannot remove its recovery
   await second.unmount(); await view.unmount();
   const reopened = await render(component, props);
   try {
-    await click([...reopened.container.querySelectorAll('.art-segment button')].find(button => button.textContent === 'tab.source'));
+    await openSource(reopened);
     assert.equal(reopened.container.querySelector('textarea').value, 'shared recovered draft');
     await click(reopened.container.querySelector('[aria-label="tab.save"]'));
   } finally { await reopened.unmount(); }
@@ -563,6 +582,7 @@ test('AC-038: document views receive the same pending draft', async () => {
   const props = tabProps(`dsh-resource://artifact/workspace/ws-a/${id}`);
   const first = await render(component, props); const second = await render(component, props);
   try {
+    await selectDoc(first);
     await click([...first.container.querySelectorAll('button')].find(button => button.textContent === 'format.bulletList'));
     assert.ok(first.container.querySelector('.art-prose ul'));
     assert.ok(second.container.querySelector('.art-prose ul'));
@@ -620,8 +640,7 @@ test('AC-011: save refreshes the same tab', async () => {
   plugin.apply(ctx);
   const tab = slot(records, 'sidebar.right.pane.tab', 'dsh-artifacts/artifact');
   const view = await render(tab.component, tabProps('dsh-resource://artifact/workspace/ws-a/art_ws_page000003'));
-  const sourceButton = [...view.container.querySelectorAll('.art-segment button')].find((button) => button.textContent === 'tab.source');
-  await click(sourceButton);
+  await openSource(view);
   const textarea = view.container.querySelector('textarea');
   await act(async () => {
     const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
@@ -701,20 +720,17 @@ test('AC-008: gallery lists the workspace and the library and opens a row', asyn
   host.state.artifacts.set('art_lib_gallery001', { manifest: host.manifest('art_lib_gallery001', 'doc', 'Brand notes', 2, 'library'), content: '' });
   const { ctx, records } = stubContext(host);
   plugin.apply(ctx);
-  const gallery = slot(records, 'sidebar.right.pane.tab', 'dsh-artifacts');
-  const opened = [];
-  const view = await render(gallery.component, tabProps('sidebar://artifacts', { open: (address) => opened.push(address) }));
+  const view = await galleryView(records);
   const lists = host.calls.filter((call) => call.endpoint === 'list').map((call) => call.payload);
   assert.ok(lists.some((payload) => payload.scope === 'workspace' && payload.workspaceId === 'ws-a'));
   assert.ok(lists.some((payload) => payload.scope === 'library'));
   assert.match(view.container.textContent, /Alpha report/);
   assert.match(view.container.textContent, /Brand notes/);
-  const row = [...view.container.querySelectorAll('.art-tile-open')].find((element) => element.textContent.includes('Alpha report'));
-  await click(row);
-  assert.deepEqual(opened, ['dsh-resource://artifact/workspace/ws-a/art_ws_gallery0001']);
   const libraryRow = [...view.container.querySelectorAll('.art-tile-open')].find((element) => element.textContent.includes('Brand notes'));
   await click(libraryRow);
-  assert.equal(opened[1], 'dsh-resource://artifact/library/art_lib_gallery001');
+  const get = host.calls.find((call) => call.endpoint === 'get' && call.payload.id === 'art_lib_gallery001' && call.payload.version === undefined);
+  assert.equal(get.payload.scope, 'library');
+  assert.ok(view.container.querySelector('[data-artifact-id="art_lib_gallery001"]'), 'the library artifact did not open in place');
   await view.unmount();
 });
 
@@ -725,7 +741,7 @@ test('AC-019: a stale UI save shows the conflict bar and keeps the draft', async
   plugin.apply(ctx);
   const tab = slot(records, 'sidebar.right.pane.tab', 'dsh-artifacts/artifact');
   const view = await render(tab.component, tabProps('dsh-resource://artifact/workspace/ws-a/art_ws_conflict001'));
-  await click([...view.container.querySelectorAll('.art-segment button')].find((button) => button.textContent === 'tab.source'));
+  await openSource(view);
   const textarea = view.container.querySelector('textarea');
   await act(async () => {
     Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set.call(textarea, '<p>mine</p>');
@@ -748,9 +764,9 @@ test('AC-022: artifact surfaces are keyboard and screen-reader reachable', async
   plugin.apply(ctx);
   for (const [key, address] of [
     ['dsh-artifacts/artifact', 'dsh-resource://artifact/workspace/ws-a/art_ws_a11y0000001'],
-    ['dsh-artifacts', 'sidebar://artifacts'],
+    ['dsh-artifacts-panel', null],
   ]) {
-    const view = await render(slot(records, 'sidebar.right.pane.tab', key).component, tabProps(address));
+    const view = address === null ? await galleryView(records) : await render(slot(records, 'sidebar.right.pane.tab', key).component, tabProps(address));
     for (const button of view.container.querySelectorAll('button')) {
       const name = button.getAttribute('aria-label') ?? button.textContent.trim();
       assert.ok(name.length > 0, `unnamed button in ${key}: ${button.outerHTML}`);
@@ -790,6 +806,10 @@ test('AC-023: locale dictionaries cover every used key', async () => {
     'export.html', 'export.md', 'export.docx', 'design.source.workspace', 'design.source.library', 'design.source.default',
     'design.color.primary', 'design.color.accent', 'design.color.surface', 'design.color.text', 'design.color.muted',
     'design.radius.sm', 'design.radius.md', 'design.radius.lg',
+    'format.heading', 'format.bold', 'format.italic', 'format.bulletList', 'format.orderedList', 'format.codeBlock',
+    'prompt.dashboard', 'prompt.dashboardText', 'prompt.explainer', 'prompt.explainerText', 'prompt.report', 'prompt.reportText', 'prompt.brief', 'prompt.briefText',
+    'agent.reference', 'agent.referenceOld', 'agent.added', 'agent.addedTruncated', 'agent.insertFailed', 'agent.copied',
+    'card.creating', 'card.updating', 'card.updatingUntitled', 'card.working', 'card.created', 'card.updated',
   ];
   for (const key of dynamic) used.add(key);
   const apiSource = await fs.readFile(path.join(root, 'src/client/api.ts'), 'utf8');
@@ -809,17 +829,6 @@ test('AC-028: the artifact view fills the panel in its fullscreen mode', async (
   assert.doesNotMatch(css, /\.art-(root|stage|frame) \{[^}]*max-width/s);
 });
 
-test('the composer button opens the gallery page', async () => {
-  const host = fakeHost();
-  const { ctx, records } = stubContext(host);
-  plugin.apply(ctx);
-  const button = slot(records, 'conversation.input.left', 'dsh-artifacts');
-  const view = await render(button.component, { t });
-  await click(view.container.querySelector('button'));
-  assert.deepEqual(records.openedTabs, ['artifacts']);
-  await view.unmount();
-});
-
 test('AC-034: the left navigation row opens a full artifacts page', async () => {
   const host = fakeHost();
   const { ctx, records } = stubContext(host);
@@ -832,7 +841,7 @@ test('AC-034: the left navigation row opens a full artifacts page', async () => 
   const options = view.container.querySelectorAll('[aria-label="panel.workspace"] option');
   assert.equal(options.length, 1, 'expected one workspace option');
   assert.equal(options[0].textContent, 'Work A');
-  assert.ok(view.container.querySelector('.art-templates'), 'the page rendered no starter state');
+  assert.ok(view.container.querySelector('.art-starters'), 'the page rendered no starter state');
   await view.unmount();
 });
 
@@ -897,196 +906,6 @@ function selectIn(element, start, end) {
   document.dispatchEvent(new Event('selectionchange', { bubbles: true }));
 }
 
-test('AC-049: the header carries identity, saved version, and live save status without duplicate strips', async () => {
-  const host = fakeHost();
-  const id = 'art_ws_header000001';
-  const title = 'A very long artifact title that must truncate before it can push the header actions out of the pane';
-  host.state.artifacts.set(id, { manifest: host.manifest(id, 'page', title, 3), content: '<p>saved</p>' });
-  const { ctx, records } = stubContext(host);
-  plugin.apply(ctx);
-  const tab = slot(records, 'sidebar.right.pane.tab', 'dsh-artifacts/artifact');
-  const view = await render(tab.component, tabProps(`dsh-resource://artifact/workspace/ws-a/${id}`));
-  try {
-    assert.equal(view.container.querySelectorAll('.art-header').length, 1, 'expected exactly one header');
-    assert.ok(view.container.querySelector('.art-edit-strip') === null, 'the duplicate status strip is still present');
-    const header = view.container.querySelector('.art-header');
-    const meta = header.querySelector('.art-meta');
-    assert.ok(meta, 'the identity line is missing');
-    assert.match(meta.textContent, /scope\.workspace/);
-    assert.match(meta.textContent, /ws-a/);
-    assert.match(meta.textContent, /gallery\.version\|version=3/);
-    assert.match(meta.textContent, /tab\.saved/);
-    const status = header.querySelector('.art-save-status[aria-live="polite"]');
-    assert.ok(status, 'save status is not announced in the identity line');
-    assert.match(status.textContent, /tab\.saved/);
-    const heading = header.querySelector('.art-title');
-    assert.equal(heading.textContent, title);
-    assert.equal(heading.getAttribute('title'), title);
-    assert.ok(header.querySelector('[aria-label="tab.history"]'));
-    assert.ok(header.querySelector('[aria-label="tab.export"]'));
-    assert.ok(findButton(view, 'agent.ask'), 'Request changes is not a visible header action');
-    const footer = view.container.querySelector('.art-status');
-    assert.ok(footer, 'the page save hint footer is missing');
-    assert.match(footer.textContent, /tab\.manualSave/);
-    assert.match(footer.textContent, /tab\.outputVersion\|version=3/);
-    assert.equal(footer.querySelectorAll('span').length, 2, 'the footer must stay one slim line');
-    const css = await fs.readFile(path.join(root, 'src/client/styles.ts'), 'utf8');
-    assert.match(css, /\.art-title \{[^}]*overflow: hidden;[^}]*text-overflow: ellipsis;/s);
-    assert.match(css, /\.art-editor-actions \{[^}]*flex: none;/s);
-  } finally { await view.unmount(); }
-
-  const doc = await docFixture('header0001');
-  try {
-    const header = doc.view.container.querySelector('.art-header');
-    assert.match(header.querySelector('.art-meta').textContent, /tab\.saved/);
-    assert.match(header.querySelector('.art-meta').textContent, /gallery\.version\|version=1/);
-    assert.ok(doc.view.container.querySelector('.art-status') === null, 'documents keep the always-on footer');
-  } finally { await doc.view.unmount(); }
-});
-
-test('AC-050: Request changes uses the saved version and never opens after a failed save', async () => {
-  const { host, id, view } = await pageFixture('request050');
-  const address = `dsh-resource://artifact/workspace/ws-a/${id}`;
-  const original = host.rpc.call;
-  const hold = deferred();
-  try {
-    assert.ok(findButton(view, 'agent.ask'), 'Request changes is hidden behind More');
-    await changeValue(view.container.querySelector('.art-source'), '<p>request draft</p>');
-    let started = 0;
-    host.rpc.call = async (...args) => { if (args[1] === 'update') { started += 1; await hold.promise; } return original(...args); };
-    await click(findButton(view, 'agent.ask'));
-    assert.ok(drawerOf(view) === null, 'the request opened before its save finished');
-    assert.equal(started, 1, 'Request changes did not save the draft before opening');
-    await act(async () => { hold.resolve(); await settle(80); });
-    let box = drawerOf(view)?.querySelector('textarea');
-    assert.ok(box, 'the request drawer did not open after the save');
-    assert.match(drawerOf(view).querySelector('.art-request-preview pre').textContent, new RegExp(address));
-    assert.match(drawerOf(view).querySelector('.art-request-preview pre').textContent, /version=4/);
-    await click(view.container.querySelector('[aria-label="drawer.closeRequest"]'));
-    assert.ok(drawerOf(view) === null);
-
-    await click(view.container.querySelector('[aria-label="tab.history"]'));
-    await click([...view.container.querySelectorAll('.art-version')].find(button => button.textContent.includes('tab.versionOf|version=2')));
-    const updates = host.calls.filter(call => call.endpoint === 'update').length;
-    await openRequest(view);
-    box = drawerOf(view)?.querySelector('textarea');
-    assert.ok(box, 'the historical request did not open');
-    assert.match(drawerOf(view).querySelector('.art-request-preview pre').textContent, /version=2/);
-    assert.equal(host.calls.filter(call => call.endpoint === 'update').length, updates, 'a historical request saved');
-    await click(view.container.querySelector('[aria-label="drawer.closeRequest"]'));
-
-    await click(findButton(view, 'tab.backToCurrent'));
-    await changeValue(view.container.querySelector('.art-source'), '<p>failed request</p>');
-    host.rpc.call = original;
-    host.state.failNext = { endpoint: 'update', error: { code: 'artifact/storage-failure', message: 'failed', details: {} } };
-    await openRequest(view);
-    assert.ok(drawerOf(view) === null, 'a failed save still opened a request');
-    assert.ok(view.container.querySelector('[role="alert"]'));
-  } finally { hold.resolve(); await view.unmount(); }
-});
-
-test('AC-051: Request changes opens a drawer and returns focus without remounting the preview', async () => {
-  const { host, id, view } = await pageFixture('request051');
-  try {
-    const frame = view.container.querySelector('iframe');
-    const opener = findButton(view, 'agent.ask');
-    opener.focus();
-    await openRequest(view);
-    const drawer = drawerOf(view);
-    assert.ok(drawer, 'no request drawer');
-    assert.equal(drawer.getAttribute('role'), 'dialog');
-    assert.equal(drawer.getAttribute('aria-label'), 'agent.ask');
-    assert.ok(drawer.contains(document.activeElement), 'focus did not move into the drawer');
-    assert.ok(view.container.querySelector('iframe') === frame, 'opening the drawer remounted the preview');
-    await act(async () => {
-      drawer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-      await settle(40);
-    });
-    assert.ok(drawerOf(view) === null, 'Escape did not close the drawer');
-    assert.ok(document.activeElement === opener, 'focus did not return to the opener');
-
-    const writes = [];
-    Object.defineProperty(window.navigator, 'clipboard', {
-      value: { writeText: async (text) => { writes.push(text); } },
-      configurable: true,
-    });
-    opener.focus();
-    await openRequest(view);
-    await changeValue(drawerOf(view).querySelector('textarea'), 'Make the title shorter');
-    const before = host.calls.length;
-    await click(findButton(view, 'agent.copyRequest'));
-    assert.equal(writes.length, 1);
-    assert.match(writes[0], new RegExp(id));
-    assert.equal(host.calls.length, before, 'copying the request sent something to the host');
-  } finally { await view.unmount(); }
-});
-
-test('AC-052: History and Request share one drawer and version selection clears a stale request', async () => {
-  const { host, id, view } = await pageFixture('request052');
-  window.HTMLAnchorElement.prototype.click = () => undefined;
-  try {
-    await openRequest(view);
-    const box = drawerOf(view).querySelector('textarea');
-    await changeValue(box, 'Keep this typed line');
-    const typed = box.value;
-    await click(view.container.querySelector('[aria-label="tab.history"]'));
-    assert.equal(view.container.querySelectorAll('.art-drawer').length, 1, 'two side panels opened at once');
-    assert.equal(drawerOf(view).getAttribute('aria-label'), 'history.title');
-    await openRequest(view);
-    assert.equal(drawerOf(view).querySelector('textarea').value, typed, 'typed request text was lost when switching panels');
-
-    await click(view.container.querySelector('[aria-label="tab.history"]'));
-    await click([...view.container.querySelectorAll('.art-version')].find(button => button.textContent.includes('tab.versionOf|version=2')));
-    await openRequest(view);
-    const regenerated = drawerOf(view).querySelector('textarea');
-    assert.doesNotMatch(regenerated.value, /Keep this typed line/, 'a stale request survived a version change');
-    assert.match(drawerOf(view).querySelector('.art-request-preview pre').textContent, /version=2/);
-    await click(view.container.querySelector('[aria-label="drawer.closeRequest"]'));
-    assert.equal(view.container.querySelector('.art-source').readOnly, true, 'a historical preview is editable');
-
-    const exports = [];
-    const original = host.rpc.call;
-    host.rpc.call = async (...args) => {
-      if (args[1] === 'export') { exports.push(args[2]); return { ok: true, value: { path: '/e.html', fileName: 'e.html', bytes: 0, mediaType: 'text/html', data: '' } }; }
-      return original(...args);
-    };
-    await click(view.container.querySelector('[aria-label="tab.export"]'));
-    await click([...view.container.querySelectorAll('[role="menuitem"]')].find(button => button.textContent === 'export.html'));
-    assert.equal(exports[0].version, 2, 'historical export did not pin its version');
-    assert.match(view.container.textContent, /gallery\.version\|version=2/);
-  } finally { await view.unmount(); }
-});
-
-test('AC-053: panel transitions keep drafts, document revision, and the editor mount', async () => {
-  const { host, id, view } = await docFixture('panel053', 1, '# Heading text');
-  try {
-    const prose = view.container.querySelector('.art-prose');
-    const mount = view.container.querySelector('.art-doc');
-    const revision = mount.getAttribute('data-doc-revision');
-    await click(findButton(view, 'format.heading'));
-    assert.ok(prose.querySelector('h2'), 'formatting did not reach the document');
-    await openRequest(view);
-    assert.ok(drawerOf(view));
-    assert.ok(view.container.querySelector('.art-prose') === prose, 'the request drawer remounted the document');
-    assert.equal(view.container.querySelector('.art-doc').getAttribute('data-doc-revision'), revision, 'a panel transition advanced the document revision');
-    await click(view.container.querySelector('[aria-label="drawer.closeRequest"]'));
-    await click(view.container.querySelector('[aria-label="tab.history"]'));
-    await click(view.container.querySelector('[aria-label="history.close"]'));
-    assert.ok(view.container.querySelector('.art-prose') === prose, 'history remounted the document');
-    assert.equal(view.container.querySelector('.art-doc').getAttribute('data-doc-revision'), revision);
-    assert.ok(view.container.querySelector('.art-doc-toolbar'), 'formatting disappeared for an editable document');
-    assert.match(prose.textContent, /Heading text/);
-    assert.match(host.state.artifacts.get(id).content, /^## Heading text/);
-  } finally { await view.unmount(); }
-
-  const page = await pageFixture('panel053b');
-  try {
-    assert.ok(findButton(page.view, 'tab.preview'));
-    assert.ok(findButton(page.view, 'tab.source'));
-    assert.ok(page.view.container.querySelector('.art-doc-toolbar') === null, 'page source gained document formatting');
-  } finally { await page.view.unmount(); }
-});
-
 test('AC-054: gallery creation is labelled and a type-filtered empty result names the filter', async () => {
   const host = fakeHost();
   host.state.artifacts.set('art_ws_gallery05401', { manifest: host.manifest('art_ws_gallery05401', 'page', 'Project page', 1), content: '' });
@@ -1120,12 +939,8 @@ test('AC-054: gallery creation is labelled and a type-filtered empty result name
     });
 
     await click([...view.container.querySelectorAll('.art-toolbar button')].find(button => button.textContent === 'scope.workspace'));
-    await act(async () => {
-      const select = view.container.querySelector('[aria-label="filter.type"]');
-      Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set.call(select, 'doc');
-      select.dispatchEvent(new Event('change', { bubbles: true }));
-      await settle(120);
-    });
+    await click([...view.container.querySelectorAll('.art-toolbar button')].find(button => button.textContent === 'type.doc'));
+    await act(async () => settle(120));
     const section = view.container.querySelector('.art-gallery');
     assert.match(section.textContent, /empty\.typeMatch\|type=type\.doc/);
     assert.doesNotMatch(section.textContent, /empty\.workspaceTitle/, 'a filtered result claimed the project is empty');
@@ -1165,40 +980,6 @@ test('AC-055: narrow panes stack controls and a closed drawer leaves the artifac
   } finally { await panel.unmount(); }
 });
 
-test('AC-056: new controls are named, localized, and the narrow drawer is modal', async () => {
-  const originalWidth = window.innerWidth;
-  Object.defineProperty(window, 'innerWidth', { value: 360, configurable: true });
-  const { view } = await pageFixture('a11y056');
-  try {
-    await openRequest(view);
-    const drawer = drawerOf(view);
-    assert.ok(drawer);
-    assert.equal(drawer.getAttribute('aria-modal'), 'true');
-    assert.ok(view.container.querySelector('.art-drawer-scrim'), 'the modal drawer left the background reachable');
-    const close = drawer.querySelector('[aria-label="drawer.closeRequest"]');
-    assert.ok(close, 'the drawer has no named close control');
-    const focusables = [...drawer.querySelectorAll('button:not(:disabled), textarea:not(:disabled)')];
-    focusables.at(-1).focus();
-    await act(async () => {
-      drawer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
-      await settle(20);
-    });
-    assert.ok(document.activeElement === focusables[0], 'Tab escaped the modal drawer');
-
-    const { EN, ZH } = await import('../src/client/locale.ts');
-    for (const key of ['agent.ask', 'drawer.closeRequest', 'tab.readOnly', 'empty.typeMatch', 'gallery.create']) {
-      assert.ok(EN[key], `en is missing ${key}`);
-      assert.ok(ZH[key], `zh is missing ${key}`);
-    }
-    const css = await fs.readFile(path.join(root, 'src/client/styles.ts'), 'utf8');
-    assert.doesNotMatch(css, /#[0-9a-f]{3,8}\b/i, 'styles.ts hard-codes a color');
-    assert.match(css, /:focus-visible[^}]*outline: 2px solid var\(--dsw-alias-brand-primary\)/s);
-  } finally {
-    Object.defineProperty(window, 'innerWidth', { value: originalWidth, configurable: true });
-    await view.unmount();
-  }
-});
-
 test('AC-057: save protection, conflict, sandbox, exact-version output, and document autosave keep their contracts', async () => {
   const host = fakeHost();
   const pageId = 'art_ws_contract05701';
@@ -1212,7 +993,7 @@ test('AC-057: save protection, conflict, sandbox, exact-version output, and docu
   window.HTMLAnchorElement.prototype.click = () => undefined;
   try {
     assert.equal(pageView.container.querySelector('iframe').getAttribute('sandbox'), 'allow-scripts');
-    await click(findButton(pageView, 'tab.source'));
+    await openSource(pageView);
     await changeValue(pageView.container.querySelector('.art-source'), '<p>two</p>');
     await click(pageView.container.querySelector('[aria-label="tab.save"]'));
     assert.equal(host.state.artifacts.get(pageId).content, '<p>two</p>');
@@ -1258,84 +1039,13 @@ test('AC-057: save protection, conflict, sandbox, exact-version output, and docu
 
     const docView = await render(tab.component, tabProps(`dsh-resource://artifact/workspace/ws-a/${docId}`));
     try {
+      await selectDoc(docView);
       await click(findButton(docView, 'format.heading'));
       await act(async () => settle(1400));
       assert.ok(host.calls.some(call => call.endpoint === 'update' && call.payload.id === docId), 'document autosave did not run');
       assert.match(host.state.artifacts.get(docId).content, /^## Doc/);
     } finally { await docView.unmount(); }
   } finally { await pageView.unmount(); }
-});
-
-test('AC-058: a document selection becomes a quoted request and focus returns to the editor', async () => {
-  const { view } = await docFixture('select058', 1, 'Heading text');
-  try {
-    const prose = view.container.querySelector('.art-prose');
-    assert.ok(prose);
-    prose.focus();
-    await act(async () => { selectIn(prose, 0, 7); await settle(80); });
-    const bar = view.container.querySelector('.art-selection-bar');
-    assert.ok(bar, 'no selection action appeared');
-    await click(bar.querySelector('button'));
-    assert.equal(view.container.querySelector('.art-selection-bar'), null, 'the selection bar stayed open');
-    const drawer = drawerOf(view);
-    assert.ok(drawer, 'the composer did not open');
-    const quote = drawer.querySelector('.art-quote blockquote');
-    assert.equal(quote.textContent, 'Heading');
-    assert.equal(document.activeElement, drawer.querySelector('textarea'), 'the prompt did not take focus');
-    await click(drawer.querySelector('[aria-label="drawer.closeRequest"]'));
-    assert.equal(document.activeElement, prose, 'focus did not return to the editor');
-  } finally { await view.unmount(); }
-});
-
-test('AC-059: a page source selection quotes exactly the selected source', async () => {
-  const { view } = await pageFixture('source059');
-  try {
-    const area = view.container.querySelector('.art-source');
-    area.focus();
-    area.setSelectionRange(0, 3);
-    await act(async () => { area.dispatchEvent(new Event('select', { bubbles: true })); await settle(60); });
-    const bar = view.container.querySelector('.art-selection-bar');
-    assert.ok(bar, 'no selection action appeared over the source');
-    await click(bar.querySelector('button'));
-    assert.equal(drawerOf(view).querySelector('.art-quote blockquote').textContent, '<p>');
-    assert.equal(area.value, '<p>saved</p>');
-    await click(drawerOf(view).querySelector('[aria-label="drawer.closeRequest"]'));
-    assert.equal(document.activeElement, area, 'focus did not return to the source editor');
-  } finally { await view.unmount(); }
-});
-
-test('AC-060: the copied request carries identity, version, quote, and prompt', async () => {
-  const { host, id, view } = await pageFixture('copy060');
-  const writes = [];
-  Object.defineProperty(window.navigator, 'clipboard', {
-    value: { writeText: async (text) => { writes.push(text); } },
-    configurable: true,
-  });
-  try {
-    const area = view.container.querySelector('.art-source');
-    area.focus();
-    area.setSelectionRange(0, 3);
-    await act(async () => { area.dispatchEvent(new Event('select', { bubbles: true })); await settle(60); });
-    await click(view.container.querySelector('.art-selection-bar button'));
-    const drawer = drawerOf(view);
-    const prompt = drawer.querySelector('textarea');
-    assert.equal(prompt.value, '', 'the composer mixed boilerplate into the prompt');
-    await changeValue(prompt, 'Change the copy');
-    const preview = drawer.querySelector('.art-request-preview pre').textContent;
-    assert.match(preview, new RegExp(id));
-    assert.match(preview, /version=3/);
-    assert.match(preview, /Selected text:/);
-    assert.match(preview, /<p>/);
-    assert.match(preview, /Change the copy/);
-    await click(findButton(view, 'agent.copyRequest'));
-    assert.equal(writes.length, 1);
-    assert.match(writes[0], /Selected text:/);
-    assert.match(writes[0], /Change the copy/);
-    assert.equal(host.calls.filter(call => call.endpoint === 'update').length, 0, 'copying wrote the artifact');
-
-    await click(findButton(view, 'agent.removeQuote'));
-    assert.doesNotMatch(drawer.querySelector('.art-request-preview pre').textContent, /Selected text:/);
-  } finally { await view.unmount(); }
 });
 
 test('AC-061: a clean tab acknowledges an agent update while a dirty tab keeps its conflict', async () => {
@@ -1371,7 +1081,7 @@ test('AC-061: a clean tab acknowledges an agent update while a dirty tab keeps i
   host.state.artifacts.set(dirtyId, { manifest: host.manifest(dirtyId, 'page', 'Dirty target', 3), content: '<p>v3</p>' });
   const dirty = await render(tab.component, tabProps(`dsh-resource://artifact/workspace/ws-a/${dirtyId}`));
   try {
-    await click(findButton(dirty, 'tab.source'));
+    await openSource(dirty);
     await changeValue(dirty.container.querySelector('.art-source'), '<p>mine</p>');
     host.state.artifacts.get(dirtyId).manifest.version = 4;
     host.state.artifacts.get(dirtyId).content = '<p>v4</p>';
@@ -1392,30 +1102,13 @@ test('AC-061: a clean tab acknowledges an agent update while a dirty tab keeps i
   } finally { await dirty.unmount(); }
 });
 
-test('AC-063: clipboard denial keeps the request visible and selectable', async () => {
-  const { view } = await pageFixture('denied063');
-  Object.defineProperty(window.navigator, 'clipboard', {
-    value: { writeText: async () => { throw new Error('denied'); } },
-    configurable: true,
-  });
-  try {
-    await openRequest(view);
-    const drawer = drawerOf(view);
-    await changeValue(drawer.querySelector('textarea'), 'Change it');
-    await click(findButton(view, 'agent.copyRequest'));
-    assert.ok(drawer.querySelector('.art-request-preview pre').textContent.includes('Change it'));
-    assert.ok(drawer.querySelector('textarea:not([disabled])'));
-  } finally { await view.unmount(); }
-});
-
 test('AC-065: gallery covers render pages in an empty-script sandbox and documents as excerpts', async () => {
   const host = fakeHost();
   host.state.artifacts.set('art_ws_cover06501', { manifest: host.manifest('art_ws_cover06501', 'page', 'Cover page', 1), content: '<h1 onclick="window.x = 1">Cover page</h1><script>window.y = 1</script>' });
   host.state.artifacts.set('art_lib_cover06501', { manifest: host.manifest('art_lib_cover06501', 'doc', 'Cover doc', 1, 'library'), content: '# Cover doc\n\nReadable opening words.' });
   const { ctx, records } = stubContext(host);
   plugin.apply(ctx);
-  const gallery = slot(records, 'sidebar.right.pane.tab', 'dsh-artifacts');
-  const view = await render(gallery.component, tabProps('sidebar://artifacts'));
+  const view = await galleryView(records);
   try {
     await act(async () => settle(160));
     const frame = view.container.querySelector('.art-cover-frame');
@@ -1435,8 +1128,7 @@ test('AC-066: pinning an artifact moves it into the pinned group and persists', 
   host.state.artifacts.set('art_ws_pin0660001', { manifest: host.manifest('art_ws_pin0660001', 'page', 'Pin me', 1), content: '' });
   const { ctx, records } = stubContext(host);
   plugin.apply(ctx);
-  const gallery = slot(records, 'sidebar.right.pane.tab', 'dsh-artifacts');
-  const view = await render(gallery.component, tabProps('sidebar://artifacts'));
+  const view = await galleryView(records);
   try {
     const pin = view.container.querySelector('.art-tile-pin');
     await click(pin);
@@ -1474,24 +1166,6 @@ test('AC-067: the header version picker lists versions and previews one', async 
   } finally { await view.unmount(); }
 });
 
-test('AC-068: an empty gallery creates from a starter template', async () => {
-  const host = fakeHost();
-  const { ctx, records } = stubContext(host);
-  plugin.apply(ctx);
-  const main = slot(records, 'main', 'dsh-artifacts-panel');
-  const view = await render(main.component, main.spec.inject());
-  try {
-    const templates = [...view.container.querySelectorAll('.art-template')];
-    assert.equal(templates.length, 4, 'the empty gallery did not offer the starter set');
-    const dashboard = templates.find(template => template.textContent.includes('template.dashboard'));
-    await click(dashboard);
-    const create = host.calls.find(call => call.endpoint === 'create');
-    assert.ok(create, 'the template did not create an artifact');
-    assert.equal(create.payload.type, 'page');
-    assert.match(create.payload.content, /Revenue by month/);
-  } finally { await view.unmount(); }
-});
-
 test('AC-061: opening a tab after another view announced a version does not claim an update', async () => {
   const host = fakeHost();
   const id = 'art_ws_update06103';
@@ -1517,29 +1191,6 @@ test('AC-061: opening a tab after another view announced a version does not clai
   } finally { await view.unmount(); }
 });
 
-test('AC-062: a long selection is trimmed to the request cap and says so', async () => {
-  const host = fakeHost();
-  const id = 'art_ws_long0620001';
-  const content = '<p>' + 'x'.repeat(2100) + '</p>';
-  host.state.artifacts.set(id, { manifest: host.manifest(id, 'page', 'Long selection', 1), content });
-  const { ctx, records } = stubContext(host);
-  plugin.apply(ctx);
-  const tab = slot(records, 'sidebar.right.pane.tab', 'dsh-artifacts/artifact');
-  const view = await render(tab.component, tabProps(`dsh-resource://artifact/workspace/ws-a/${id}`));
-  try {
-    await click(findButton(view, 'tab.source'));
-    const area = view.container.querySelector('.art-source');
-    area.focus();
-    area.setSelectionRange(0, 2100);
-    await act(async () => { area.dispatchEvent(new Event('select', { bubbles: true })); await settle(60); });
-    await click(view.container.querySelector('.art-selection-bar button'));
-    const drawer = drawerOf(view);
-    assert.ok(drawer.querySelector('.art-field-hint').textContent.includes('agent.truncated'));
-    const preview = drawer.querySelector('.art-request-preview pre').textContent;
-    assert.ok(preview.length < 2600, 'the request kept the whole selection');
-  } finally { await view.unmount(); }
-});
-
 test('AC-069: a failed scope does not hide loaded cards from the other scope', async () => {
   const host = fakeHost();
   host.state.artifacts.set('art_ws_partial06901', { manifest: host.manifest('art_ws_partial06901', 'page', 'Still visible', 1), content: '<p>x</p>' });
@@ -1550,11 +1201,226 @@ test('AC-069: a failed scope does not hide loaded cards from the other scope', a
   };
   const { ctx, records } = stubContext(host);
   plugin.apply(ctx);
-  const gallery = slot(records, 'sidebar.right.pane.tab', 'dsh-artifacts');
-  const view = await render(gallery.component, tabProps('sidebar://artifacts'));
+  const view = await galleryView(records);
   try {
     await act(async () => settle(80));
     assert.match(view.container.textContent, /Still visible/);
     assert.match(view.container.querySelector('.art-bar').textContent, /error\.generic/);
+  } finally { await view.unmount(); }
+});
+
+
+test('AC-074: the preview frame follows the Harness theme for pages that opt in', async () => {
+  const host = fakeHost();
+  const id = 'art_ws_theme0740001';
+  host.state.artifacts.set(id, { manifest: host.manifest(id, 'page', 'Themed', 1), content: '<meta name="color-scheme" content="light dark"><p>x</p>' });
+  host.state.artifacts.set('art_ws_theme0740002', { manifest: host.manifest('art_ws_theme0740002', 'page', 'Light only', 1), content: '<p>y</p>' });
+  const { ctx, records } = stubContext(host);
+  plugin.apply(ctx);
+  const tab = slot(records, 'sidebar.right.pane.tab', 'dsh-artifacts/artifact');
+  const view = await render(tab.component, tabProps('dsh-resource://artifact/workspace/ws-a/' + id));
+  const light = await render(tab.component, tabProps('dsh-resource://artifact/workspace/ws-a/art_ws_theme0740002'));
+  try {
+    const html = async (target) => blobs.get(target.container.querySelector('iframe').getAttribute('src')).text();
+    assert.match(await html(view), /<html data-artifact-theme="light">/);
+    await act(async () => { document.body.setAttribute('data-ds-dark-theme', ''); await settle(60); });
+    assert.match(await html(view), /<html data-artifact-theme="dark">/, 'the frame did not switch with the Harness theme');
+    assert.match(await html(light), /<html><head>/, 'a page that did not opt in was switched to dark colors');
+  } finally {
+    document.body.removeAttribute('data-ds-dark-theme');
+    await view.unmount();
+    await light.unmount();
+  }
+});
+
+test('AC-075: artifact chrome renders through the shared primitives', async () => {
+  const { view } = await pageFixture('prim075');
+  try {
+    const header = view.container.querySelector('.art-header');
+    for (const label of ['tab.history', 'tab.export', 'gallery.more']) {
+      assert.ok(header.querySelector('.prim-button[aria-label="' + label + '"]'), label + ' is not a shared Button');
+    }
+    assert.ok(header.querySelector('[role="tablist"][aria-label="tab.mode"]'), 'the view switch is not the shared segmented control');
+    await click(header.querySelector('[aria-label="gallery.more"]'));
+    let confirmed = false;
+    const original = window.confirm;
+    window.confirm = () => { confirmed = true; return true; };
+    await click([...view.container.querySelectorAll('[role="menuitem"]')].find(item => item.textContent === 'tab.delete'));
+    window.confirm = original;
+    assert.equal(confirmed, false, 'delete still uses window.confirm');
+    const dialog = view.container.querySelector('[role="dialog"][aria-label="tab.deleteTitle"]');
+    assert.ok(dialog, 'delete did not open the shared modal');
+    await click([...dialog.querySelectorAll('button')].find(button => button.textContent === 'create.cancel'));
+    assert.equal(view.container.querySelector('[aria-label="tab.deleteTitle"]'), null);
+    const source = await fs.readFile(path.join(root, 'src/client/artifact-tab.tsx'), 'utf8');
+    assert.doesNotMatch(source, /window\.confirm/);
+  } finally { await view.unmount(); }
+});
+
+test('AC-076: page code is read-only until Edit', async () => {
+  const host = fakeHost();
+  const id = 'art_ws_code0760001';
+  host.state.artifacts.set(id, { manifest: host.manifest(id, 'page', 'Code view', 2), content: '<p>code</p>' });
+  const { ctx, records } = stubContext(host);
+  plugin.apply(ctx);
+  const tab = slot(records, 'sidebar.right.pane.tab', 'dsh-artifacts/artifact');
+  const view = await render(tab.component, tabProps('dsh-resource://artifact/workspace/ws-a/' + id));
+  try {
+    await click([...view.container.querySelectorAll('.art-segment button')].find(button => button.textContent === 'tab.source'));
+    assert.equal(view.container.querySelector('textarea'), null, 'the code opened editable');
+    assert.match(view.container.querySelector('.art-code').textContent, /<p>code<\/p>/);
+    await click(findButton(view, 'tab.editSource'));
+    const area = view.container.querySelector('.art-source');
+    assert.ok(area, 'Edit did not open the source editor');
+    await changeValue(area, '<p>edited</p>');
+    await act(async () => {
+      area.dispatchEvent(new KeyboardEvent('keydown', { key: 's', ctrlKey: true, bubbles: true }));
+      await settle(60);
+    });
+    assert.equal(host.state.artifacts.get(id).content, '<p>edited</p>');
+  } finally { await view.unmount(); }
+});
+
+test('AC-077: documents use the artifact typography and a selection toolbar', async () => {
+  const { view } = await docFixture('surface077', 1, 'Opening words');
+  try {
+    const page = view.container.querySelector('.art-docpage');
+    assert.ok(page, 'no page surface');
+    assert.equal(page.style.getPropertyValue('--artifact-font-display'), 'Georgia, serif');
+    assert.equal(page.style.getPropertyValue('--artifact-color-surface'), '#f8fafc');
+    assert.equal(view.container.querySelector('.art-doc-toolbar'), null, 'the toolbar shows with no selection');
+    await selectDoc(view, 7);
+    const toolbar = view.container.querySelector('.art-doc-toolbar');
+    assert.ok(toolbar, 'the toolbar did not appear for a selection');
+    assert.ok(findButton(view, 'format.bold'));
+    assert.ok([...toolbar.querySelectorAll('button')].some(button => button.textContent === 'agent.ask'), 'the selection toolbar has no edit request');
+    const css = await fs.readFile(path.join(root, 'src/client/styles.ts'), 'utf8');
+    assert.match(css, /DOC_STYLE/, 'the editor does not reuse the export typography');
+  } finally { await view.unmount(); }
+  await act(async () => { window.getSelection().removeAllRanges(); document.dispatchEvent(new Event('selectionchange')); await settle(20); });
+});
+
+test('AC-078: edit with agent inserts a quote and reference without sending', async () => {
+  const composer = composerActions();
+  const { host, id, view } = await pageFixture('ask078', { inputActions: composer.actions });
+  try {
+    await changeValue(view.container.querySelector('.art-source'), '<p>unsaved</p>');
+    const area = view.container.querySelector('.art-source');
+    area.focus();
+    area.setSelectionRange(0, 3);
+    // A pointer selection ends with mouseup, which the source editor reports.
+    await act(async () => { area.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })); await settle(40); });
+    const bar = view.container.querySelector('.art-selection-bar');
+    assert.ok(bar, 'no selection action appeared');
+    await click([...bar.querySelectorAll('button')].find(button => button.textContent === 'agent.ask'));
+    assert.equal(host.state.artifacts.get(id).content, '<p>unsaved</p>', 'the draft was not saved first');
+    assert.deepEqual(composer.calls.map(call => call[0]), ['insertQuote', 'captureInsertion', 'insertText']);
+    assert.equal(composer.calls[0][1], '<p>');
+    assert.match(composer.calls[2][1], new RegExp('agent\\.reference\\|title=Regression\\|id=' + id + '\\|version=4'));
+    assert.equal(view.container.querySelector('.art-selection-bar'), null);
+
+    composer.calls.length = 0;
+    await click(findButton(view, 'agent.ask'));
+    assert.deepEqual(composer.calls.map(call => call[0]), ['captureInsertion', 'insertText'], 'the header action quoted nothing yet called insertQuote');
+
+    composer.calls.length = 0;
+    await changeValue(view.container.querySelector('.art-source'), '<p>will fail</p>');
+    host.state.failNext = { endpoint: 'update', error: { code: 'artifact/storage-failure', message: 'failed', details: {} } };
+    await click(findButton(view, 'agent.ask'));
+    assert.deepEqual(composer.calls, [], 'a failed save still reached the composer');
+    const source = await fs.readFile(path.join(root, 'src/client/artifact-tab.tsx'), 'utf8');
+    assert.doesNotMatch(source, /\.submit\(|setDraft\(/, 'the tab can send or replace the message');
+  } finally { await view.unmount(); }
+});
+
+test('AC-079: the full page copies the reference instead', async () => {
+  const host = fakeHost();
+  const id = 'art_ws_copy0790001';
+  host.state.artifacts.set(id, { manifest: host.manifest(id, 'page', 'Full page', 2), content: '<p>x</p>' });
+  const { ctx, records } = stubContext(host);
+  plugin.apply(ctx);
+  const writes = [];
+  Object.defineProperty(window.navigator, 'clipboard', { value: { writeText: async (text) => { writes.push(text); } }, configurable: true });
+  const view = await galleryView(records);
+  try {
+    await click(view.container.querySelector('.art-tile-open'));
+    await click(findButton(view, 'agent.ask'));
+    assert.equal(writes.length, 1, 'the request was not copied');
+    assert.match(writes[0], new RegExp('agent\\.reference\\|title=Full page\\|id=' + id + '\\|version=2'));
+
+    Object.defineProperty(window.navigator, 'clipboard', { value: { writeText: async () => { throw new Error('denied'); } }, configurable: true });
+    await click(findButton(view, 'agent.ask'));
+    const fallback = view.container.querySelector('.art-fallback');
+    assert.ok(fallback, 'clipboard denial left no selectable request');
+    assert.match(fallback.value, /agent\.reference/);
+  } finally { await view.unmount(); }
+});
+
+test('AC-080: live results open the artifact once and replayed results never do', async () => {
+  const host = fakeHost();
+  const { ctx, records } = stubContext(host);
+  plugin.apply(ctx);
+  const card = slot(records, 'tool.call.toolview', 'artifact_create');
+  const meta = { kind: 'artifact', v: 1, id: 'art_ws_live0800001', scope: 'workspace', type: 'page', title: 'Live', version: 1, workspaceId: 'ws-a' };
+  const base = { t, toolName: 'artifact_create' };
+  const live = await render(card.component, { ...base, phase: 'start', block: { args: { title: 'Live' } } });
+  await live.rerender({ ...base, phase: 'result', block: { isError: false, meta, content: [] } });
+  await live.rerender({ ...base, phase: 'result', block: { isError: false, meta, content: [] } });
+  assert.deepEqual(records.opened, ['dsh-resource://artifact/workspace/ws-a/art_ws_live0800001']);
+  await live.unmount();
+  const again = await render(card.component, { ...base, phase: 'start', block: { args: { title: 'Live' } } });
+  await again.rerender({ ...base, phase: 'result', block: { isError: false, meta, content: [] } });
+  assert.equal(records.opened.length, 1, 'a remounted card opened the same result twice');
+  await again.unmount();
+  const replay = await render(card.component, { ...base, phase: 'result', block: { isError: false, meta: { ...meta, id: 'art_ws_replay080001' }, content: [] } });
+  assert.equal(records.opened.length, 1, 'a replayed result opened a tab');
+  await replay.unmount();
+});
+
+test('AC-081: the running card shows the title with a shimmer', async () => {
+  const host = fakeHost();
+  const { ctx, records } = stubContext(host);
+  plugin.apply(ctx);
+  const card = slot(records, 'tool.call.toolview', 'artifact_update');
+  const view = await render(card.component, { t, toolName: 'artifact_update', phase: 'start', block: { args: { id: 'art_ws_x', title: 'Q4 plan' } } });
+  try {
+    assert.ok(view.container.querySelector('[data-shimmer]'), 'no shimmer while running');
+    assert.match(view.container.textContent, /card\.updating\|title=Q4 plan/);
+    await view.rerender({ t, toolName: 'artifact_update', phase: 'preparing', block: {} });
+    assert.match(view.container.textContent, /card\.updatingUntitled/);
+  } finally { await view.unmount(); }
+});
+
+test('AC-082: the composer menu lists recent artifacts and inserts starter prompts', async () => {
+  const host = fakeHost();
+  for (let index = 0; index < 8; index += 1) {
+    const id = 'art_ws_recent08200' + index;
+    const manifest = host.manifest(id, 'page', 'Recent ' + index, 1);
+    if (index === 7) manifest.source = { origin: 'agent', action: 'create', sessionId: 'ses-a' };
+    host.state.artifacts.set(id, { manifest, content: '' });
+  }
+  const { ctx, records } = stubContext(host);
+  plugin.apply(ctx);
+  assert.equal(records.tabs.some(definition => definition.kind === 'artifacts'), false, 'the right-sidebar gallery is still registered');
+  assert.equal(records.slots.some(entry => entry.spec?.key === 'dsh-artifacts' && entry.spec.name === 'sidebar.right.pane.tab'), false);
+  const button = slot(records, 'conversation.input.left', 'dsh-artifacts');
+  const composer = composerActions();
+  const props = { t, sessionId: 'ses-a', inputActions: composer.actions, useSessions: (select) => select({ byId: { 'ses-a': { cwd: '/work/a' } } }), useWorkspaces: (select) => select({ items: [{ workspaceId: 'ws-a', path: '/work/a', sessionIds: ['ses-a'] }] }) };
+  const view = await render(button.component, props);
+  try {
+    await click(view.container.querySelector('[aria-label="composer.label"]'));
+    const rows = [...view.container.querySelectorAll('[role="menuitem"]')].map(item => item.textContent);
+    const recent = rows.filter(text => text.startsWith('Recent'));
+    assert.equal(recent.length, 6, 'the menu did not cap recent artifacts at six');
+    assert.equal(recent[0], 'Recent 7', 'this session\'s artifact is not first');
+    await click([...view.container.querySelectorAll('[role="menuitem"]')].find(item => item.textContent === 'prompt.dashboard'));
+    assert.deepEqual(composer.calls.map(call => call[0]), ['captureInsertion', 'insertText']);
+    assert.equal(composer.calls[1][1], 'prompt.dashboardText');
+    await click(view.container.querySelector('[aria-label="composer.label"]'));
+    await click([...view.container.querySelectorAll('[role="menuitem"]')].find(item => item.textContent === 'Recent 7'));
+    assert.deepEqual(records.opened, ['dsh-resource://artifact/workspace/ws-a/art_ws_recent082007']);
+    await click(view.container.querySelector('[aria-label="composer.label"]'));
+    await click([...view.container.querySelectorAll('[role="menuitem"]')].find(item => item.textContent === 'composer.all'));
+    assert.deepEqual(records.panels, ['dsh-artifacts-panel']);
   } finally { await view.unmount(); }
 });

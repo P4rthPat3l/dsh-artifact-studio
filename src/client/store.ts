@@ -76,20 +76,28 @@ export function useListChanges(): number {
   return useSyncExternalStore(listChanges.subscribe, listChanges.get);
 }
 
-let toastTimer: ReturnType<typeof setTimeout> | undefined;
-const notice = createCell<string | null>(null);
-
-export function notify(message: string): void {
-  notice.set(message);
-  if (toastTimer !== undefined) clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => notice.set(null), 3600);
+/** One shown notice; the sequence restarts the banner when the same text repeats. */
+export interface Notice {
+  seq: number;
+  message: string;
 }
 
-export function useNotice(): string | null {
+const notice = createCell<Notice | null>(null);
+
+export function notify(message: string): void {
+  notice.set({ seq: (notice.get()?.seq ?? 0) + 1, message });
+}
+
+export function useNotice(): Notice | null {
   return useSyncExternalStore(notice.subscribe, notice.get);
 }
 
-export function clearNotice(): void {
-  if (toastTimer !== undefined) clearTimeout(toastTimer);
+/**
+ * Remove a notice once its banner finished, unless a newer one replaced it.
+ * @param seq the finished notice, or undefined to clear any.
+ */
+export function clearNotice(seq?: number): void {
+  const current = notice.get();
+  if (current === null || (seq !== undefined && current.seq !== seq)) return;
   notice.set(null);
 }

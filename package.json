@@ -18,6 +18,7 @@
   "exports": {
     ".": "./dist/host/index.js",
     "./tools": "./dist/host/tools-plugin.js",
+    "./skill": "./dist/host/skill-plugin.js",
     "./client": "./client.js",
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg"

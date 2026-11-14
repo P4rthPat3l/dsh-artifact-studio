@@ -1,5 +1,6 @@
 import React from 'react';
 import type { ReactNode } from 'react';
+import { Button } from '@deepseek-ai/dsh-client-ui-primitives';
 
 /** What the boundary renders when it catches a failure. */
 export interface SurfaceBoundaryProps {
@@ -37,9 +38,9 @@ export class SurfaceBoundary extends React.Component<SurfaceBoundaryProps, Surfa
         <div className="art-center" role="alert">
           <p className="art-center-title">{this.props.title}</p>
           <p className="art-center-hint">{this.props.hint}</p>
-          <button type="button" className="art-button" onClick={() => window.location.reload()}>
+          <Button size="sm" variant="outline" onClick={() => window.location.reload()}>
             {this.props.reloadLabel}
-          </button>
+          </Button>
         </div>
       </section>
     );

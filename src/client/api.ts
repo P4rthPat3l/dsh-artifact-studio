@@ -87,7 +87,8 @@ function isPayload(value: unknown): value is ArtifactPayload {
     isManifest(value.manifest) &&
     typeof value.content === 'string' &&
     typeof value.version === 'number' &&
-    typeof value.designCss === 'string'
+    typeof value.designCss === 'string' &&
+    isTokens(value.design)
   );
 }
 
@@ -135,6 +136,7 @@ function isTokens(value: unknown): value is DesignTokens {
     value.schemaVersion === 1 &&
     typeof value.name === 'string' &&
     isObject(value.colors) &&
+    isObject(value.colorsDark) &&
     isObject(value.typography) &&
     isObject(value.spacing) &&
     isObject(value.radius)

@@ -1,21 +1,22 @@
 import { useEffect, useMemo, useState } from 'react';
-import { tokensToCss } from '../contract.js';
-import type { DesignTokens, ResolvedDesignSystem, Scope } from '../contract.js';
+import { Button } from '@deepseek-ai/dsh-client-ui-primitives';
+import { COLOR_ROLES, tokensToCss } from '../contract.js';
+import type { DesignTokens, ResolvedDesignSystem, Scope, TokenColors } from '../contract.js';
 import { api, codeOf, errorKey } from './api.js';
 import { PageFrame } from './page-view.jsx';
 import type { Translator } from './harness.js';
 import { notify } from './store.js';
+import { useHarnessDark } from './theme.js';
 
-const COLOR_KEYS = ['primary', 'accent', 'surface', 'text', 'muted'] as const;
 const RADIUS_KEYS = ['sm', 'md', 'lg'] as const;
 
-const PREVIEW = (t: Translator) => `<!doctype html><html><head><style>
+const PREVIEW = (t: Translator) => `<!doctype html><html><head><meta name="color-scheme" content="light dark"><style>
 body { margin: 0; padding: 20px; font-family: var(--artifact-font-family); background: var(--artifact-color-surface); color: var(--artifact-color-text); }
-h2 { margin: 0 0 6px; font-size: var(--artifact-font-size-4); letter-spacing: -0.02em; }
+h2 { margin: 0 0 6px; font-family: var(--artifact-font-display); font-size: var(--artifact-font-size-4); letter-spacing: -0.02em; }
 p { margin: 0 0 14px; color: var(--artifact-color-muted); }
 .row { display: flex; gap: 8px; align-items: center; }
-button { padding: 8px 14px; border: 0; border-radius: var(--artifact-radius-md); background: var(--artifact-color-primary); color: #fff; font: inherit; }
-.tag { padding: 3px 8px; border-radius: var(--artifact-radius-sm); background: var(--artifact-color-accent); color: #fff; font-size: 12px; }
+button { padding: 8px 14px; border: 0; border-radius: var(--artifact-radius-md); background: var(--artifact-color-primary); color: var(--artifact-color-surface); font: inherit; }
+.tag { padding: 3px 8px; border-radius: var(--artifact-radius-sm); background: color-mix(in srgb, var(--artifact-color-accent) 18%, transparent); color: var(--artifact-color-accent); font-size: 12px; }
 code { font-family: var(--artifact-font-mono); font-size: 12px; }
 </style></head><body><h2>${t('design.previewHeading')}</h2><p>${t('design.previewBody')}</p>
 <div class="row"><button>${t('design.previewButton')}</button><span class="tag">+12%</span><code>var(--artifact-color-primary)</code></div></body></html>`;
@@ -46,6 +47,7 @@ export function DesignEditor({ t, workspaceId }: DesignEditorProps) {
   const [tokens, setTokens] = useState<DesignTokens | null>(null);
   const [failed, setFailed] = useState(false);
   const [busy, setBusy] = useState(false);
+  const dark = useHarnessDark();
 
   useEffect(() => {
     const controller = new AbortController();
@@ -102,37 +104,45 @@ export function DesignEditor({ t, workspaceId }: DesignEditorProps) {
       <div className="art-design-group">
         <h3>{t('design.preview')}</h3>
         <div className="art-design-preview" style={{ height: 150, display: 'flex' }}>
-          <PageFrame content={PREVIEW(t)} designCss={css} title={tokens.name} frameTitle={t('design.preview')} />
+          <PageFrame content={PREVIEW(t)} designCss={css} title={tokens.name} frameTitle={t('design.preview')} dark={dark} />
         </div>
       </div>
       <label className="art-field">
         {t('design.name')}
         <input type="text" value={tokens.name} maxLength={80} onChange={(event) => setTokens({ ...tokens, name: event.target.value })} />
       </label>
-      <div className="art-design-group">
-        <h3>{t('design.colors')}</h3>
-        <div className="art-swatches">
-          {COLOR_KEYS.map((key) => (
-            <div key={key} className="art-swatch">
-              <input
-                type="color"
-                aria-label={t(`design.color.${key}`)}
-                value={isHex(tokens.colors[key]) ? tokens.colors[key] : '#000000'}
-                onChange={(event) => setTokens({ ...tokens, colors: { ...tokens.colors, [key]: event.target.value } })}
-              />
-              <span className="art-swatch-text">
-                {t(`design.color.${key}`)}
-                <input
-                  type="text"
-                  aria-label={`${t(`design.color.${key}`)} CSS`}
-                  value={tokens.colors[key]}
-                  onChange={(event) => setTokens({ ...tokens, colors: { ...tokens.colors, [key]: event.target.value } })}
-                />
-              </span>
-            </div>
-          ))}
+      {(['colors', 'colorsDark'] as const).map((set) => (
+        <div key={set} className="art-design-group">
+          <h3>{t(set === 'colors' ? 'design.colors' : 'design.colorsDark')}</h3>
+          <div className="art-swatches">
+            {COLOR_ROLES.map((key) => {
+              const setColor = (value: string) => {
+                const next: TokenColors = { ...tokens[set], [key]: value };
+                setTokens({ ...tokens, [set]: next });
+              };
+              return (
+                <div key={key} className="art-swatch">
+                  <input
+                    type="color"
+                    aria-label={t(`design.color.${key}`) + ' ' + t(set === 'colors' ? 'design.colors' : 'design.colorsDark')}
+                    value={isHex(tokens[set][key]) ? tokens[set][key] : '#000000'}
+                    onChange={(event) => setColor(event.target.value)}
+                  />
+                  <span className="art-swatch-text">
+                    {t(`design.color.${key}`)}
+                    <input
+                      type="text"
+                      aria-label={t(`design.color.${key}`) + ' ' + t(set === 'colors' ? 'design.colors' : 'design.colorsDark') + ' CSS'}
+                      value={tokens[set][key]}
+                      onChange={(event) => setColor(event.target.value)}
+                    />
+                  </span>
+                </div>
+              );
+            })}
+          </div>
         </div>
-      </div>
+      ))}
       <div className="art-design-group">
         <h3>{t('design.type')}</h3>
         <label className="art-field">
@@ -141,6 +151,14 @@ export function DesignEditor({ t, workspaceId }: DesignEditorProps) {
             type="text"
             value={tokens.typography.fontFamily}
             onChange={(event) => setTokens({ ...tokens, typography: { ...tokens.typography, fontFamily: event.target.value } })}
+          />
+        </label>
+        <label className="art-field">
+          {t('design.display')}
+          <input
+            type="text"
+            value={tokens.typography.displayFamily}
+            onChange={(event) => setTokens({ ...tokens, typography: { ...tokens.typography, displayFamily: event.target.value } })}
           />
         </label>
         <label className="art-field">
@@ -178,22 +196,17 @@ export function DesignEditor({ t, workspaceId }: DesignEditorProps) {
       </label>
       <div className="art-design-actions">
         {workspaceId === null ? null : (
-          <button type="button" className="art-button art-button-primary" disabled={busy} onClick={() => void saveTo('workspace')}>
+          <Button size="sm" variant="primary" disabled={busy} onClick={() => void saveTo('workspace')}>
             {t('design.saveWorkspace')}
-          </button>
+          </Button>
         )}
-        <button
-          type="button"
-          className={workspaceId === null ? 'art-button art-button-primary' : 'art-button'}
-          disabled={busy}
-          onClick={() => void saveTo('library')}
-        >
+        <Button size="sm" variant={workspaceId === null ? 'primary' : 'outline'} disabled={busy} onClick={() => void saveTo('library')}>
           {t('design.saveLibrary')}
-        </button>
+        </Button>
         {resolved.source === 'workspace' && workspaceId !== null ? (
-          <button type="button" className="art-button" disabled={busy} onClick={() => void clear()}>
+          <Button size="sm" variant="outline" disabled={busy} onClick={() => void clear()}>
             {t('design.clear')}
-          </button>
+          </Button>
         ) : null}
       </div>
     </div>

@@ -1,4 +1,5 @@
 import type { Manifest, Scope } from '../../contract.js';
+import { checkPage } from './checks.js';
 import { ArtifactError } from './errors.js';
 import { workspaceForSession } from './paths.js';
 import type { ArtifactService, Target } from './service.js';
@@ -69,10 +70,37 @@ const SCOPE_PARAM = {
 };
 
 const PAGE_GUIDE = [
-  'A page is one self-contained HTML document rendered in a sandbox with no network: external scripts, stylesheets, fonts, images, and fetch are blocked. Inline all CSS and JavaScript, draw charts with inline SVG or canvas, and embed images as data: URIs.',
-  'Pages receive the design system as CSS custom properties: --artifact-color-primary, -accent, -surface, -text, -muted; --artifact-font-family; --artifact-font-mono; --artifact-font-size-0 to -6; --artifact-space-0 to -6; --artifact-radius-sm, -md, -lg. Use them instead of hard-coded colors and fonts.',
+  'Load the artifact-design skill first if you have not this session. Precedence: the user\'s request, then the design system, then your own choices.',
+  'A page is one self-contained HTML document in a sandbox with no network or browser storage: inline all CSS and JavaScript, draw charts with inline SVG or canvas, and use data: URIs for images. It shows in a panel often 380 to 700 px wide, so keep the layout fluid.',
+  'Style pages with the injected variables: --artifact-color-primary, -accent, -surface, -text, -muted; --artifact-font-family, -display, -mono; --artifact-font-size-0 to -6; --artifact-space-0 to -6; --artifact-radius-sm, -md, -lg.',
   'A doc is Markdown: headings, lists, task lists, links, tables, quotes, and fenced code.',
 ].join('\n');
+
+/**
+ * Warnings for the version an update wrote. Full content is checked directly.
+ * Edits are checked against that exact saved version; the version already
+ * landed, so a failed read reports no warnings instead of failing the write.
+ */
+async function writtenWarnings(
+  type: string,
+  content: string | undefined,
+  readEdited: (() => Promise<{ content: string }>) | undefined,
+): Promise<string[]> {
+  if (type !== 'page') return [];
+  if (content !== undefined) return checkPage(content);
+  if (readEdited === undefined) return [];
+  try {
+    return checkPage((await readEdited()).content);
+  } catch (error) {
+    if (error instanceof ArtifactError) return [];
+    throw error;
+  }
+}
+
+/** Static page warnings for a written version; documents have none. */
+function warningsFor(type: string, content: string | undefined): string[] {
+  return type === 'page' && content !== undefined ? checkPage(content) : [];
+}
 
 /**
  * The scope context of a call: the session's workspace, plus an explicit scope.
@@ -145,6 +173,14 @@ function summary(manifest: Manifest, target: Target): { [key: string]: JsonValue
   };
 }
 
+/** The text the model reads after a write, with any page warnings. */
+function writeText(value: JsonValue, verb: string): string {
+  const warnings = record(value).warnings;
+  const list = Array.isArray(warnings) ? warnings.map(String) : [];
+  const head = `${line(value, verb)} The user sees a card with an Open action.`;
+  return list.length === 0 ? head : `${head}\nWarnings:\n${list.map((item) => `- ${item}`).join('\n')}`;
+}
+
 const SUMMARY_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -172,6 +208,12 @@ function line(value: JsonValue, verb: string): string {
   return `${verb} ${String(fields.type)} "${String(fields.title)}" id=${String(fields.id)} scope=${String(fields.scope)} version=${String(fields.version)}.`;
 }
 
+const WRITE_SCHEMA = {
+  ...SUMMARY_SCHEMA,
+  required: [...SUMMARY_SCHEMA.required, 'warnings'],
+  properties: { ...SUMMARY_SCHEMA.properties, warnings: { type: 'array', items: { type: 'string' } } },
+};
+
 /**
  * Build the artifact tools.
  * @param host the services the tools need.
@@ -198,20 +240,22 @@ export function createTools(host: ToolHost): ToolDefinition[] {
       },
     },
     output: {
-      schema: SUMMARY_SCHEMA,
-      render: (_args, value) => [{ type: 'text', text: `${line(value, 'Created')} The user sees a card with an Open action.` }],
+      schema: WRITE_SCHEMA,
+      render: (_args, value) => [{ type: 'text', text: writeText(value, 'Created') }],
       presentationMeta: (_args, value) => cardMeta(value),
     },
     async execute(args, exec) {
       const fields = fieldsOf(args);
       const target = await targetFor(host, exec, optionalScope(fields));
+      const type = requiredType(fields);
+      const content = optionalString(fields, 'content') ?? '';
       const manifest = await service.create(target, {
-        type: requiredType(fields),
+        type,
         title: requiredString(fields, 'title'),
-        content: optionalString(fields, 'content') ?? '',
+        content,
         source: { origin: 'agent', action: 'create', ...(exec.agent === undefined ? {} : { sessionId: exec.agent.id }) },
       });
-      return summary(manifest, target);
+      return { ...summary(manifest, target), warnings: warningsFor(type, content) };
     },
   };
 
@@ -257,8 +301,11 @@ export function createTools(host: ToolHost): ToolDefinition[] {
 
   const update: ToolDefinition = {
     name: 'artifact_update',
-    description:
-      'Save a new version of an artifact, either with complete new content or with exact text edits. The update is refused when baseVersion is not the current version, for example after the user edited it; read it again and reapply your change.',
+    description: [
+      'Save a new version of an artifact. For a few local changes send edits; send complete content only when you rewrite most of it. Each edit oldText must occur exactly once.',
+      'The update is refused when baseVersion is not the current version, for example after the user edited it; read it again and reapply your change. Never discard the user\'s edits.',
+      'A layout or styling change follows the artifact-design skill and the same precedence: the user\'s request, then the design system, then your own choices.',
+    ].join('\n'),
     parameters: {
       type: 'object',
       additionalProperties: false,
@@ -281,8 +328,8 @@ export function createTools(host: ToolHost): ToolDefinition[] {
       },
     },
     output: {
-      schema: SUMMARY_SCHEMA,
-      render: (_args, value) => [{ type: 'text', text: line(value, 'Updated') }],
+      schema: WRITE_SCHEMA,
+      render: (_args, value) => [{ type: 'text', text: writeText(value, 'Updated') }],
       presentationMeta: (_args, value) => cardMeta(value),
     },
     async execute(args, exec) {
@@ -302,7 +349,7 @@ export function createTools(host: ToolHost): ToolDefinition[] {
         title,
         source: { origin: 'agent', action: 'update', ...(exec.agent === undefined ? {} : { sessionId: exec.agent.id }) },
       });
-      return summary(manifest, target);
+      return { ...summary(manifest, target), warnings: await writtenWarnings(manifest.type, content, edits === undefined ? undefined : () => service.read(target, id, manifest.version)) };
     },
   };
 
@@ -426,7 +473,7 @@ export function createTools(host: ToolHost): ToolDefinition[] {
         tokens: {
           type: 'object',
           description:
-            'Partial tokens: name, notes, colors {primary, accent, surface, text, muted}, typography {fontFamily, monoFamily, scale[]}, spacing {unit, scale[]}, radius {sm, md, lg}. Sizes are pixels.',
+            'Partial tokens: name, notes, colors and colorsDark {primary, accent, surface, text, muted}, typography {fontFamily, displayFamily, monoFamily, scale[]}, spacing {unit, scale[]}, radius {sm, md, lg}. Sizes are pixels.',
         },
         scope: {
           type: 'string',

@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { DEFAULT_TOKENS, tokensToCss } from '../../contract.js';
-import type { DesignTokens, ResolvedDesignSystem, Scope } from '../../contract.js';
+import { COLOR_ROLES, DEFAULT_TOKENS, tokensToCss } from '../../contract.js';
+import type { DesignTokens, ResolvedDesignSystem, Scope, TokenColors } from '../../contract.js';
 import { ArtifactError } from './errors.js';
 import { assertWithin, withLock, writeAtomic } from './fsutil.js';
 import { assertPlainFile } from './paths.js';
@@ -68,6 +68,20 @@ function size(value: unknown, field: string): number {
 }
 
 /**
+ * Merge one color set.
+ * @param base the colors to start from.
+ * @param patch the patch value for this set.
+ * @param field the field name for errors.
+ * @returns valid colors.
+ */
+function mergeColors(base: TokenColors, patch: unknown, field: string): TokenColors {
+  const source = isObject(patch) ? patch : {};
+  const colors = { ...base };
+  for (const role of COLOR_ROLES) colors[role] = cssString(source[role] ?? base[role], `${field}.${role}`);
+  return colors;
+}
+
+/**
  * Merge a partial token patch onto a base and validate the result.
  * @param base the tokens to start from.
  * @param patch a partial or full token object.
@@ -75,7 +89,6 @@ function size(value: unknown, field: string): number {
  */
 export function mergeTokens(base: DesignTokens, patch: unknown): DesignTokens {
   if (!isObject(patch)) throw new ArtifactError('artifact/invalid-tokens', 'Tokens must be an object.');
-  const colors = isObject(patch.colors) ? patch.colors : {};
   const typography = isObject(patch.typography) ? patch.typography : {};
   const spacing = isObject(patch.spacing) ? patch.spacing : {};
   const radius = isObject(patch.radius) ? patch.radius : {};
@@ -90,15 +103,11 @@ export function mergeTokens(base: DesignTokens, patch: unknown): DesignTokens {
   return {
     schemaVersion: 1,
     name: name.trim(),
-    colors: {
-      primary: cssString(colors.primary ?? base.colors.primary, 'colors.primary'),
-      accent: cssString(colors.accent ?? base.colors.accent, 'colors.accent'),
-      surface: cssString(colors.surface ?? base.colors.surface, 'colors.surface'),
-      text: cssString(colors.text ?? base.colors.text, 'colors.text'),
-      muted: cssString(colors.muted ?? base.colors.muted, 'colors.muted'),
-    },
+    colors: mergeColors(base.colors, patch.colors, 'colors'),
+    colorsDark: mergeColors(base.colorsDark, patch.colorsDark, 'colorsDark'),
     typography: {
       fontFamily: cssString(typography.fontFamily ?? base.typography.fontFamily, 'typography.fontFamily'),
+      displayFamily: cssString(typography.displayFamily ?? base.typography.displayFamily, 'typography.displayFamily'),
       monoFamily: cssString(typography.monoFamily ?? base.typography.monoFamily, 'typography.monoFamily'),
       scale: sizes(typography.scale ?? base.typography.scale, 'typography.scale'),
     },

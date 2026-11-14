@@ -21,7 +21,7 @@ import { marked } from 'marked';
 import type { MarkedToken, Token, Tokens } from 'marked';
 import { FORMATS_BY_TYPE } from '../../contract.js';
 import type { DesignTokens, ExportFormat, ExportedFile, Manifest } from '../../contract.js';
-import { DOC_CSP, PAGE_CSP, PRINT_CSP, composePage, escapeHtml } from '../../render.js';
+import { DOC_CSP, DOC_STYLE, PAGE_CSP, PRINT_CSP, composePage, escapeHtml } from '../../render.js';
 import { ArtifactError } from './errors.js';
 import { assertWithin, withLock } from './fsutil.js';
 import type { ScopeRoot } from './paths.js';
@@ -67,6 +67,7 @@ function exportFileName(manifest: Manifest, format: ExportFormat, now: Date): st
 
 /**
  * Printable HTML for a Markdown document, styled from the design tokens.
+ * The same rules style the document editor, so the editor matches the export.
  * @param title the document title.
  * @param markdown the source.
  * @param designCss the token rule.
@@ -76,16 +77,10 @@ function exportFileName(manifest: Manifest, format: ExportFormat, now: Date): st
 export function docToHtml(title: string, markdown: string, designCss: string, print = false): string {
   const body = marked.parse(markdown, { async: false, gfm: true });
   const style = `
-body { margin: 0; background: #fff; color: var(--artifact-color-text); font-family: var(--artifact-font-family); line-height: 1.6; }
-main { max-width: 760px; margin: 0 auto; padding: 48px 32px; }
-h1, h2, h3, h4 { line-height: 1.25; color: var(--artifact-color-text); }
-h1 { font-size: var(--artifact-font-size-5); border-bottom: 2px solid var(--artifact-color-primary); padding-bottom: 8px; }
-a { color: var(--artifact-color-primary); }
-code, pre { font-family: var(--artifact-font-mono); }
-pre { background: var(--artifact-color-surface); padding: 12px 16px; border-radius: var(--artifact-radius-md); overflow: auto; }
-blockquote { margin: 0; padding-left: 16px; border-left: 3px solid var(--artifact-color-accent); color: var(--artifact-color-muted); }
-table { border-collapse: collapse; } th, td { border: 1px solid #cbd5e1; padding: 6px 10px; text-align: left; }
-@media print { main { padding: 0; } }`;
+${DOC_STYLE}
+body { margin: 0; background: var(--artifact-color-surface); }
+main { max-width: 70ch; margin: 0 auto; padding: 56px 32px 72px; }
+@media print { main { padding: 0; max-width: none; } }`;
   return composePage(
     `<style>${style}</style><main>${body}</main>`,
     designCss,

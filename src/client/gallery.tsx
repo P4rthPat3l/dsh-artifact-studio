@@ -1,20 +1,32 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
+import {
+  Button,
+  IconChevronLeftOutlineRegular,
+  IconCopyOutlineRegular,
+  IconPinFillRegular,
+  IconPinOutlineRegular,
+  IconPlusOutlineRegular,
+  IconRefreshOutlineRegular,
+  IconSlidersTwoOutlineRegular,
+  Menu,
+  SegmentedControl,
+  Tooltip,
+} from '@deepseek-ai/dsh-client-ui-primitives';
 import { formatArtifactAddress } from '../contract.js';
 import type { ArtifactAddress, ArtifactType, ListResult, Manifest, Scope } from '../contract.js';
 import { api, codeOf, errorKey } from './api.js';
 import type { Where } from './api.js';
-import { useWorkspaceBinding } from './binding.js';
 import { DesignEditor } from './design-editor.jsx';
 import { pageDocument } from './frames.js';
-import type { TabProps, Translator } from './harness.js';
-import { IconBack, IconDoc, IconPage, IconPalette, IconPin, IconPlus, IconRefresh } from './icons.jsx';
+import type { Translator } from './harness.js';
+import { IconDoc, IconPage } from './icons.jsx';
 import { relativeTime } from './locale.js';
-import { Menu } from './menu.jsx';
+import { useHarnessDark } from './theme.js';
 import { togglePin, usePins } from './preferences.js';
 import { announceListChange, notify, rememberTitle, useListChanges } from './store.js';
-import { TEMPLATES, starterContent, templateContent } from './templates.js';
-import type { ArtifactTemplate } from './templates.js';
+import { STARTERS } from './composer.jsx';
+import { starterContent } from './templates.js';
 
 type SectionState = { status: 'loading' } | { status: 'ready'; page: ListResult } | { status: 'failed'; code?: string };
 
@@ -151,6 +163,7 @@ function ArtifactCover({ t, view }: { t: Translator; view: ArtifactView }) {
   const [visible, setVisible] = useState(typeof IntersectionObserver === 'undefined');
   const [url, setUrl] = useState<string | null>(null);
   const ref = useRef<HTMLSpanElement | null>(null);
+  const dark = useHarnessDark();
   const key = formatArtifactAddress(view.address);
   const title = view.manifest.title;
   const type = view.manifest.type;
@@ -195,10 +208,10 @@ function ArtifactCover({ t, view }: { t: Translator; view: ArtifactView }) {
       setUrl(null);
       return undefined;
     }
-    const next = URL.createObjectURL(new Blob([pageDocument(coverHtml(data.content), data.designCss, title)], { type: 'text/html' }));
+    const next = URL.createObjectURL(new Blob([pageDocument(coverHtml(data.content), data.designCss, title, dark ? 'dark' : 'light')], { type: 'text/html' }));
     setUrl(next);
     return () => URL.revokeObjectURL(next);
-  }, [data, type, title]);
+  }, [data, type, title, dark]);
 
   const icon = type === 'page' ? <IconPage /> : <IconDoc />;
   if (failed) return <span className="art-cover" ref={ref} aria-hidden="true"><span className="art-cover-fallback">{icon}</span></span>;
@@ -238,13 +251,15 @@ function ArtifactTile({ t, view, pinned, onOpen }: {
           <span className="art-tile-title" title={view.manifest.title}>{view.manifest.title}</span>
           <span className="art-tile-sub">
             {t(`type.${view.manifest.type}`)} · {t('gallery.updated', { time: relativeTime(t, view.manifest.updatedAt) })} · {t('gallery.version', { version: view.manifest.version })}
+            {view.manifest.scope === 'library' ? ' · ' + t('scope.library') : ''}
           </span>
-          <span className="art-badge art-tile-scope" data-scope={view.manifest.scope}>{t(`scope.${view.manifest.scope}`)}</span>
         </span>
       </button>
-      <button type="button" className="art-tile-pin" aria-label={pinLabel} title={pinLabel} aria-pressed={pinned} onClick={() => togglePin(address)}>
-        <IconPin />
-      </button>
+      <Tooltip label={pinLabel} side="left" portal>
+        <button type="button" className="art-tile-pin" aria-label={pinLabel} aria-pressed={pinned} onClick={() => togglePin(address)}>
+          {pinned ? <IconPinFillRegular size={14} /> : <IconPinOutlineRegular size={14} />}
+        </button>
+      </Tooltip>
     </li>
   );
 }
@@ -289,7 +304,7 @@ function TileSection({ t, heading, views, pinned, onOpen }: {
 function useSection(where: Where | null, query: string, type: ArtifactType | undefined, changes: number): { state: SectionState; more: () => void } {
   const [result, setResult] = useState<{ key: string; state: SectionState }>({ key: '', state: { status: 'loading' } });
   const [shown, setShown] = useState(1);
-  const key = `${where === null ? 'none' : `${where.scope}:${where.workspaceId ?? ''}`}:${query}:${type ?? ''}`;
+  const key = (where === null ? 'none' : where.scope + ':' + (where.workspaceId ?? '')) + ':' + query + ':' + (type ?? '');
   const state: SectionState = where === null
     ? { status: 'ready', page: EMPTY_LIST }
     : result.key === key ? result.state : { status: 'loading' };
@@ -317,14 +332,48 @@ function useSection(where: Where | null, query: string, type: ArtifactType | und
       controller.abort();
       clearTimeout(timer);
     };
-    // `where` is captured by `key`.
+    // where is captured by key.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, query, changes, shown]);
 
   return { state, more: () => setShown((value) => value + 1) };
 }
 
-/** Props for the gallery body shared by the tab and the full page. */
+/**
+ * The first-run state: what to ask the agent for, with a copy action because
+ * this page has no conversation of its own.
+ * @param props the translator and the scope that is empty.
+ * @returns the empty state.
+ */
+function Starters({ t, scope }: { t: Translator; scope: Scope }) {
+  const copy = async (text: string) => {
+    try { await navigator.clipboard.writeText(text); notify(t('gallery.promptCopied')); }
+    catch { notify(t('action.copyFailed')); }
+  };
+  return (
+    <div className="art-empty">
+      <p className="art-empty-title">{t(scope === 'library' ? 'empty.libraryTitle' : 'empty.workspaceTitle')}</p>
+      <p className="art-empty-hint">{t(scope === 'library' ? 'empty.libraryHint' : 'empty.workspaceHint')}</p>
+      <ul className="art-starters">
+        {STARTERS.map((starter) => (
+          <li key={starter} className="art-starter">
+            <span className="art-starter-text">
+              <span className="art-starter-name">{t(`prompt.${starter}`)}</span>
+              <span className="art-starter-hint">{t(`prompt.${starter}Text`)}</span>
+            </span>
+            <Tooltip label={t('gallery.copyPrompt')} side="left" portal>
+              <Button size="sm" className="art-icon-button" aria-label={t('gallery.copyPromptNamed', { name: t(`prompt.${starter}`) })} onClick={() => void copy(t(`prompt.${starter}Text`))}>
+                <IconCopyOutlineRegular size={14} />
+              </Button>
+            </Tooltip>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** Props for the gallery body on the full Artifacts page. */
 export interface GalleryBodyProps {
   t: Translator;
   workspaceId: string | null;
@@ -334,7 +383,7 @@ export interface GalleryBodyProps {
 
 /**
  * The Artifacts gallery: one recent grid with pins, the chosen workspace and
- * the profile library, a scope filter, and starter templates.
+ * the profile library, filters, and blank page and document creation.
  * @param props the workspace, the open action, and an optional header control.
  * @returns the page body.
  */
@@ -349,17 +398,17 @@ export function GalleryBody({ t, workspaceId, open, toolbar }: GalleryBodyProps)
   const pins = usePins();
   const workspace = useSection(workspaceId === null ? null : { scope: 'workspace', workspaceId }, query, type, changes);
   const library = useSection({ scope: 'library', workspaceId }, query, type, changes);
+  const filterId = useId();
+  const typeId = useId();
 
   const onOpen = useCallback((target: ArtifactView) => openArtifact(open, target), [open]);
 
   const onCreate = useCallback(
-    async (nextType: ArtifactType, scope: Scope, templateId?: ArtifactTemplate['id']) => {
+    async (nextType: ArtifactType, scope: Scope) => {
       if (scope === 'workspace' && workspaceId === null) return;
-      const template = templateId === undefined ? undefined : TEMPLATES.find((item) => item.id === templateId);
-      const title = template === undefined ? t(nextType === 'page' ? 'create.untitledPage' : 'create.untitledDoc') : t(template.titleKey);
-      const content = template === undefined ? starterContent(nextType, title) : templateContent(template.id, title);
+      const title = t(nextType === 'page' ? 'create.untitledPage' : 'create.untitledDoc');
       try {
-        const { manifest } = await api.create({ scope, workspaceId }, nextType, title, content);
+        const { manifest } = await api.create({ scope, workspaceId }, nextType, title, starterContent(nextType, title));
         announceListChange();
         const next = viewOf(manifest, workspaceId);
         if (next !== null) onOpen(next);
@@ -402,57 +451,44 @@ export function GalleryBody({ t, workspaceId, open, toolbar }: GalleryBodyProps)
 
   return (
     <section className="art-root" data-dsh-artifacts="">
-      <header className="art-header art-relative">
+      <header className="art-header">
         <div className="art-heading">
           {view === 'design' ? (
-            <button type="button" className="art-icon-button" aria-label={t('panel')} title={t('panel')} onClick={() => setView('list')}>
-              <IconBack />
-            </button>
+            <Tooltip label={t('panel')} side="bottom" portal>
+              <Button size="sm" className="art-icon-button" aria-label={t('panel')} onClick={() => setView('list')}>
+                <IconChevronLeftOutlineRegular size={16} />
+              </Button>
+            </Tooltip>
           ) : null}
           <span className="art-title">{view === 'design' ? t('design.title') : t('panel')}</span>
         </div>
         {view === 'list' ? toolbar : null}
         {view === 'list' ? (
           <div className="art-actions">
-            <button
-              type="button"
-              className="art-icon-button"
-              aria-label={t('gallery.design')}
-              title={t('gallery.design')}
-              onClick={() => setView('design')}
-            >
-              <IconPalette />
-            </button>
-            <button
-              type="button"
-              className="art-icon-button"
-              aria-label={t('gallery.refresh')}
-              title={t('gallery.refresh')}
-              onClick={() => setLocalChanges((value) => value + 1)}
-            >
-              <IconRefresh />
-            </button>
-            <button
-              type="button"
-              className="art-button art-create-button"
-              aria-haspopup="menu"
-              aria-expanded={menu}
-              onClick={() => setMenu((value) => !value)}
-            >
-              <IconPlus />
-              {t('gallery.create')}
-            </button>
+            <Tooltip label={t('gallery.design')} side="bottom" portal>
+              <Button size="sm" className="art-icon-button" aria-label={t('gallery.design')} onClick={() => setView('design')}>
+                <IconSlidersTwoOutlineRegular size={16} />
+              </Button>
+            </Tooltip>
+            <Tooltip label={t('gallery.refresh')} side="bottom" portal>
+              <Button size="sm" className="art-icon-button" aria-label={t('gallery.refresh')} onClick={() => setLocalChanges((value) => value + 1)}>
+                <IconRefreshOutlineRegular size={16} />
+              </Button>
+            </Tooltip>
+            <Menu
+              open={menu}
+              onClose={() => setMenu(false)}
+              align="end"
+              portal
+              autoFocus
+              items={[
+                { id: 'page', label: t('gallery.newPage') + ' · ' + t(`scope.${createScope}`), icon: <IconPage size={14} /> },
+                { id: 'doc', label: t('gallery.newDoc') + ' · ' + t(`scope.${createScope}`), icon: <IconDoc size={14} /> },
+              ]}
+              onSelect={(entry) => { setMenu(false); void onCreate(entry === 'doc' ? 'doc' : 'page', createScope); }}
+              anchor={<Button size="sm" variant="outline" icon={<IconPlusOutlineRegular size={14} />} aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu((value) => !value)}>{t('gallery.create')}</Button>}
+            />
           </div>
-        ) : null}
-        {menu ? (
-          <Menu
-            label={t('gallery.new')}
-            onClose={() => setMenu(false)}
-            items={[
-              { id: 'page', label: `${t('gallery.newPage')} · ${t(`scope.${createScope}`)}`, icon: <IconPage size={14} />, run: () => void onCreate('page', createScope) },
-              { id: 'doc', label: `${t('gallery.newDoc')} · ${t(`scope.${createScope}`)}`, icon: <IconDoc size={14} />, run: () => void onCreate('doc', createScope) },
-            ]}
-          />
         ) : null}
       </header>
       {view === 'design' ? (
@@ -471,28 +507,36 @@ export function GalleryBody({ t, workspaceId, open, toolbar }: GalleryBodyProps)
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
               />
-              <select className="art-type-select" aria-label={t('filter.type')} value={type ?? ''} onChange={event => setType(event.target.value === 'page' ? 'page' : event.target.value === 'doc' ? 'doc' : undefined)}>
-                <option value="">{t('type.all')}</option><option value="page">{t('type.page')}</option><option value="doc">{t('type.doc')}</option>
-              </select>
-              <div className="art-segment" role="group" aria-label={t('filter.scope')}>
-                {(['all', 'workspace', 'library'] as const).map((value) => (
-                  <button key={value} type="button" aria-pressed={filter === value} onClick={() => setFilter(value)}>
-                    {value === 'all' ? t('filter.all') : t(`scope.${value}`)}
-                  </button>
-                ))}
-              </div>
+              <SegmentedControl<'all' | ArtifactType>
+                id={typeId}
+                className="art-segment"
+                label={t('filter.type')}
+                value={type ?? 'all'}
+                options={[{ value: 'all', label: t('type.all') }, { value: 'page', label: t('type.page') }, { value: 'doc', label: t('type.doc') }]}
+                onChange={(next) => setType(next === 'all' ? undefined : next)}
+              />
+              <SegmentedControl<Filter>
+                id={filterId}
+                className="art-segment"
+                label={t('filter.scope')}
+                value={filter}
+                options={[{ value: 'all', label: t('filter.all') }, { value: 'workspace', label: t('scope.workspace') }, { value: 'library', label: t('scope.library') }]}
+                onChange={setFilter}
+              />
             </div>
+            <div role="tabpanel" id={typeId + '-' + (type ?? 'all') + '-panel'} aria-labelledby={typeId + '-' + (type ?? 'all')}>
+            <div role="tabpanel" id={filterId + '-' + filter + '-panel'} aria-labelledby={filterId + '-' + filter}>
             {loading ? <p className="art-note">{t('empty.loading')}</p> : null}
             {!loading && failure !== undefined && views.length === 0 ? (
               <div className="art-empty" role="alert">
                 <p className="art-empty-title">{t(errorKey(failure))}</p>
-                <button type="button" className="art-button" onClick={() => setLocalChanges((value) => value + 1)}>{t('action.retry')}</button>
+                <Button size="sm" variant="outline" onClick={() => setLocalChanges((value) => value + 1)}>{t('action.retry')}</Button>
               </div>
             ) : null}
             {!loading && failure !== undefined && views.length > 0 ? (
               <div className="art-bar" role="status">
                 <span>{t(errorKey(failure))}</span>
-                <button type="button" className="art-button" onClick={() => setLocalChanges((value) => value + 1)}>{t('action.retry')}</button>
+                <Button size="sm" variant="outline" onClick={() => setLocalChanges((value) => value + 1)}>{t('action.retry')}</Button>
               </div>
             ) : null}
             {!loading && failure === undefined && views.length === 0 ? (
@@ -503,50 +547,22 @@ export function GalleryBody({ t, workspaceId, open, toolbar }: GalleryBodyProps)
               ) : noWorkspace ? (
                 <p className="art-note">{t('empty.noWorkspace')}</p>
               ) : (
-                <div className="art-empty art-templates">
-                  <p className="art-empty-title">{t(emptyScope === 'library' ? 'empty.libraryTitle' : 'empty.workspaceTitle')}</p>
-                  <p className="art-empty-hint">{t(emptyScope === 'library' ? 'empty.libraryHint' : 'empty.workspaceHint')}</p>
-                  <h3 className="art-templates-title">{t('gallery.templates')}</h3>
-                  <ul className="art-templates-grid">
-                    {TEMPLATES.map((template) => (
-                      <li key={template.id}>
-                        <button type="button" className="art-template" onClick={() => void onCreate(template.type, emptyScope, template.id)}>
-                          <span className="art-template-icon" data-type={template.type}>{template.type === 'page' ? <IconPage /> : <IconDoc />}</span>
-                          <span className="art-template-text">
-                            <span className="art-template-name">{t(template.titleKey)}</span>
-                            <span className="art-template-hint">{t(template.hintKey)}</span>
-                          </span>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                  <p className="art-note">{t('gallery.templateHint')}</p>
-                </div>
+                <Starters t={t} scope={emptyScope} />
               )
             ) : null}
             {!loading && views.length > 0 ? (
               <>
                 <TileSection t={t} heading={t('gallery.pinned')} views={pinnedViews} pinned={pins} onOpen={onOpen} />
                 {recentViews.length === 0 ? <p className="art-note">{t('gallery.allPinned')}</p> : <TileSection t={t} heading={t('gallery.recent')} views={recentViews} pinned={pins} onOpen={onOpen} />}
-                {hasMore ? <div className="art-gallery-more"><button type="button" className="art-button" onClick={more}>{t('gallery.more')}</button></div> : null}
+                {hasMore ? <div className="art-gallery-more"><Button size="sm" variant="outline" onClick={more}>{t('gallery.more')}</Button></div> : null}
                 {truncated ? <p className="art-note">{t('gallery.truncated')}</p> : null}
               </>
             ) : null}
+            </div>
+            </div>
           </div>
         </div>
       )}
     </section>
   );
-}
-
-/**
- * The Artifacts page in the right sidebar: the session's workspace plus the library.
- * @param props slot props.
- * @returns the page.
- */
-export function Gallery(props: TabProps) {
-  const { t, useTabInfo } = props;
-  const info = useTabInfo();
-  const binding = useWorkspaceBinding(props);
-  return <GalleryBody t={t} workspaceId={binding.workspaceId} open={info.tab.actions?.openResource} />;
 }

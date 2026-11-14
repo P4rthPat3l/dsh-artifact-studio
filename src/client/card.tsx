@@ -1,4 +1,5 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
+import { IconChevronRightOutlineRegular, StateDot, TextShimmer } from '@deepseek-ai/dsh-client-ui-primitives';
 import { formatArtifactAddress, scopeOfId } from '../contract.js';
 import type { ArtifactAddress } from '../contract.js';
 import type { ToolViewProps } from './harness.js';
@@ -56,83 +57,97 @@ function resultText(content: readonly unknown[] | undefined): string {
 }
 
 /**
- * The chat card for `artifact_create` and `artifact_update`: the artifact's
- * title, type, scope, and version, and an Open action. It announces the
- * version so an open tab of the same artifact reloads.
+ * The title the call is writing, read from its arguments once they exist.
+ * @param args the parsed call arguments.
+ * @returns the title, or undefined.
+ */
+function titleArgument(args: unknown): string | undefined {
+  if (args === null || typeof args !== 'object') return undefined;
+  const fields: Record<string, unknown> = { ...args };
+  return typeof fields.title === 'string' && fields.title.trim() !== '' ? fields.title.trim() : undefined;
+}
+
+/** Results this window already opened, so a remount never opens a second tab. */
+const opened = new Set<string>();
+
+/**
+ * The chat card for artifact_create and artifact_update. While the call
+ * runs it names what is being written; once the result arrives it opens the
+ * artifact, but only when this card watched the call run, so replayed history
+ * never opens tabs.
  * @param props tool view props.
  * @returns the card.
  */
 export function ArtifactCard({ t, phase, toolName, block }: ToolViewProps) {
   const meta = phase === 'result' && block?.isError !== true ? readCardMeta(block?.meta) : null;
+  const sawRunning = useRef(phase !== 'result');
+  if (phase !== 'result') sawRunning.current = true;
+  const updating = toolName === 'artifact_update';
 
   useEffect(() => {
     if (meta === null) return;
     rememberTitle(meta.id, meta.title);
     announceVersion(meta.id, meta.version);
     announceListChange();
+    const key = meta.id + ':' + meta.version;
+    if (!sawRunning.current || opened.has(key)) return;
+    opened.add(key);
+    runtime.sidebarRight?.openResource(formatArtifactAddress(meta.address));
   }, [meta?.id, meta?.version, meta?.title]);
 
   if (phase !== 'result') {
+    const title = titleArgument(block?.args);
+    const label = title === undefined
+      ? t(updating ? 'card.updatingUntitled' : 'card.working')
+      : t(updating ? 'card.updating' : 'card.creating', { title });
     return (
       <div className="art-card" data-artifact-card="working">
-        <span className="art-card-icon">
-          <IconPage />
+        <span className="art-card-icon"><IconPage /></span>
+        <span className="art-card-text">
+          <TextShimmer active className="art-card-title"><span role="status">{label}</span></TextShimmer>
         </span>
-        <span className="art-card-status" role="status">
-          {t('card.working')}
-        </span>
-        <span />
+        <StateDot state="ongoing" />
       </div>
     );
   }
   if (block?.isError === true) {
     return (
       <div className="art-card" data-artifact-card="error">
-        <span className="art-card-icon">
-          <IconPage />
-        </span>
+        <span className="art-card-icon" data-tone="error"><IconPage /></span>
         <span className="art-card-text">
           <span className="art-card-title">{t('card.failed')}</span>
-          <span className="art-card-status" data-tone="error">
-            {resultText(block.content)}
-          </span>
+          <span className="art-card-sub" data-tone="error">{resultText(block.content)}</span>
         </span>
-        <span />
       </div>
     );
   }
   if (meta === null) {
     return (
       <div className="art-card" data-artifact-card="missing">
-        <span className="art-card-icon">
-          <IconPage />
-        </span>
-        <span className="art-card-status">{t('card.missing')}</span>
-        <span />
+        <span className="art-card-icon"><IconPage /></span>
+        <span className="art-card-sub">{t('card.missing')}</span>
       </div>
     );
   }
   const address = formatArtifactAddress(meta.address);
   return (
-    <div className="art-card" data-artifact-card="ready" data-artifact-id={meta.id}>
+    <button
+      type="button"
+      className="art-card art-card-open"
+      data-artifact-card="ready"
+      data-artifact-id={meta.id}
+      aria-label={t('card.openNamed', { title: meta.title })}
+      onClick={() => runtime.sidebarRight?.openResource(address)}
+    >
       <span className="art-card-icon">{meta.type === 'page' ? <IconPage /> : <IconDoc />}</span>
       <span className="art-card-text">
-        <span className="art-card-title" title={meta.title}>
-          {meta.title}
-        </span>
+        <span className="art-card-title" title={meta.title}>{meta.title}</span>
         <span className="art-card-sub">
-          <span>{toolName === 'artifact_update' ? t('card.updated') : t('card.created')}</span>
-          <span>·</span>
-          <span>{t(`type.${meta.type}`)}</span>
-          <span className="art-badge" data-scope={meta.address.scope}>
-            {t(`scope.${meta.address.scope}`)}
-          </span>
-          <span>{t('gallery.version', { version: meta.version })}</span>
+          {t(updating ? 'card.updated' : 'card.created')} · {t(`type.${meta.type}`)} · {t('gallery.version', { version: meta.version })}
+          {meta.address.scope === 'library' ? ' · ' + t('scope.library') : ''}
         </span>
       </span>
-      <button type="button" className="art-button" onClick={() => runtime.sidebarRight?.openResource(address)}>
-        {t('card.open')}
-      </button>
-    </div>
+      <span className="art-card-go" aria-hidden="true"><IconChevronRightOutlineRegular size={14} /></span>
+    </button>
   );
 }

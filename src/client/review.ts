@@ -1,5 +1,3 @@
-import { formatArtifactAddress } from '../contract.js';
-import type { ArtifactAddress } from '../contract.js';
 import type { Translator } from './harness.js';
 
 /** The most selected text one request may carry. */
@@ -11,15 +9,12 @@ export interface Quote {
   truncated: boolean;
 }
 
-/** Everything the request template needs. */
-export interface RequestFields {
+/** What the composer reference names. */
+export interface ReferenceFields {
   title: string;
-  address: ArtifactAddress;
   id: string;
   version: number;
-  workspace: string;
-  quote: string;
-  prompt: string;
+  current: number;
 }
 
 /**
@@ -39,23 +34,25 @@ export function quoteText(value: string, limit = QUOTE_LIMIT): Quote {
 }
 
 /**
- * Build the request that the user copies into the conversation. The identity
- * block is generated so the editable field only holds the user's words.
+ * The words placed in the composer ahead of the user's own. They name the
+ * artifact by id and saved version, so the agent reads the right copy. The
+ * user finishes the sentence and sends it.
  * @param t the translator.
- * @param fields the artifact identity, version, quote, and prompt.
- * @returns the request text.
+ * @param fields the artifact identity and versions.
+ * @returns the reference text, ending in a space.
  */
-export function buildRequest(t: Translator, fields: RequestFields): string {
-  const quote = fields.quote.trim();
-  const selection = quote === '' ? '' : `Selected text:\n"""\n${quote}\n"""\n`;
-  return t('agent.request', {
-    title: fields.title,
-    address: formatArtifactAddress(fields.address),
-    id: fields.id,
-    scope: fields.address.scope,
-    workspace: fields.workspace,
-    version: fields.version,
-    selection,
-    prompt: fields.prompt.trim(),
-  });
+export function buildReference(t: Translator, fields: ReferenceFields): string {
+  const key = fields.version === fields.current ? 'agent.reference' : 'agent.referenceOld';
+  return `${t(key, { title: fields.title, id: fields.id, version: fields.version, current: fields.current })} `;
+}
+
+/**
+ * The same request as plain text, for a surface without a composer.
+ * @param quote the selected text.
+ * @param reference the reference text.
+ * @returns Markdown with the quote as a blockquote.
+ */
+export function plainRequest(quote: string, reference: string): string {
+  if (quote === '') return reference;
+  return `${quote.split('\n').map((line) => `> ${line}`).join('\n')}\n\n${reference}`;
 }

@@ -1,3 +1,4 @@
+import type { PageTheme } from '../contract.js';
 import { PAGE_CSP, PRINT_HOOK, composePage } from '../render.js';
 
 /** The only sandbox flag a preview gets: scripts run, but in an opaque origin with no network. */
@@ -10,14 +11,39 @@ export const PRINT_SANDBOX = 'allow-scripts allow-modals';
 const PRINT_LIFETIME_MS = 30_000;
 
 /**
+ * Reports the text a reader selects in a preview, so it can become the quote
+ * of an edit request. The frame is opaque, so it posts the text; the page can
+ * only ever fill a quote the user still reviews before sending.
+ */
+export const SELECTION_BRIDGE =
+  "<script>(function(){var t;document.addEventListener('selectionchange',function(){clearTimeout(t);" +
+  "t=setTimeout(function(){var s=String(getSelection()||'');parent.postMessage({dshArtifactSelection:s.slice(0,4000)},'*')},150)})})()</script>";
+
+/** The longest selection a frame may report; the request cap is lower still. */
+const SELECTION_LIMIT = 4000;
+
+/**
  * Build the preview document for a page artifact.
  * @param content the page HTML.
  * @param designCss the token rule.
  * @param title the artifact title.
+ * @param theme the colors a dark-capable page uses.
+ * @param bridge whether to report selections to the panel.
  * @returns HTML with the network-blocking policy and the tokens ahead of the content.
  */
-export function pageDocument(content: string, designCss: string, title: string): string {
-  return composePage(content, designCss, PAGE_CSP, title);
+export function pageDocument(content: string, designCss: string, title: string, theme: PageTheme = 'auto', bridge = false): string {
+  return composePage(content, designCss, PAGE_CSP, title, bridge ? SELECTION_BRIDGE : '', theme);
+}
+
+/**
+ * Read a selection report from a preview frame.
+ * @param value the message data.
+ * @returns the selected text, or undefined for any other message.
+ */
+export function selectionFrom(value: unknown): string | undefined {
+  if (value === null || typeof value !== 'object') return undefined;
+  const fields: Record<string, unknown> = { ...value };
+  return typeof fields.dshArtifactSelection === 'string' ? fields.dshArtifactSelection.slice(0, SELECTION_LIMIT) : undefined;
 }
 
 /**

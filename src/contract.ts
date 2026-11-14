@@ -76,11 +76,24 @@ export interface ListResult {
 }
 
 /** Design tokens that page and doc output inherit. */
+/** The five color roles every token set defines. */
+export interface TokenColors {
+  primary: string;
+  accent: string;
+  surface: string;
+  text: string;
+  muted: string;
+}
+
+export const COLOR_ROLES = ['primary', 'accent', 'surface', 'text', 'muted'] as const satisfies readonly (keyof TokenColors)[];
+
 export interface DesignTokens {
   schemaVersion: 1;
   name: string;
-  colors: { primary: string; accent: string; surface: string; text: string; muted: string };
-  typography: { fontFamily: string; monoFamily: string; scale: number[] };
+  colors: TokenColors;
+  /** Colors for a dark theme. A page opts in with a color-scheme meta that names dark. */
+  colorsDark: TokenColors;
+  typography: { fontFamily: string; displayFamily: string; monoFamily: string; scale: number[] };
   spacing: { unit: number; scale: number[] };
   radius: { sm: number; md: number; lg: number };
   notes: string;
@@ -101,6 +114,8 @@ export interface ArtifactPayload {
   content: string;
   version: number;
   designCss: string;
+  /** The resolved tokens, so the document editor can match the export. */
+  design: DesignTokens;
 }
 
 /** What the route `export` endpoint returns; the browser turns `data` into a download. */
@@ -156,6 +171,12 @@ export function isManifest(value: unknown): value is Manifest {
 }
 
 const ADDRESS_PREFIX = 'dsh-resource://artifact/';
+
+/** The root attribute that selects the dark token colors. */
+export const THEME_ATTRIBUTE = 'data-artifact-theme';
+
+/** How a composed page picks its colors: the light set, the dark set, or the viewer's system setting. */
+export type PageTheme = 'light' | 'dark' | 'auto';
 
 /** One artifact address split into its parts. */
 export type ArtifactAddress =
@@ -213,9 +234,11 @@ export function scopeOfId(id: string): Scope | undefined {
 export const DEFAULT_TOKENS: DesignTokens = {
   schemaVersion: 1,
   name: 'Default',
-  colors: { primary: '#1a4d8f', accent: '#d97706', surface: '#f8fafc', text: '#0f172a', muted: '#64748b' },
+  colors: { primary: '#2856c7', accent: '#0f8a72', surface: '#ffffff', text: '#16181d', muted: '#5b6170' },
+  colorsDark: { primary: '#86a8ff', accent: '#45c9a8', surface: '#15171b', text: '#e8e9ec', muted: '#a0a6b2' },
   typography: {
     fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
+    displayFamily: 'ui-serif, "Iowan Old Style", Charter, Georgia, serif',
     monoFamily: 'ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace',
     scale: [12, 14, 16, 20, 24, 32, 40],
   },
@@ -231,12 +254,39 @@ export const DEFAULT_TOKENS: DesignTokens = {
  */
 export function tokensToCss(tokens: DesignTokens): string {
   const lines: string[] = [];
-  for (const [key, value] of Object.entries(tokens.colors)) lines.push(`--artifact-color-${key}: ${value};`);
+  for (const role of COLOR_ROLES) lines.push(`--artifact-color-${role}: ${tokens.colors[role]};`);
   lines.push(`--artifact-font-family: ${tokens.typography.fontFamily};`);
+  lines.push(`--artifact-font-display: ${tokens.typography.displayFamily};`);
   lines.push(`--artifact-font-mono: ${tokens.typography.monoFamily};`);
   tokens.typography.scale.forEach((size, index) => lines.push(`--artifact-font-size-${index}: ${size}px;`));
   lines.push(`--artifact-space-unit: ${tokens.spacing.unit}px;`);
   tokens.spacing.scale.forEach((size, index) => lines.push(`--artifact-space-${index}: ${size}px;`));
   for (const [key, value] of Object.entries(tokens.radius)) lines.push(`--artifact-radius-${key}: ${value}px;`);
-  return `:root {\n  ${lines.join('\n  ')}\n}`;
+  const dark = COLOR_ROLES.map((role) => `--artifact-color-${role}: ${tokens.colorsDark[role]};`).join('\n  ');
+  return [
+    `:root {\n  ${lines.join('\n  ')}\n}`,
+    `:root[${THEME_ATTRIBUTE}="dark"] {\n  color-scheme: dark;\n  ${dark}\n}`,
+    `@media (prefers-color-scheme: dark) {\n  :root[${THEME_ATTRIBUTE}="auto"] {\n    color-scheme: dark;\n    ${dark.replace(/\n  /g, '\n    ')}\n  }\n}`,
+  ].join('\n');
+}
+
+/**
+ * The token variables as a style object for one theme, for surfaces the plugin
+ * draws itself instead of a frame.
+ * @param tokens the design tokens.
+ * @param dark whether to use the dark colors.
+ * @returns custom property names and values.
+ */
+export function tokenVariables(tokens: DesignTokens, dark: boolean): Record<string, string> {
+  const colors = dark ? tokens.colorsDark : tokens.colors;
+  const vars: Record<string, string> = {
+    '--artifact-font-family': tokens.typography.fontFamily,
+    '--artifact-font-display': tokens.typography.displayFamily,
+    '--artifact-font-mono': tokens.typography.monoFamily,
+  };
+  for (const role of COLOR_ROLES) vars[`--artifact-color-${role}`] = colors[role];
+  tokens.typography.scale.forEach((size, index) => { vars[`--artifact-font-size-${index}`] = `${size}px`; });
+  tokens.spacing.scale.forEach((size, index) => { vars[`--artifact-space-${index}`] = `${size}px`; });
+  for (const [key, value] of Object.entries(tokens.radius)) vars[`--artifact-radius-${key}`] = `${value}px`;
+  return vars;
 }

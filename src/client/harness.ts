@@ -21,6 +21,25 @@ export interface SidebarRightService {
   openTab(kind: string, options?: { params?: Record<string, unknown> }): void;
 }
 
+/** The central-panel switch of the Harness layout. */
+export interface LayoutService {
+  selectPanel(panelId: string | null): void;
+}
+
+/** A guarded copy of the composer caret, as the input actions return it. */
+export interface TokenSpan {
+  readonly start: number;
+  readonly end: number;
+  readonly draftRev: number;
+}
+
+/** The composer actions a session-scoped slot receives. Nothing here sends a message. */
+export interface InputActions {
+  insertQuote(text: string): boolean;
+  captureInsertion(): TokenSpan;
+  insertText(text: string, span: TokenSpan): boolean;
+}
+
 export type Translator = (key: string, values?: Record<string, string | number>) => string;
 
 export interface LocaleService {
@@ -122,6 +141,8 @@ export interface ClientContext {
   slots: SlotsService;
   sidebarRightTabs: { register(definition: TabTypeDefinition): () => void };
   workspaces: WorkspacesService;
+  /** Look up an optional service by name. */
+  get(name: string): unknown;
   effect(callback: () => (() => void) | void, label?: string): void;
 }
 
@@ -131,6 +152,8 @@ export interface SessionSlotProps {
   t: Translator;
   useSessions: StoreHook<SessionState>;
   useWorkspaces: StoreHook<WorkspaceState>;
+  /** Present when the slot belongs to a live session composer. */
+  inputActions?: InputActions;
 }
 
 export interface TabProps extends SessionSlotProps {
@@ -142,6 +165,10 @@ export interface ToolResultBlock {
   isError?: boolean;
   meta?: unknown;
   content?: readonly unknown[];
+  /** Parsed call arguments, present on running and settled calls. */
+  args?: unknown;
+  /** Raw argument text of a dispatched call. */
+  argsRaw?: string;
 }
 
 export interface ToolViewProps extends SessionSlotProps {

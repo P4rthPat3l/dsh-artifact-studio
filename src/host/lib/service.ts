@@ -131,7 +131,7 @@ export class ArtifactService {
   async read(target: Target, id: string, version?: number): Promise<ArtifactPayload> {
     const result = await this.store.read(await this.root(target, id), id, version);
     const design = await this.designSystem(target);
-    return { ...result, designCss: design.css };
+    return { ...result, designCss: design.css, design: design.tokens };
   }
 
   async update(

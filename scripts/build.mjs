@@ -3,7 +3,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
-const EXTERNAL = ['react', 'react-dom', 'react/jsx-runtime', 'react-dom/client'];
+// The Web shell provides these modules to every plugin bundle at runtime.
+const EXTERNAL = ['react', 'react-dom', 'react/jsx-runtime', 'react-dom/client', '@deepseek-ai/dsh-client-ui-primitives'];
 
 /**
  * Bundle one entry and return its CommonJS text.

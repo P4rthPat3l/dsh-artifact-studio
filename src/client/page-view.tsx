@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { PREVIEW_SANDBOX, pageDocument } from './frames.js';
+import { PREVIEW_SANDBOX, pageDocument, selectionFrom } from './frames.js';
 
 /** Props for one sandboxed page preview. */
 export interface PageFrameProps {
@@ -7,6 +7,10 @@ export interface PageFrameProps {
   designCss: string;
   title: string;
   frameTitle: string;
+  /** Whether the Harness shows its dark theme; only pages that opted in follow it. */
+  dark?: boolean;
+  /** Receives the text the reader selects inside the page. */
+  onSelectionText?: (text: string) => void;
 }
 
 /**
@@ -15,17 +19,35 @@ export interface PageFrameProps {
  * @param props the content and labels.
  * @returns the frame.
  */
-export function PageFrame({ content, designCss, title, frameTitle }: PageFrameProps) {
+export function PageFrame({ content, designCss, title, frameTitle, dark = false, onSelectionText }: PageFrameProps) {
   const [url, setUrl] = useState<string | null>(null);
   const [navigated, setNavigated] = useState(false);
   const loads = useRef(0);
+  const frameRef = useRef<HTMLIFrameElement | null>(null);
+  const report = useRef(onSelectionText);
+  report.current = onSelectionText;
+  const bridge = onSelectionText !== undefined;
+
   useEffect(() => {
     loads.current = 0;
     setNavigated(false);
-    const next = URL.createObjectURL(new Blob([pageDocument(content, designCss, title)], { type: 'text/html' }));
+    const next = URL.createObjectURL(new Blob([pageDocument(content, designCss, title, dark ? 'dark' : 'light', bridge)], { type: 'text/html' }));
     setUrl(next);
     return () => URL.revokeObjectURL(next);
-  }, [content, designCss, title]);
+  }, [content, designCss, title, dark, bridge]);
+
+  useEffect(() => {
+    if (!bridge) return undefined;
+    const onMessage = (event: MessageEvent) => {
+      // After a self-navigation the frame holds a document without the injected policy, so it is no longer trusted to report.
+      if (frameRef.current === null || loads.current > 1 || event.source !== frameRef.current.contentWindow) return;
+      const text = selectionFrom(event.data);
+      if (text !== undefined) report.current?.(text);
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [bridge]);
+
   if (navigated) {
     return <div className="art-center" role="alert">{title}</div>;
   }
@@ -33,6 +55,7 @@ export function PageFrame({ content, designCss, title, frameTitle }: PageFramePr
   return (
     <iframe
       key={url}
+      ref={frameRef}
       className="art-frame"
       title={frameTitle}
       sandbox={PREVIEW_SANDBOX}
@@ -53,6 +76,8 @@ export interface SourceEditorProps {
   value: string;
   readOnly: boolean;
   label: string;
+  /** A one-line reminder of how the source saves. */
+  hint?: string;
   onChange: (value: string) => void;
   onSave: () => void;
   onSelectionText?: (text: string) => void;
@@ -64,41 +89,45 @@ export interface SourceEditorProps {
  * @param props the value and callbacks.
  * @returns the editor.
  */
-export function SourceEditor({ value, readOnly, label, onChange, onSave, onSelectionText }: SourceEditorProps) {
+export function SourceEditor({ value, readOnly, label, hint, onChange, onSave, onSelectionText }: SourceEditorProps) {
   const report = (target: HTMLTextAreaElement) => {
     if (readOnly) return;
     onSelectionText?.(target.value.slice(target.selectionStart, target.selectionEnd));
   };
   return (
-    <textarea
-      className="art-source"
-      aria-label={label}
-      spellCheck={false}
-      readOnly={readOnly}
-      value={value}
-      onChange={(event) => {
-        onChange(event.target.value);
-        onSelectionText?.('');
-      }}
-      onSelect={(event) => report(event.currentTarget)}
-      onMouseUp={(event) => report(event.currentTarget)}
-      onKeyUp={(event) => report(event.currentTarget)}
-      onKeyDown={(event) => {
-        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
-          event.preventDefault();
-          onSave();
-          return;
-        }
-        if (event.key === 'Tab' && !event.shiftKey && !readOnly) {
-          event.preventDefault();
-          const target = event.currentTarget;
-          const start = target.selectionStart;
-          const end = target.selectionEnd;
-          const next = `${value.slice(0, start)}  ${value.slice(end)}`;
-          onChange(next);
-          requestAnimationFrame(() => target.setSelectionRange(start + 2, start + 2));
-        }
-      }}
-    />
+    <div className="art-source-wrap">
+      {hint === undefined ? null : <div className="art-code-bar"><span>{hint}</span></div>}
+      <textarea
+        className="art-source"
+        aria-label={label}
+        spellCheck={false}
+        readOnly={readOnly}
+        value={value}
+        autoFocus={!readOnly}
+        onChange={(event) => {
+          onChange(event.target.value);
+          onSelectionText?.('');
+        }}
+        onSelect={(event) => report(event.currentTarget)}
+        onMouseUp={(event) => report(event.currentTarget)}
+        onKeyUp={(event) => report(event.currentTarget)}
+        onKeyDown={(event) => {
+          if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+            event.preventDefault();
+            onSave();
+            return;
+          }
+          if (event.key === 'Tab' && !event.shiftKey && !readOnly) {
+            event.preventDefault();
+            const target = event.currentTarget;
+            const start = target.selectionStart;
+            const end = target.selectionEnd;
+            const next = value.slice(0, start) + '  ' + value.slice(end);
+            onChange(next);
+            requestAnimationFrame(() => target.setSelectionRange(start + 2, start + 2));
+          }
+        }}
+      />
+    </div>
   );
 }

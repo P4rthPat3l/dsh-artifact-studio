@@ -1,31 +1,42 @@
 import type { ComponentType, ReactNode } from 'react';
+import { Toast } from '@deepseek-ai/dsh-client-ui-primitives';
 import { parseArtifactAddress } from '../contract.js';
 import { configureConnection } from './api.js';
 import { installDraftGuard } from './editor-model.js';
 import { ArtifactTab } from './artifact-tab.jsx';
 import { SurfaceBoundary } from './boundary.jsx';
 import { ArtifactCard } from './card.jsx';
-import { ComposerButton, GALLERY_KIND } from './composer.jsx';
+import { ComposerButton } from './composer.jsx';
 import { DocView } from './doc-view.jsx';
-import { Gallery } from './gallery.jsx';
 import { ArtifactsPanel } from './panel.jsx';
-import type { ClientContext, SessionSlotProps, TabProps, ToolViewProps, Translator, UseTabInfo } from './harness.js';
+import type { ClientContext, LayoutService, SessionSlotProps, TabProps, ToolViewProps, Translator, UseTabInfo } from './harness.js';
 import { IconArtifacts, IconDoc } from './icons.jsx';
+import { ARTIFACT_ID, ARTIFACT_KIND, PANEL_ID } from './ids.js';
 import { EN, ZH } from './locale.js';
 import { runtime } from './runtime.js';
 import { clearNotice, titleOf, useNotice, useTitle } from './store.js';
 import { installStyles } from './styles.js';
 
-export { ArtifactCard, ArtifactTab, DocView, Gallery };
+export { ArtifactCard, ArtifactTab, DocView };
+export { ARTIFACT_ID, ARTIFACT_KIND, PANEL_ID };
 
 const NS = 'artifacts';
-export const GALLERY_ID = 'dsh-artifacts';
-export const ARTIFACT_ID = 'dsh-artifacts/artifact';
-export const ARTIFACT_KIND = 'artifact';
-export const PANEL_ID = 'dsh-artifacts-panel';
 export const CARD_TOOLS = ['artifact_create', 'artifact_update'] as const;
 
 export const inject = ['connection', 'slots', 'locale', 'sidebarRightTabs', 'sidebarRight', 'workspaces'];
+
+/**
+ * The layout service when the composition has one. Only the composer's All
+ * artifacts row needs it, so its absence must not park the whole client.
+ * @param value the context lookup.
+ * @returns the layout, or null.
+ */
+function layoutOf(value: unknown): LayoutService | null {
+  if (value === null || typeof value !== 'object' || !('selectPanel' in value)) return null;
+  const { selectPanel } = value;
+  if (typeof selectPanel !== 'function') return null;
+  return { selectPanel: (panelId) => { selectPanel.call(value, panelId); } };
+}
 
 /**
  * Wrap a body in the boundary that keeps a render failure inside its pane.
@@ -47,17 +58,9 @@ function guarded<P extends { t: Translator }>(Body: ComponentType<P>): Component
 }
 
 function Notice(): ReactNode {
-  const message = useNotice();
-  return message === null ? null : <div className="art-toast" role="status">{message}</div>;
-}
-
-function GalleryTitle({ t }: { t: Translator }): ReactNode {
-  return (
-    <span className="art-chip">
-      <IconArtifacts />
-      <span>{t('panel')}</span>
-    </span>
-  );
+  const notice = useNotice();
+  if (notice === null) return null;
+  return <Toast key={notice.seq} text={notice.message} onDone={() => clearNotice(notice.seq)} />;
 }
 
 function ArtifactTitle({ useTabInfo }: { useTabInfo: UseTabInfo }): ReactNode {
@@ -73,7 +76,8 @@ function ArtifactTitle({ useTabInfo }: { useTabInfo: UseTabInfo }): ReactNode {
 }
 
 /**
- * Register the gallery page, the artifact tab type, the chat cards, and the composer button.
+ * Register the artifact tab type, the full Artifacts page, the chat cards, and
+ * the composer menu.
  * @param ctx the plugin context.
  */
 export function apply(ctx: ClientContext): void {
@@ -81,31 +85,11 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(installDraftGuard, 'dsh-artifacts: unsaved draft guard');
   configureConnection(ctx.connection);
   runtime.sidebarRight = ctx.sidebarRight;
+  runtime.layout = layoutOf(ctx.get('layout'));
   ctx.locale.register(NS, 'en', EN);
   ctx.locale.register(NS, 'zh', ZH);
   const bound = ctx.locale.bind(NS);
   const t: Translator = (key, values) => bound(key, values);
-
-  ctx.effect(
-    () =>
-      ctx.sidebarRightTabs.register({
-        id: GALLERY_ID,
-        kind: GALLERY_KIND,
-        priority: 'extension',
-        keepMounted: true,
-        title: () => t('panel'),
-        guide: [
-          {
-            id: 'artifacts',
-            order: 40,
-            title: () => t('guide.title'),
-            description: () => t('guide.description'),
-            icon: () => <IconArtifacts size={22} />,
-          },
-        ],
-      }),
-    'dsh-artifacts: gallery tab type',
-  );
 
   ctx.effect(
     () =>
@@ -124,18 +108,12 @@ export function apply(ctx: ClientContext): void {
   );
 
   const inject = () => ({ t });
-  ctx.effect(() => clearNotice, 'dsh-artifacts: notification cleanup');
+  ctx.effect(() => () => clearNotice(), 'dsh-artifacts: notification cleanup');
   ctx.slots.inject('shell.overlay', () =>
     ctx.slots.register({ name: 'shell.overlay', id: 'dsh-artifacts.notice' }, Notice),
   );
   ctx.slots.inject('sidebar.right.pane.tab', () =>
-    ctx.slots.register<TabProps>({ name: 'sidebar.right.pane.tab', key: GALLERY_ID, locale: NS, inject }, guarded(Gallery)),
-  );
-  ctx.slots.inject('sidebar.right.pane.tab', () =>
     ctx.slots.register<TabProps>({ name: 'sidebar.right.pane.tab', key: ARTIFACT_ID, locale: NS, inject }, guarded(ArtifactTab)),
-  );
-  ctx.slots.inject('sidebar.right.pane.tab.title', () =>
-    ctx.slots.register({ name: 'sidebar.right.pane.tab.title', key: GALLERY_ID, locale: NS, inject }, GalleryTitle),
   );
   ctx.slots.inject('sidebar.right.pane.tab.title', () =>
     ctx.slots.register({ name: 'sidebar.right.pane.tab.title', key: ARTIFACT_ID, locale: NS, inject }, ArtifactTitle),

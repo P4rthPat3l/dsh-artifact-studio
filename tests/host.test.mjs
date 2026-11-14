@@ -9,8 +9,12 @@ import { ArtifactStore } from '../dist/host/lib/store.js';
 import { createHandler } from '../dist/host/lib/rpc.js';
 import { registerArtifactsRoute } from '../dist/host/lib/http.js';
 import { createTools } from '../dist/host/lib/tools.js';
-import { parseArtifactAddress, formatArtifactAddress } from '../dist/contract.js';
+import { checkPage } from '../dist/host/lib/checks.js';
+import { apply as applySkill } from '../dist/host/skill-plugin.js';
+import { apply as applyTools } from '../dist/host/tools-plugin.js';
+import { parseArtifactAddress, formatArtifactAddress, tokensToCss, DEFAULT_TOKENS } from '../dist/contract.js';
 import { composePage, PAGE_CSP } from '../dist/render.js';
+import { mergeTokens } from '../dist/host/lib/design-system.js';
 
 let base;
 let wsA;
@@ -292,7 +296,7 @@ test('AC-017: design tokens reach the page', async () => {
   const svc = service();
   const page = await svc.create(A, { type: 'page', title: 'Tokens', content: PAGE, source: agent });
   const before = await svc.read(A, page.id);
-  assert.match(before.designCss, /--artifact-color-primary: #1a4d8f;/);
+  assert.match(before.designCss, /--artifact-color-primary: #2856c7;/);
   await svc.saveDesignSystem({ ...A, scope: 'workspace' }, { colors: { primary: '#ff0055' } });
   const after = await svc.read(A, page.id);
   assert.match(after.designCss, /--artifact-color-primary: #ff0055;/);
@@ -410,7 +414,7 @@ test('AC-027: design system inherits and overrides per scope', async () => {
   assert.equal(overridden.tokens.colors.accent, '#abcdef');
   assert.equal(overridden.tokens.colors.primary, '#123456');
   const library = await svc.designSystem({});
-  assert.equal(library.tokens.colors.accent, '#d97706');
+  assert.equal(library.tokens.colors.accent, DEFAULT_TOKENS.colors.accent);
   assert.equal((await svc.designSystem(A)).source, 'library');
   await svc.clearWorkspaceDesignSystem(B);
   assert.equal((await svc.designSystem(B)).source, 'library');
@@ -570,4 +574,90 @@ test('SEC-001: the route serves only admitted owner peers', async () => {
   assert.equal((await request(route, { method: 'GET', payload: envelope('list', A) })).status, 405);
   const mismatch = JSON.parse((await request(route, { payload: envelope('get', A) })).body);
   assert.equal(mismatch.result.error.code, 'artifact/bad-request');
+});
+
+
+test('AC-070: the artifact-design skill registers and the tools load without the skill registry', () => {
+  const skills = [];
+  applySkill({ skills: { register: (skill) => { skills.push(skill); return () => {}; } } });
+  assert.equal(skills.length, 1);
+  const [skill] = skills;
+  assert.equal(skill.name, 'artifact-design');
+  assert.ok(skill.description.length > 0 && skill.description.length < 300);
+  for (const topic of ['## Precedence', 'sandbox', '--artifact-font-display', 'color-scheme', '## Layout and type', 'baseVersion', 'edits']) {
+    assert.ok(skill.content.includes(topic), `skill covers ${topic}`);
+  }
+  const registered = [];
+  applyTools({
+    tools: { register: (tool) => { registered.push(tool.name); return () => {}; } },
+    workspaceRegistry: registry,
+    workingDirectory: { ensure: async () => wsA },
+  });
+  assert.equal(registered.length, 8);
+});
+
+test('AC-071: write tool descriptions name the skill and the precedence rule', () => {
+  const { byName } = toolsFor('ses-a', wsA);
+  for (const name of ['artifact_create', 'artifact_update']) {
+    const description = byName[name].description;
+    assert.match(description, /artifact-design skill/);
+    assert.match(description, /the user's request, then the design system, then your own choices/);
+    assert.ok(description.length < 1200, `${name} is ${description.length} characters`);
+  }
+});
+
+test('AC-072: page checks return warnings without blocking the write', async () => {
+  const clean = '<!doctype html><html><head><meta name="viewport" content="width=device-width"><style>body{color:var(--artifact-color-text);max-width:720px}</style></head><body><h1>Hi</h1></body></html>';
+  assert.deepEqual(checkPage(clean), []);
+  const cases = {
+    network: '<img src="https://example.com/a.png">',
+    storage: '<script>localStorage.setItem("a","b")</script>',
+    'fixed-width': '<div style="width: 1200px"></div>',
+  };
+  for (const [code, snippet] of Object.entries(cases)) {
+    const codes = checkPage(clean.replace('<h1>Hi</h1>', snippet)).map((item) => item.split(':')[0]);
+    assert.deepEqual(codes, [code], code);
+  }
+  assert.deepEqual(checkPage('<meta name="viewport" content="width=device-width"><h1>No tokens</h1>').map((item) => item.split(':')[0]), ['no-tokens']);
+  assert.deepEqual(checkPage(clean.replace('<meta name="viewport" content="width=device-width">', '')).map((item) => item.split(':')[0]), ['viewport']);
+  const tutorial = clean.replace('<h1>Hi</h1>', '<p>Never call localStorage here.</p><pre><code>fetch("https://api.example.com")</code></pre><!-- <img src="https://x.example/a.png"> -->');
+  assert.deepEqual(checkPage(tutorial), [], 'prose, code samples, and comments raised warnings');
+  assert.deepEqual(checkPage(clean.replace('<h1>Hi</h1>', '<script>fetch("/x")</script>')).map((item) => item.split(':')[0]), ['network']);
+  const { run, byName } = toolsFor('ses-a', wsA);
+  const created = await run('artifact_create', { type: 'page', title: 'Warn', content: PAGE });
+  assert.equal(created.version, 1);
+  assert.deepEqual(created.warnings.map((item) => item.split(':')[0]), ['viewport', 'no-tokens']);
+  assert.match(byName.artifact_create.output.render({}, created)[0].text, /Warnings:\n- viewport/);
+  const updated = await run('artifact_update', { id: created.id, baseVersion: 1, content: clean });
+  assert.deepEqual(updated.warnings, []);
+  const renamed = await run('artifact_update', { id: created.id, baseVersion: 2, title: 'Renamed' });
+  assert.deepEqual(renamed.warnings, []);
+  const edited = await run('artifact_update', { id: created.id, baseVersion: 3, edits: [{ oldText: '<h1>Hi</h1>', newText: '<img src="https://cdn.example/x.png">' }] });
+  assert.deepEqual(edited.warnings.map((item) => item.split(':')[0]), ['network']);
+  const doc = await run('artifact_create', { type: 'doc', title: 'Doc', content: '# Fetch https://example.com' });
+  assert.deepEqual(doc.warnings, []);
+});
+
+test('AC-073: dark tokens and the display font resolve and old files still load', async () => {
+  const old = { schemaVersion: 1, name: 'Old', colors: { primary: '#111111' }, typography: { fontFamily: 'Georgia, serif' } };
+  const merged = mergeTokens(DEFAULT_TOKENS, old);
+  assert.equal(merged.colors.primary, '#111111');
+  assert.deepEqual(merged.colorsDark, DEFAULT_TOKENS.colorsDark);
+  assert.equal(merged.typography.displayFamily, DEFAULT_TOKENS.typography.displayFamily);
+  const css = tokensToCss(mergeTokens(DEFAULT_TOKENS, { colorsDark: { surface: '#000000' }, typography: { displayFamily: 'Charter, serif' } }));
+  assert.match(css, /--artifact-font-display: Charter, serif;/);
+  assert.match(css, /:root\[data-artifact-theme="dark"\] \{[^}]*--artifact-color-surface: #000000;/);
+  assert.match(css, /@media \(prefers-color-scheme: dark\) \{\s*:root\[data-artifact-theme="auto"\]/);
+  const svc = service();
+  const libraryHome = path.join(home, 'artifacts/v1');
+  await fs.mkdir(libraryHome, { recursive: true });
+  await fs.writeFile(path.join(libraryHome, 'design-system.json'), JSON.stringify(old));
+  const resolved = await svc.designSystem({});
+  assert.equal(resolved.source, 'library');
+  assert.equal(resolved.tokens.colors.primary, '#111111');
+  await fs.rm(path.join(libraryHome, 'design-system.json'));
+  await assert.rejects(Promise.resolve().then(() => mergeTokens(DEFAULT_TOKENS, { colorsDark: { text: 'red;}' } })), (error) => error.code === 'artifact/invalid-tokens');
+  const optedIn = composePage('<meta name="color-scheme" content="light dark"><p>x</p>', css, PAGE_CSP, 't', '', 'dark');
+  assert.match(optedIn, /<html data-artifact-theme="dark">/);
+  assert.match(composePage('<p>x</p>', css, PAGE_CSP, 't', '', 'dark'), /<html><head>/);
 });
