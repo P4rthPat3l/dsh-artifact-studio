@@ -11,7 +11,7 @@ The agent creates pages and documents as versioned files, and you open them besi
 - A save is refused when someone else saved first, so neither the agent nor you can silently overwrite the other.
 - Pages export as HTML. Docs export as Markdown, Word, or HTML. You can print either type or save it as a PDF from the print dialog.
 - A design system reaches pages as `--artifact-*` CSS variables. It has a library default and an optional project override.
-- The left sidebar opens the Artifacts page with a project selector. Artifacts open as tabs beside the chat. Back preserves gallery search, filters, paging, and scroll.
+- The left sidebar opens the Artifacts page with one scope selector for all projects, one project, or the library. Artifacts open as tabs beside the chat. Back preserves gallery search, the scope and type filters, paging, and scroll.
 - A bundled `artifact-design` skill gives the agent design rules, and page writes return warnings for network URLs, browser storage, fixed widths over 960 pixels, and pages that ignore the design tokens.
 - The interface uses the Harness's own components and follows its light and dark theme. A page follows dark mode when it declares `<meta name="color-scheme" content="light dark">`.
 - Reload and Back ask whether to save, discard, or cancel when edits are pending. Multiple views share a draft and serialize saves. Draft recovery stays in window memory until saved or discarded. It does not survive a browser restart.
