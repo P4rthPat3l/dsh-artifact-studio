@@ -619,6 +619,7 @@ const CSS = `
 .art-inspector-hint { margin: 0; color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 1.55; }
 .op-root { display: flex; width: 100%; height: 100%; min-width: 0; }
 .op-canvas { position: relative; flex: 1; min-width: 0; height: 100%; }
+.op-surface { width: 100%; height: 100%; }
 .op-bridge { display: none; }
 `;
 

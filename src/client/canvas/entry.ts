@@ -13,15 +13,12 @@ import { bundledIconProvider } from '../../icon-set.js';
 import { createCanvasBridge } from './bridge.js';
 import type { SelectionMode } from './bridge.js';
 import { CanvasSurface } from './surface.js';
+import { clampZoom } from './zoom.js';
 
 declare const __CANVAS_ASSET_VERSION__: string;
 
 /** Where the host serves CanvasKit and the bundled fonts. */
 const ASSET_BASE = '/artifacts-canvas/';
-
-/** The smallest and largest scale the engine offers. */
-const MIN_ZOOM = 0.25;
-const MAX_ZOOM = 4;
 
 /** Tools the dock offers. */
 export type CanvasTool = 'select' | 'hand' | 'frame' | 'text';
@@ -407,7 +404,7 @@ export async function mountDesignCanvas(options: DesignCanvasOptions): Promise<D
     },
     setZoom(zoom: number): void {
       lastFit = false;
-      editor.zoomToLevel(Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom)));
+      editor.zoomToLevel(clampZoom(zoom));
       bridge.notify();
     },
     getSnapshot(): CanvasSnapshot {
