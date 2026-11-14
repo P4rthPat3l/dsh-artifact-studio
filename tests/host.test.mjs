@@ -627,7 +627,7 @@ test('AC-072: page checks return warnings without blocking the write', async () 
   const created = await run('artifact_create', { type: 'page', title: 'Warn', content: PAGE });
   assert.equal(created.version, 1);
   assert.deepEqual(created.warnings.map((item) => item.split(':')[0]), ['viewport', 'no-tokens']);
-  assert.match(byName.artifact_create.output.render({}, created)[0].text, /Warnings:\n- viewport/);
+  assert.match(byName.artifact_create.output.render({}, created)[0].text, /Warnings, fix all of them in one update:\n- viewport/);
   const updated = await run('artifact_update', { id: created.id, baseVersion: 1, content: clean });
   assert.deepEqual(updated.warnings, []);
   const renamed = await run('artifact_update', { id: created.id, baseVersion: 2, title: 'Renamed' });
@@ -660,6 +660,24 @@ test('AC-073: dark tokens and the display font resolve and old files still load'
   const optedIn = composePage('<meta name="color-scheme" content="light dark"><p>x</p>', css, PAGE_CSP, 't', '', 'dark');
   assert.match(optedIn, /<html data-artifact-theme="dark">/);
   assert.match(composePage('<p>x</p>', css, PAGE_CSP, 't', '', 'dark'), /<html><head>/);
+});
+
+test('AC-091: the skill and write tools tell the agent to check before saving and batch fixes into one update', () => {
+  const skills = [];
+  applySkill({ skills: { register: (skill) => { skills.push(skill); return () => {}; } } });
+  const [skill] = skills;
+  assert.match(skill.content, /## Check before you save/);
+  assert.match(skill.content, /Finish the artifact before the first save/);
+  assert.match(skill.content, /render a scratch copy outside the artifact/);
+  assert.match(skill.content, /fix all of them in one \S*artifact_update\S*\. Never send one update per finding/);
+  assert.match(skill.content, /Do not run polish passes the user did not ask for/);
+  assert.doesNotMatch(skill.content, /fix them in a follow-up update/);
+  const { byName } = toolsFor('ses-a', wsA);
+  assert.match(byName.artifact_create.description, /Check before saving and batch fixes into one update/);
+  assert.match(byName.artifact_update.description, /never send one update per finding/);
+  for (const name of ['artifact_create', 'artifact_update']) {
+    assert.ok(byName[name].description.length < 1200, `${name} is ${byName[name].description.length} characters`);
+  }
 });
 
 test('AC-084: artifact_create description tells the model to use an artifact when the user asks for one', () => {

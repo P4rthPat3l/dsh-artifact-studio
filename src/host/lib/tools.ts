@@ -70,10 +70,11 @@ const SCOPE_PARAM = {
 };
 
 const PAGE_GUIDE = [
-  'Load the artifact-design skill first if you have not this session. Precedence: the user\'s request, then the design system, then your own choices.',
-  'A page is one self-contained HTML document in a sandbox with no network or browser storage: inline all CSS and JavaScript, draw charts with inline SVG or canvas, and use data: URIs for images. It shows in a panel often 380 to 700 px wide, so keep the layout fluid.',
-  'Style pages with the injected variables: --artifact-color-primary, -accent, -surface, -text, -muted; --artifact-font-family, -display, -mono; --artifact-font-size-0 to -6; --artifact-space-0 to -6; --artifact-radius-sm, -md, -lg.',
-  'A doc is Markdown: headings, lists, task lists, links, tables, quotes, and fenced code.',
+  'Load the artifact-design skill first if not loaded yet. Precedence: the user\'s request, then the design system, then your own choices.',
+  'A page is one self-contained HTML document in a sandbox with no network or browser storage: inline all CSS and JavaScript, draw charts with inline SVG or canvas, and use data: URIs for images. Keep the layout fluid for a 380 to 700 px panel.',
+  'Style pages with the injected variables: --artifact-color-primary, -accent, -surface, -text, -muted; --artifact-font-family, -display, -mono; and the size, space, and radius scales in the skill.',
+  'A doc is Markdown: headings, lists, task lists, tables, quotes, and fenced code.',
+  'Each save is a version the user sees. Check before saving and batch fixes into one update.',
 ].join('\n');
 
 /**
@@ -178,7 +179,7 @@ function writeText(value: JsonValue, verb: string): string {
   const warnings = record(value).warnings;
   const list = Array.isArray(warnings) ? warnings.map(String) : [];
   const head = `${line(value, verb)} The user sees a card with an Open action.`;
-  return list.length === 0 ? head : `${head}\nWarnings:\n${list.map((item) => `- ${item}`).join('\n')}`;
+  return list.length === 0 ? head : `${head}\nWarnings, fix all of them in one update:\n${list.map((item) => `- ${item}`).join('\n')}`;
 }
 
 const SUMMARY_SCHEMA = {
@@ -306,6 +307,7 @@ export function createTools(host: ToolHost): ToolDefinition[] {
       'Save a new version of an artifact. For a few local changes send edits; send complete content only when you rewrite most of it. Each edit oldText must occur exactly once.',
       'The update is refused when baseVersion is not the current version, for example after the user edited it; read it again and reapply your change. Never discard the user\'s edits.',
       'A layout or styling change follows the artifact-design skill and the same precedence: the user\'s request, then the design system, then your own choices.',
+      'Each call writes a version the user sees. Put every fix for one request, including all returned warnings, into one update; never send one update per finding.',
     ].join('\n'),
     parameters: {
       type: 'object',

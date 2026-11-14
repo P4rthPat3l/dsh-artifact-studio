@@ -65,13 +65,23 @@ Dark mode is opt in. Add \`<meta name="color-scheme" content="light dark">\` and
 - Use one H1 as the title, H2 for sections, and H3 sparingly.
 - Keep paragraphs to four sentences or fewer. Use a table for comparisons and a list for steps.
 
+## Check before you save
+
+Every \`artifact_create\` and \`artifact_update\` call writes a new version the user sees in History. Treat each save as a release, not a draft.
+
+- Finish the artifact before the first save. Reread the full draft once for broken markup, CSS that hides or overrides elements such as \`[hidden]\`, controls without handlers, placeholder copy, and the sandbox rules above.
+- To check a page visually, render a scratch copy outside the artifact, for example a temporary HTML file in a browser tool. Fix what you find there, then create the artifact once.
+- If a check after saving finds problems, fix all of them in one \`artifact_update\`. Never send one update per finding.
+- Do not run polish passes the user did not ask for. One create, plus at most one corrective update, is the normal result of one request.
+
 ## Updating
 
 - Read the artifact first with \`artifact_read\` when the user may have edited it, and pass that version as \`baseVersion\`.
 - For a few local changes, send \`edits\`. Each \`oldText\` must appear exactly once, so include enough surrounding text.
 - Send full \`content\` only when you rewrite most of the artifact.
 - If the update is refused for a stale version, read again and reapply your change. Never overwrite the user's edits.
-- When a create or update returns \`warnings\`, fix them in a follow-up update unless the user asked for that behavior.
+- When a create or update returns \`warnings\`, fix all of them in one follow-up update unless the user asked for that behavior.
+- Several changes the user asked for in one message go into one update.
 
 ## After writing
 
