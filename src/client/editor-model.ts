@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useSyncExternalStore } from 'react';
 import { formatArtifactAddress } from '../contract.js';
 import type { ArtifactAddress, ArtifactPayload, Manifest } from '../contract.js';
-import { api, codeOf } from './api.js';
+import { api, codeOf, designFailureMessage } from './api.js';
 import type { Where } from './api.js';
 import { announceListChange, announceVersion, rememberTitle } from './store.js';
 
@@ -11,6 +11,8 @@ export interface EditorState {
   loading: boolean;
   saving: boolean;
   failure?: string;
+  /** A server message for a design failure the user can act on. */
+  failureMessage?: string;
   conflict: boolean;
   revision: number;
 }
@@ -74,7 +76,7 @@ export class EditorModel {
 
   async load(): Promise<void> {
     const sequence = ++this.readSequence;
-    this.publish({ loading: true, failure: undefined });
+    this.publish({ loading: true, failure: undefined, failureMessage: undefined });
     try {
       const payload = await api.get(this.where, this.address.id);
       if (sequence !== this.readSequence) return;
@@ -87,17 +89,19 @@ export class EditorModel {
       rememberTitle(this.address.id, payload.manifest.title);
       announceVersion(this.address.id, payload.version);
     } catch (error) {
-      if (sequence === this.readSequence) this.publish({ loading: false, failure: codeOf(error) ?? 'artifact/storage-failure' });
+      if (sequence === this.readSequence) {
+        this.publish({ loading: false, failure: codeOf(error) ?? 'artifact/storage-failure', failureMessage: undefined });
+      }
     }
   }
 
   edit(text: string): void {
-    this.publish({ draft: text, failure: undefined });
+    this.publish({ draft: text, failure: undefined, failureMessage: undefined });
   }
 
   async discardAndReload(): Promise<void> {
     if (this.pending !== null) await this.pending;
-    this.publish({ draft: null, conflict: false, failure: undefined });
+    this.publish({ draft: null, conflict: false, failure: undefined, failureMessage: undefined });
     await this.load();
   }
 
@@ -118,7 +122,7 @@ export class EditorModel {
   }
 
   private async drain(): Promise<boolean> {
-    this.publish({ saving: true, failure: undefined });
+    this.publish({ saving: true, failure: undefined, failureMessage: undefined });
     try {
       while (this.state.draft !== null || this.renameTo !== undefined) {
         const payload = this.state.payload;
@@ -134,7 +138,11 @@ export class EditorModel {
     } catch (error) {
       const failure = codeOf(error) ?? 'artifact/storage-failure';
       this.renameTo = undefined;
-      this.publish({ failure, conflict: failure === 'artifact/stale-version' });
+      this.publish({
+        failure,
+        failureMessage: failure.startsWith('artifact/design-') ? designFailureMessage(error) : undefined,
+        conflict: failure === 'artifact/stale-version',
+      });
       return false;
     } finally {
       this.pending = null;

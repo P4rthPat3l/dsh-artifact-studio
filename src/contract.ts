@@ -1,6 +1,6 @@
 /** Wire shapes shared by the host route, the tools, and the browser client. */
 
-export const ARTIFACT_TYPES = ['page', 'doc'] as const;
+export const ARTIFACT_TYPES = ['page', 'doc', 'design'] as const;
 export type ArtifactType = (typeof ARTIFACT_TYPES)[number];
 
 /**
@@ -15,19 +15,21 @@ export function isArtifactType(value: unknown): value is ArtifactType {
 export const SCOPES = ['workspace', 'library'] as const;
 export type Scope = (typeof SCOPES)[number];
 
-export const EXPORT_FORMATS = ['html', 'md', 'docx'] as const;
+export const EXPORT_FORMATS = ['html', 'md', 'docx', 'png', 'svg', 'fig'] as const;
 export type ExportFormat = (typeof EXPORT_FORMATS)[number];
 
 /** Which exporters each type supports. */
 export const FORMATS_BY_TYPE: Readonly<Record<ArtifactType, readonly ExportFormat[]>> = {
   page: ['html'],
   doc: ['md', 'docx', 'html'],
+  design: ['png', 'svg', 'fig'],
 };
 
 /** Content file name inside `content/`, by type. */
 export const CONTENT_FILE: Readonly<Record<ArtifactType, string>> = {
   page: 'index.html',
   doc: 'document.md',
+  design: 'design.jsx',
 };
 
 export const ID_PATTERN = /^art_(ws|lib)_[a-z0-9]{10,32}$/;
@@ -108,6 +110,44 @@ export interface ResolvedDesignSystem {
   css: string;
 }
 
+/** What a rendered design reports about its own scene graph. */
+export interface DesignInfo {
+  pages: number;
+  nodes: number;
+  types: Record<string, number>;
+  fonts: string[];
+  warnings: string[];
+}
+
+/** One rendered preview of a design, plus the summary that came with it. */
+export interface PreviewResult {
+  mediaType: string;
+  data: string;
+  width: number;
+  height: number;
+  info: DesignInfo;
+}
+
+/**
+ * Narrow a design summary read from the wire or a cache file.
+ * @param value the value.
+ * @returns whether it is a design summary.
+ */
+export function isDesignInfo(value: unknown): value is DesignInfo {
+  if (value === null || typeof value !== 'object') return false;
+  const record: Record<string, unknown> = { ...value };
+  return (
+    typeof record.pages === 'number' &&
+    typeof record.nodes === 'number' &&
+    record.types !== null &&
+    typeof record.types === 'object' &&
+    Array.isArray(record.fonts) &&
+    record.fonts.every((font) => typeof font === 'string') &&
+    Array.isArray(record.warnings) &&
+    record.warnings.every((warning) => typeof warning === 'string')
+  );
+}
+
 /** What `get` returns: the content plus the token CSS the renderer injects. */
 export interface ArtifactPayload {
   manifest: Manifest;
@@ -116,6 +156,8 @@ export interface ArtifactPayload {
   designCss: string;
   /** The resolved tokens, so the document editor can match the export. */
   design: DesignTokens;
+  /** The compiled summary of a design, when the read could produce one. */
+  designInfo?: DesignInfo;
 }
 
 /** What the route `export` endpoint returns; the browser turns `data` into a download. */

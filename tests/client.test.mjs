@@ -15,7 +15,11 @@ let act;
 let createRoot;
 let plugin;
 let chunk;
+let canvasFake;
 let blobs;
+
+/** What the fake canvas chunk does for the current test. */
+const canvasDispatch = { enabled: false, mounts: [], gate: null, fail: null };
 
 /**
  * Evaluate a built client artifact the way the harness module loader does.
@@ -36,8 +40,9 @@ async function loadArtifact(name) {
     throw new Error(`Unexpected module ${specifier}`);
   };
   requireModule.async = async (file) => {
-    if (file !== './client.doc.js') throw new Error(`Unexpected chunk ${file}`);
-    return chunk;
+    if (file === './client.doc.js') return chunk;
+    if (file === './client.canvas.js' && canvasFake !== undefined) return canvasFake;
+    throw new Error(`Unexpected chunk ${file}`);
   };
   return { definition, requireModule };
 }
@@ -56,6 +61,26 @@ before(async () => {
   React = require('react');
   ({ act } = require('react'));
   ({ createRoot } = require('react-dom/client'));
+  canvasFake = {
+    async mountDesignCanvas(options) {
+      if (!canvasDispatch.enabled) throw new Error('The canvas chunk is not available in this test.');
+      if (canvasDispatch.gate !== null) await canvasDispatch.gate.promise;
+      if (canvasDispatch.fail !== null) throw new Error(canvasDispatch.fail);
+      const handle = {
+        options,
+        sources: [],
+        destroyed: false,
+        setSource(source) { this.sources.push(source); },
+        setTool(tool) { this.tool = tool; },
+        undo() { this.undos = (this.undos ?? 0) + 1; },
+        redo() { this.redos = (this.redos ?? 0) + 1; },
+        zoomToFit() { this.fits = (this.fits ?? 0) + 1; },
+        destroy() { this.destroyed = true; },
+      };
+      canvasDispatch.mounts.push(handle);
+      return handle;
+    },
+  };
   const docArtifact = await loadArtifact('client.doc.js');
   assert.equal(docArtifact.definition.chunk, 'client.doc.js');
   chunk = docArtifact.definition.factory(docArtifact.requireModule);
@@ -66,7 +91,20 @@ before(async () => {
 
 beforeEach(() => {
   window.localStorage.clear();
+  canvasDispatch.enabled = false;
+  canvasDispatch.mounts.length = 0;
+  canvasDispatch.gate = null;
+  canvasDispatch.fail = null;
 });
+
+const DESIGN_INFO = {
+  pages: 1,
+  nodes: 3,
+  types: { FRAME: 1, TEXT: 2 },
+  fonts: ['Inter'],
+  warnings: ['Font "Roboto" is not bundled. The preview substitutes a default face.'],
+};
+const DESIGN_SOURCE = '<Frame w={320} p={24} bg="#ffffff"><Text size={24}>Quarterly</Text></Frame>';
 
 const TOKENS = {
   schemaVersion: 1,
@@ -96,7 +134,7 @@ function fakeHost() {
     createdAt: '2026-11-12T00:00:00.000Z',
     updatedAt: new Date().toISOString(),
     version,
-    contentFile: type === 'page' ? 'index.html' : 'document.md',
+    contentFile: type === 'page' ? 'index.html' : type === 'design' ? 'design.jsx' : 'document.md',
     contentBytes: 1,
     contentHash: 'sha256:x',
     source: { origin: 'agent', action: 'create' },
@@ -123,7 +161,7 @@ function fakeHost() {
         case 'get': {
           if (item === undefined) return { ok: false, error: { code: 'artifact/not-found', message: 'gone', details: {} } };
           const version = payload.version ?? item.manifest.version;
-          return { ok: true, value: { manifest: { ...item.manifest, version }, content: version === item.manifest.version ? item.content : `version ${version}`, version, designCss: state.designCss, design: TOKENS } };
+          return { ok: true, value: { manifest: { ...item.manifest, version }, content: version === item.manifest.version ? item.content : `version ${version}`, version, designCss: state.designCss, design: TOKENS, ...(item.designInfo === undefined ? {} : { designInfo: item.designInfo }) } };
         }
         case 'update': {
           if (payload.baseVersion !== item.manifest.version) {
@@ -158,6 +196,11 @@ function fakeHost() {
           item.manifest = { ...item.manifest, version: item.manifest.version + 1 };
           return { ok: true, value: { manifest: { ...item.manifest } } };
         }
+        case 'preview':
+          return {
+            ok: true,
+            value: { mediaType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB', width: 320, height: 120, info: item.designInfo ?? DESIGN_INFO },
+          };
         case 'designSystem':
           return {
             ok: true,
@@ -892,7 +935,8 @@ test('AC-089: creating from all projects targets the named project', async () =>
 
     await click(findButton(view, 'gallery.create'));
     const items = [...view.container.querySelectorAll('[role="menuitem"]')];
-    assert.equal(items.length, 2);
+    assert.equal(items.length, 3);
+    assert.ok(items[2].textContent.includes('type.design') || items[2].textContent.includes('gallery.newDesign'), 'the create menu has no design entry');
     assert.ok(items.every((item) => item.textContent.includes('Work A')), 'the create menu did not name the target project');
     await click(items[0]);
     const create = host.calls.find((call) => call.endpoint === 'create');
@@ -1011,8 +1055,10 @@ test('AC-023: locale dictionaries cover every used key', async () => {
     for (const match of text.matchAll(/\bt\(\s*'([a-zA-Z0-9.]+)'/g)) used.add(match[1]);
   }
   const dynamic = [
-    'scope.workspace', 'scope.library', 'type.page', 'type.doc',
-    'export.html', 'export.md', 'export.docx', 'design.source.workspace', 'design.source.library', 'design.source.default',
+    'scope.workspace', 'scope.library', 'type.page', 'type.doc', 'type.design',
+    'export.html', 'export.md', 'export.docx', 'export.png', 'export.svg', 'export.fig',
+    'create.untitledDesign', 'tab.manualSaveDesign',
+    'design.source.workspace', 'design.source.library', 'design.source.default',
     'design.color.primary', 'design.color.accent', 'design.color.surface', 'design.color.text', 'design.color.muted',
     'design.radius.sm', 'design.radius.md', 'design.radius.lg',
     'format.heading', 'format.bold', 'format.italic', 'format.bulletList', 'format.orderedList', 'format.codeBlock',
@@ -1661,4 +1707,150 @@ test('AC-085: starter prompts name the artifact type', async () => {
     assert.match(inserted[0], /artifact doc/);
     assert.match(inserted[1], /artifact page/);
   } finally { await view.unmount(); }
+});
+
+test('FEAT-007 AC-014: a design tab shows the rendered preview and its source', async () => {
+  const host = fakeHost();
+  const id = 'art_ws_design01401';
+  host.state.artifacts.set(id, { manifest: host.manifest(id, 'design', 'Card', 1), content: DESIGN_SOURCE, designInfo: DESIGN_INFO });
+  const { ctx, records } = stubContext(host);
+  plugin.apply(ctx);
+  const tab = slot(records, 'sidebar.right.pane.tab', 'dsh-artifact-studio/artifact');
+  const view = await render(tab.component, tabProps('dsh-resource://artifact/workspace/ws-a/' + id));
+  try {
+    const previewCall = host.calls.find((call) => call.endpoint === 'preview');
+    assert.ok(previewCall, 'the tab did not request a preview');
+    const image = view.container.querySelector('img.art-design-image');
+    assert.ok(image, 'the tab rendered no preview image');
+    assert.match(image.getAttribute('src'), /^data:image\/png;base64,/);
+    assert.match(view.container.textContent, /Roboto/);
+    await click(findButton(view, 'tab.export'));
+    const formats = [...view.container.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent);
+    assert.deepEqual(formats, ['export.png', 'export.svg', 'export.fig']);
+    await click(findButton(view, 'tab.export'));
+    await click([...view.container.querySelectorAll('.art-segment button')].find((button) => button.textContent === 'tab.source'));
+    assert.match(view.container.textContent, /Quarterly/);
+    assert.doesNotMatch(view.container.textContent, /export.print/);
+  } finally { await view.unmount(); }
+});
+
+
+/** Open a design tab whose canvas chunk is available. */
+async function canvasFixture(suffix) {
+  const host = fakeHost();
+  const id = 'art_ws_canvas' + suffix;
+  host.state.artifacts.set(id, { manifest: host.manifest(id, 'design', 'Card', 1), content: DESIGN_SOURCE, designInfo: DESIGN_INFO });
+  canvasDispatch.enabled = true;
+  const { ctx, records } = stubContext(host);
+  plugin.apply(ctx);
+  const tab = slot(records, 'sidebar.right.pane.tab', 'dsh-artifact-studio/artifact');
+  const view = await render(tab.component, tabProps('dsh-resource://artifact/workspace/ws-a/' + id));
+  return { host, id, view };
+}
+
+async function flushCanvas() {
+  await act(async () => { await settle(40); });
+}
+
+test('FEAT-007 AC-017: the design tab mounts the canvas over the PNG', async () => {
+  const gate = deferred();
+  canvasDispatch.gate = gate;
+  const { view } = await canvasFixture('01701');
+  try {
+    assert.ok(view.container.querySelector('img.art-design-image'), 'the PNG did not show first');
+    assert.ok(view.container.querySelector('.art-canvas-loading'), 'the loading note is missing');
+    assert.equal(canvasDispatch.mounts.length, 0);
+    await act(async () => { gate.resolve(); await settle(40); });
+    const mount = view.container.querySelector('.art-canvas-mount');
+    assert.equal(mount.getAttribute('data-ready'), '1');
+    assert.equal(view.container.querySelector('img.art-design-image'), null, 'the PNG stayed over the canvas');
+    assert.equal(canvasDispatch.mounts.length, 1);
+    assert.equal(canvasDispatch.mounts[0].options.source, DESIGN_SOURCE);
+  } finally { gate.resolve(); await view.unmount(); }
+});
+
+test('FEAT-007 AC-018: a canvas edit becomes a draft and writes nothing', async () => {
+  const { host, id, view } = await canvasFixture('01801');
+  try {
+    const handle = canvasDispatch.mounts[0];
+    await act(async () => { handle.options.onChange('SERIALIZED_CARD'); await settle(20); });
+    assert.match(view.container.textContent, /tab.unsaved/);
+    assert.equal(host.calls.filter((call) => call.endpoint === 'update').length, 0);
+    assert.equal(host.state.artifacts.get(id).content, DESIGN_SOURCE);
+    assert.ok(view.container.querySelector('[aria-label="tab.save"]'), 'the save control is hidden');
+  } finally { await view.unmount(); }
+});
+
+test('FEAT-007 AC-019: a canvas save writes the serialized source as a new version', async () => {
+  const { host, id, view } = await canvasFixture('01901');
+  try {
+    const handle = canvasDispatch.mounts[0];
+    await act(async () => { handle.options.onChange('SERIALIZED_CARD'); await settle(20); });
+    await click(view.container.querySelector('[aria-label="tab.save"]'));
+    const update = host.calls.find((call) => call.endpoint === 'update');
+    assert.equal(update.payload.content, 'SERIALIZED_CARD');
+    assert.equal(update.payload.baseVersion, 1);
+    assert.equal(host.state.artifacts.get(id).manifest.version, 2);
+    assert.equal(host.state.artifacts.get(id).content, 'SERIALIZED_CARD');
+  } finally { await view.unmount(); }
+});
+
+test('FEAT-007 AC-020: a canvas failure keeps the PNG and the source editor', async () => {
+  canvasDispatch.fail = 'WebGL is not available.';
+  const { view } = await canvasFixture('02001');
+  try {
+    assert.ok(view.container.querySelector('img.art-design-image'));
+    assert.match(view.container.textContent, /canvas.failed/);
+    assert.match(view.container.textContent, /WebGL is not available/);
+    assert.ok(findButton(view, 'action.retry'));
+    await openSource(view);
+    assert.ok(view.container.querySelector('textarea'));
+  } finally { await view.unmount(); }
+});
+
+test('FEAT-007 AC-021: closing the tab destroys the canvas', async () => {
+  const { view } = await canvasFixture('02101');
+  const handle = canvasDispatch.mounts[0];
+  await view.unmount();
+  assert.equal(handle.destroyed, true);
+});
+
+test('FEAT-007 AC-022: an old design version shows the PNG and mounts no canvas', async () => {
+  const host = fakeHost();
+  const id = 'art_ws_canvas02201';
+  host.state.artifacts.set(id, { manifest: host.manifest(id, 'design', 'Card', 2), content: DESIGN_SOURCE, designInfo: DESIGN_INFO });
+  canvasDispatch.enabled = true;
+  const { ctx, records } = stubContext(host);
+  plugin.apply(ctx);
+  const tab = slot(records, 'sidebar.right.pane.tab', 'dsh-artifact-studio/artifact');
+  const view = await render(tab.component, tabProps('dsh-resource://artifact/workspace/ws-a/' + id));
+  const first = canvasDispatch.mounts[0];
+  try {
+    await click(view.container.querySelector('[aria-label="tab.history"]'));
+    await click([...view.container.querySelectorAll('.art-version')].find(button => button.textContent.includes('tab.versionOf|version=1')));
+    await flushCanvas();
+    assert.equal(first.destroyed, true);
+    assert.equal(canvasDispatch.mounts.length, 1);
+    assert.ok(view.container.querySelector('img.art-design-image'));
+  } finally { await view.unmount(); }
+});
+
+test('FEAT-007 AC-023: the canvas toolbar drives the handle', async () => {
+  const gate = deferred();
+  canvasDispatch.gate = gate;
+  const { view } = await canvasFixture('02301');
+  try {
+    assert.equal(findButton(view, 'canvas.undo').disabled, true);
+    await act(async () => { gate.resolve(); await settle(40); });
+    const handle = canvasDispatch.mounts[0];
+    await click(findButton(view, 'canvas.undo'));
+    await click(findButton(view, 'canvas.redo'));
+    await click(findButton(view, 'canvas.fit'));
+    const frame = [...view.container.querySelectorAll('button')].find(button => button.textContent === 'canvas.frame');
+    await click(frame);
+    assert.equal(handle.undos, 1);
+    assert.equal(handle.redos, 1);
+    assert.equal(handle.fits, 1);
+    assert.equal(handle.tool, 'frame');
+  } finally { gate.resolve(); await view.unmount(); }
 });

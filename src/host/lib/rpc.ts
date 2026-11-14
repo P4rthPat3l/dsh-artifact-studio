@@ -29,6 +29,7 @@ export const ENDPOINTS = [
   'designSystem',
   'saveDesignSystem',
   'clearDesignSystem',
+  'preview',
 ] as const;
 
 type Endpoint = (typeof ENDPOINTS)[number];
@@ -111,6 +112,8 @@ async function dispatch(service: ArtifactService, endpoint: Endpoint, fields: Fi
       return service.saveDesignSystem(target, fields.tokens);
     case 'clearDesignSystem':
       return service.clearWorkspaceDesignSystem(target);
+    case 'preview':
+      return service.preview(target, requiredString(fields, 'id'), optionalInteger(fields, 'version'));
     default: {
       const unreachable: never = endpoint;
       throw new ArtifactError('artifact/not-found', `Unknown endpoint ${String(unreachable)}.`);

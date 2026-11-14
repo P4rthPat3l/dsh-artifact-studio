@@ -19,3 +19,16 @@ test('the patch loads the route plugin and the tools plugin', async () => {
     assert.equal(license, 'MIT', `${name} is ${license}`);
   }
 });
+test('the canvas build dependencies stay out of runtime dependencies and ship a notice', async () => {
+  const manifest = JSON.parse(await fs.readFile(new URL('../package.json', import.meta.url), 'utf8'));
+  for (const name of ['@open-pencil/vue', 'vue', 'canvaskit-wasm']) {
+    assert.equal(manifest.dependencies[name], undefined, `${name} is a runtime dependency`);
+    assert.ok(manifest.devDependencies[name], `${name} is not a build dependency`);
+  }
+  assert.ok(manifest.files.includes('assets'), 'the assets directory is not shipped');
+  assert.ok(manifest.files.includes('client.canvas.js'), 'the canvas chunk is not shipped');
+  const notices = await fs.readFile(new URL('../THIRD_PARTY_NOTICES.md', import.meta.url), 'utf8');
+  assert.match(notices, /CanvasKit/);
+  assert.match(notices, /BSD/);
+  assert.match(notices, /Vue/);
+});

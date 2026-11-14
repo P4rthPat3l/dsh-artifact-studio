@@ -21,6 +21,8 @@ import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives';
 import { FORMATS_BY_TYPE, formatArtifactAddress, parseArtifactAddress } from '../contract.js';
 import type { ArtifactAddress, ArtifactPayload, ExportFormat, VersionEntry } from '../contract.js';
 import { api, codeOf, download, errorKey } from './api.js';
+import { DesignCanvasView } from './design-canvas-view.jsx';
+import { DesignView } from './design-view.jsx';
 import { DocView } from './doc-view.jsx';
 import { useEditor } from './editor-model.js';
 import { printDocument } from './frames.js';
@@ -174,7 +176,7 @@ type Mode = 'preview' | 'source';
 
 function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inputActions }: ArtifactBodyProps) {
   const { model, state } = useEditor(address);
-  const { payload, draft, saving, conflict, failure } = state;
+  const { payload, draft, saving, conflict, failure, failureMessage } = state;
   const where = model.where;
   const id = address.id;
   const dark = useHarnessDark();
@@ -449,13 +451,15 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
 
   const exportEntries: MenuEntry[] = [
     ...FORMATS_BY_TYPE[type].map(format => ({ id: format, label: t(`export.${format}`) })),
-    { type: 'separator', id: 'export-gap' },
-    { id: 'print', label: t('export.print') },
+    ...(type === 'design' ? [] : [
+      { type: 'separator' as const, id: 'export-gap' },
+      { id: 'print', label: t('export.print') },
+    ]),
   ];
   const runExport = (entry: string) => {
     setMenu(null);
     if (entry === 'print') void output('print');
-    else if (entry === 'html' || entry === 'md' || entry === 'docx') void output(entry);
+    else void output(entry as ExportFormat);
   };
   const moreEntries: MenuEntry[] = [
     ...(overlay ? [...exportEntries, { type: 'separator' as const, id: 'more-gap' }] : []),
@@ -516,13 +520,13 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
           </div>
         </div>
         <div className="art-actions art-editor-actions">
-          {type !== 'page' ? null : (
+          {type === 'doc' ? null : (
             <SegmentedControl<Mode>
               id={'art-mode-' + id}
               className="art-segment"
               label={t('tab.mode')}
               value={mode}
-              options={[{ value: 'preview', label: t('tab.preview') }, { value: 'source', label: t('tab.source') }]}
+              options={[{ value: 'preview', label: type === 'design' ? t('canvas.mode') : t('tab.preview') }, { value: 'source', label: t('tab.source') }]}
               onChange={(next) => { setMode(next); setSelection(null); }}
             />
           )}
@@ -560,29 +564,35 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
       </form> : null}
       {updateNotice === null ? null : <div className="art-bar" role="status"><span>{t('tab.agentUpdate', { version: updateNotice })}</span><span className="art-bar-actions"><Button size="sm" variant="outline" onClick={() => { setUpdateNotice(null); openHistory(); }}>{t('tab.viewHistory')}</Button><Button size="sm" onClick={() => setUpdateNotice(null)}>{t('tab.dismiss')}</Button></span></div>}
       {conflict ? <div className="art-bar" data-tone="warn" role="alert"><span className="art-bar-text"><strong>{t('tab.conflictTitle')}</strong><span>{t('tab.conflictHint')}</span></span><span className="art-bar-actions"><Button size="sm" variant="outline" onClick={() => void copy(draft ?? '', 'action.copied')}>{t('tab.copyDraft')}</Button><Button size="sm" variant="outline" onClick={() => guarded(reload)}>{t('tab.discardReload')}</Button></span></div> : null}
-      {!conflict && failure !== undefined ? <div className="art-bar" data-tone="error" role="alert"><span>{t(errorKey(failure))}</span><Button size="sm" variant="outline" onClick={() => void model.save()}>{t('action.retry')}</Button></div> : null}
+      {!conflict && failure !== undefined ? <div className="art-bar" data-tone="error" role="alert"><span>{failureMessage ?? t(errorKey(failure))}</span><Button size="sm" variant="outline" onClick={() => void model.save()}>{t('action.retry')}</Button></div> : null}
       {viewing === null ? null : <div className="art-bar" role="status"><span>{t('tab.viewingOld', { version: viewing.version, current: payload.version })}</span><span className="art-bar-actions"><Button size="sm" variant="outline" onClick={() => { ++historySequence.current; setHistoryLoading(false); setViewing(null); setSelection(null); }}>{t('tab.backToCurrent')}</Button><Button size="sm" variant="outline" disabled={busy} onClick={() => void restore()}>{t('tab.restoreThis')}</Button></span></div>}
       <div className="art-body">
         <div
           className="art-stage"
-          role={type === 'page' ? 'tabpanel' : undefined}
-          id={type === 'page' ? 'art-mode-' + id + '-' + mode + '-panel' : undefined}
-          aria-labelledby={type === 'page' ? 'art-mode-' + id + '-' + mode : undefined}
+          role={type === 'doc' ? undefined : 'tabpanel'}
+          id={type === 'doc' ? undefined : 'art-mode-' + id + '-' + mode + '-panel'}
+          aria-labelledby={type === 'doc' ? undefined : 'art-mode-' + id + '-' + mode}
         >
           {type !== 'page' || selection === null || historyOpen ? null : <SelectionBar quote={selection.text} askLabel={t('agent.ask')} dismissLabel={t('tab.dismiss')} onAsk={() => void askAgent(selection)} onDismiss={() => setSelection(null)} />}
-          {type === 'doc'
-            ? <DocView markdown={text} revision={(viewing?.version ?? 0) + ':' + state.revision} editable={!readOnly && !conflict} label={payload.manifest.title} loadingLabel={t('empty.loading')} failedLabel={t('error.generic')} design={payload.design} dark={dark} t={t} onChange={value => model.edit(value)} onSave={() => void model.save()} onSelectionText={reportSelection} selectionAction={selection === null ? null : <Button size="sm" variant="primary" icon={<IconSparkleRegular size={14} />} onMouseDown={event => event.preventDefault()} onClick={() => void askAgent(selection)}>{t('agent.ask')}</Button>} />
-            : mode === 'preview'
-              ? <PageFrame content={text} designCss={payload.designCss} title={payload.manifest.title} frameTitle={t('tab.frameTitle', { title: payload.manifest.title })} dark={dark} onSelectionText={reportSelection} />
-              : showEditor
-                ? <SourceEditor value={text} readOnly={false} label={t('tab.source')} hint={t('tab.manualSave')} onChange={value => model.edit(value)} onSave={() => void model.save()} onSelectionText={reportSelection} />
-                : <div className="art-code" ref={codeRef}>
-                    <div className="art-code-bar">
-                      <span>{readOnly ? t('tab.readOnly') : t('tab.codeHint')}</span>
-                      {readOnly ? null : <Button size="sm" variant="outline" icon={<IconEditOutlineRegular size={14} />} onClick={() => setEditing(true)}>{t('tab.editSource')}</Button>}
-                    </div>
-                    <CodeBlock code={text} lang="html" lineNumbers showHeader={false} wrap className="art-code-block" copyLabel={t('code.copy')} copiedLabel={t('action.copied')} />
-                  </div>}
+          {type === 'doc' ? (
+            <DocView markdown={text} revision={(viewing?.version ?? 0) + ':' + state.revision} editable={!readOnly && !conflict} label={payload.manifest.title} loadingLabel={t('empty.loading')} failedLabel={t('error.generic')} design={payload.design} dark={dark} t={t} onChange={value => model.edit(value)} onSave={() => void model.save()} onSelectionText={reportSelection} selectionAction={selection === null ? null : <Button size="sm" variant="primary" icon={<IconSparkleRegular size={14} />} onMouseDown={event => event.preventDefault()} onClick={() => void askAgent(selection)}>{t('agent.ask')}</Button>} />
+          ) : mode === 'preview' ? (
+            type === 'design'
+              ? readOnly
+                ? <DesignView t={t} where={where} id={id} version={version} title={payload.manifest.title} />
+                : <DesignCanvasView t={t} source={text} revision={'0:' + state.revision} title={payload.manifest.title} onChange={value => model.edit(value)} onSave={() => void model.save()} fallback={<DesignView t={t} where={where} id={id} version={version} title={payload.manifest.title} />} />
+              : <PageFrame content={text} designCss={payload.designCss} title={payload.manifest.title} frameTitle={t('tab.frameTitle', { title: payload.manifest.title })} dark={dark} onSelectionText={reportSelection} />
+          ) : showEditor ? (
+            <SourceEditor value={text} readOnly={false} label={t('tab.source')} hint={type === 'design' ? t('tab.manualSaveDesign') : t('tab.manualSave')} onChange={value => model.edit(value)} onSave={() => void model.save()} onSelectionText={reportSelection} />
+          ) : (
+            <div className="art-code" ref={codeRef}>
+              <div className="art-code-bar">
+                <span>{readOnly ? t('tab.readOnly') : t('tab.codeHint')}</span>
+                {readOnly ? null : <Button size="sm" variant="outline" icon={<IconEditOutlineRegular size={14} />} onClick={() => setEditing(true)}>{t('tab.editSource')}</Button>}
+              </div>
+              <CodeBlock code={text} lang={type === 'design' ? 'jsx' : 'html'} lineNumbers showHeader={false} wrap className="art-code-block" copyLabel={t('code.copy')} copiedLabel={t('action.copied')} />
+            </div>
+          )}
         </div>
         {!historyOpen ? null : <DrawerShell label={t('history.title')} closeLabel={t('history.close')} overlay={overlay} onClose={closeHistory}>
           <HistoryPanel t={t} versions={versions} failed={historyFailed} current={payload.version} selected={viewing?.version ?? payload.version} onSelect={version => void selectVersion(version)} />
@@ -600,7 +610,7 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
           <Button variant="primary" disabled={conflict || busy} onClick={async () => { setBusy(true); const ok = await model.save(); setBusy(false); const run = leave?.run; if (ok && run !== undefined) { setLeave(null); await run(); } }}>{t('tab.saveContinue')}</Button>
         </>}
       >
-        {failure === undefined ? null : <p className="art-modal-error" role="alert">{t(errorKey(failure))}</p>}
+        {failure === undefined ? null : <p className="art-modal-error" role="alert">{failureMessage ?? t(errorKey(failure))}</p>}
       </Modal>
       <Modal
         open={deleting}

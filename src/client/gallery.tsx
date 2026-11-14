@@ -18,7 +18,7 @@ import type { Where } from './api.js';
 import { DesignEditor } from './design-editor.jsx';
 import { pageDocument } from './frames.js';
 import type { Translator } from './harness.js';
-import { IconDoc, IconPage, IconPalette } from './icons.jsx';
+import { IconDesign, IconDoc, IconPage, IconPalette } from './icons.jsx';
 import { relativeTime } from './locale.js';
 import { useHarnessDark } from './theme.js';
 import { togglePin, usePins } from './preferences.js';
@@ -230,7 +230,8 @@ function ArtifactCover({ t, view }: { t: Translator; view: ArtifactView }) {
   }, [visible]);
 
   useEffect(() => {
-    if (!visible) return undefined;
+    // A design has no cheap local cover; its preview is rendered on the host when opened.
+    if (!visible || type === 'design') return undefined;
     let cancelled = false;
     loadCover(view)
       .then((value) => {
@@ -259,7 +260,7 @@ function ArtifactCover({ t, view }: { t: Translator; view: ArtifactView }) {
     return () => URL.revokeObjectURL(next);
   }, [data, type, title, dark]);
 
-  const icon = type === 'page' ? <IconPage /> : <IconDoc />;
+  const icon = type === 'page' ? <IconPage /> : type === 'doc' ? <IconDoc /> : <IconDesign />;
   if (failed) return <span className="art-cover" ref={ref} aria-hidden="true"><span className="art-cover-fallback">{icon}</span></span>;
   if (type === 'page') {
     return (
@@ -558,7 +559,7 @@ export function GalleryBody({ t, projects, scope, contextWorkspaceId, onScopeCha
   const onCreate = useCallback(
     async (nextType: ArtifactType, nextScope: Scope) => {
       if (nextScope === 'workspace' && contextWorkspaceId === null) return;
-      const title = t(nextType === 'page' ? 'create.untitledPage' : 'create.untitledDoc');
+      const title = t(nextType === 'page' ? 'create.untitledPage' : nextType === 'doc' ? 'create.untitledDoc' : 'create.untitledDesign');
       try {
         const { manifest } = await api.create({ scope: nextScope, workspaceId: contextWorkspaceId }, nextType, title, starterContent(nextType, title));
         announceListChange();
@@ -631,8 +632,9 @@ export function GalleryBody({ t, projects, scope, contextWorkspaceId, onScopeCha
               items={[
                 { id: 'page', label: t('gallery.newPage') + ' · ' + createTitle, icon: <IconPage size={14} /> },
                 { id: 'doc', label: t('gallery.newDoc') + ' · ' + createTitle, icon: <IconDoc size={14} /> },
+                { id: 'design', label: t('gallery.newDesign') + ' · ' + createTitle, icon: <IconDesign size={14} /> },
               ]}
-              onSelect={(entry) => { setMenu(false); void onCreate(entry === 'doc' ? 'doc' : 'page', createScope); }}
+              onSelect={(entry) => { setMenu(false); void onCreate(entry === 'doc' ? 'doc' : entry === 'design' ? 'design' : 'page', createScope); }}
               anchor={<Button size="sm" variant="outline" icon={<IconPlusOutlineRegular size={14} />} aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu((value) => !value)}>{t('gallery.create')}</Button>}
             />
           </div>
@@ -659,7 +661,7 @@ export function GalleryBody({ t, projects, scope, contextWorkspaceId, onScopeCha
                 className="art-segment"
                 label={t('filter.type')}
                 value={type ?? 'all'}
-                options={[{ value: 'all', label: t('type.all') }, { value: 'page', label: t('type.page') }, { value: 'doc', label: t('type.doc') }]}
+                options={[{ value: 'all', label: t('type.all') }, { value: 'page', label: t('type.page') }, { value: 'doc', label: t('type.doc') }, { value: 'design', label: t('type.design') }]}
                 onChange={(next) => setType(next === 'all' ? undefined : next)}
               />
             </div>

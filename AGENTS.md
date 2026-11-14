@@ -10,8 +10,15 @@
 - Plugin chrome colors come from `--dsw-*` tokens. The Harness marks dark mode with `data-ds-dark-theme` on `<body>`, not `data-theme`; `src/client/theme.ts` watches it.
 - A page follows the dark token colors only when it opts in with `<meta name="color-scheme" content="light dark">`; `composePage` then sets `data-artifact-theme`. Pages without the meta keep the light colors, because they may paint literal light backgrounds.
 - Every visible string goes through `t()` with EN and ZH entries in `src/client/locale.ts`. Test AC-023 enforces this.
-- Only MIT or Apache-2.0 dependencies. `tests/package.test.mjs` checks the runtime ones.
+- Runtime dependencies are MIT only. A build-time dependency bundled into a client chunk may be MIT, Apache-2.0, or BSD-3-Clause, and each ships in `THIRD_PARTY_NOTICES.md`. `tests/package.test.mjs` checks the runtime ones.
 - `npm test` builds first. A live check needs the bundle reinstalled, through `remove_bundle` then `install_bundle`, and then a window reload.
+
+- Design artifacts store Design JSX in `content/design.jsx`. The native `.fig` is derived on export and never stored as content. In the host, only `src/host/worker/design-worker.ts` and `src/host/lib/design-render.ts` may import `@open-pencil/*`; in the client, only `src/client/canvas/`. Never call `renderJSX` in the host process or a tool.
+- The design worker is a child process run with Node's permission model: it reads only the plugin package and its installed modules, and has no network, no file writes, and no child processes. Icons are rejected because the engine resolves them through the Iconify network API. The 20 s deadline kills a hung or hostile source.
+- Design previews are derived files at `<artifact>/preview/<sha256>.png` plus a `.json` summary. They are never versioned and never hashed as content; delete them freely.
+
+- The in-panel canvas is the lazy `client.canvas.js` chunk built from `src/client/canvas/`. It is the only client code that may import `@open-pencil/*`; the host imports the engine only through `design-worker.ts` and `design-render.ts`. It never writes: it serializes the page with `selectionToJSX` and hands the text to the tab's draft.
+- Engine files (CanvasKit and the bundled fonts) are served only from the fixed list in `src/host/lib/assets.ts` at `/artifacts-canvas/`. Never join a request path to a filesystem path, and never serve artifact content from that route. `scripts/build.mjs` copies the files into `assets/`, which is generated and gitignored.
 
 - `src/client/editor-model.ts` owns one shared editor per full artifact address. Draft and in-flight write state are separate. Only unsaved models survive the last pane unmount, in window memory. Never persist draft content in localStorage.
 - Document replacement revisions advance only after external content is accepted. Own saves must not rebuild the document or move its caret. The lazy editor must read the latest props when its chunk resolves.

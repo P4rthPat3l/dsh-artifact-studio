@@ -1,4 +1,4 @@
-import { isManifest, isVersionSource } from '../contract.js';
+import { isDesignInfo, isManifest, isVersionSource } from '../contract.js';
 import type {
   ArtifactPayload,
   ArtifactType,
@@ -7,11 +7,12 @@ import type {
   ExportedFile,
   ListResult,
   Manifest,
+  PreviewResult,
   ResolvedDesignSystem,
   Scope,
   VersionEntry,
 } from '../contract.js';
-import type { ConnectionService } from './harness.js';
+import type { ConnectionService, Translator } from './harness.js';
 
 const ROUTE = '/artifacts-rpc';
 
@@ -88,7 +89,8 @@ function isPayload(value: unknown): value is ArtifactPayload {
     typeof value.content === 'string' &&
     typeof value.version === 'number' &&
     typeof value.designCss === 'string' &&
-    isTokens(value.design)
+    isTokens(value.design) &&
+    (value.designInfo === undefined || isDesignInfo(value.designInfo))
   );
 }
 
@@ -128,6 +130,17 @@ function isExported(value: unknown): value is ExportedFile {
 
 function isPrintable(value: unknown): value is { html: string } {
   return isObject(value) && typeof value.html === 'string';
+}
+
+function isPreview(value: unknown): value is PreviewResult {
+  return (
+    isObject(value) &&
+    typeof value.mediaType === 'string' &&
+    typeof value.data === 'string' &&
+    typeof value.width === 'number' &&
+    typeof value.height === 'number' &&
+    isDesignInfo(value.info)
+  );
 }
 
 function isTokens(value: unknown): value is DesignTokens {
@@ -185,6 +198,8 @@ export const api = {
   exportFile: (where: Where, id: string, format: ExportFormat, version?: number) =>
     call('export', { ...fields(where), id, format, version }, isExported),
   printable: (where: Where, id: string, version?: number) => call('printable', { ...fields(where), id, version }, isPrintable),
+  preview: (where: Where, id: string, version?: number, signal?: AbortSignal) =>
+    call('preview', { ...fields(where), id, ...(version === undefined ? {} : { version }) }, isPreview, signal),
   designSystem: (workspaceId: string | null, signal?: AbortSignal) =>
     call('designSystem', workspaceId === null ? {} : { workspaceId }, isDesign, signal),
   saveDesignSystem: (where: Where, tokens: DesignTokens) =>
@@ -224,9 +239,43 @@ export function errorKey(code: string | undefined): string {
       return 'error.tokens';
     case 'artifact/library-unavailable':
       return 'error.library';
+    case 'artifact/design-invalid':
+      return 'error.designInvalid';
+    case 'artifact/design-icon-unsupported':
+      return 'error.designIcon';
+    case 'artifact/design-render-failed':
+      return 'error.designRender';
+    case 'artifact/design-timeout':
+      return 'error.designTimeout';
+    case 'artifact/design-unavailable':
+      return 'error.designUnavailable';
+    case 'artifact/unsupported-type':
+      return 'error.unsupportedType';
     default:
       return 'error.generic';
   }
+}
+
+/**
+ * The message a server failure carried, when it is a design failure the user
+ * can act on (a compiler message, for example).
+ * @param error the thrown value.
+ * @returns the message, or undefined.
+ */
+export function designFailureMessage(error: unknown): string | undefined {
+  if (!(error instanceof ArtifactCallError) || !error.code.startsWith('artifact/design-')) return undefined;
+  return error.message === '' ? undefined : error.message;
+}
+
+/**
+ * A user-facing failure text: the server's message for a design failure, the
+ * localized code for everything else.
+ * @param t the translator.
+ * @param error the thrown value.
+ * @returns the text.
+ */
+export function describeFailure(t: Translator, error: unknown): string {
+  return designFailureMessage(error) ?? t(errorKey(codeOf(error)));
 }
 
 /**

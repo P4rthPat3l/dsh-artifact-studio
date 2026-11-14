@@ -189,7 +189,7 @@ const SUMMARY_SCHEMA = {
   properties: {
     id: { type: 'string' },
     scope: { type: 'string', enum: ['workspace', 'library'] },
-    type: { type: 'string', enum: ['page', 'doc'] },
+    type: { type: 'string', enum: ['page', 'doc', 'design'] },
     title: { type: 'string' },
     version: { type: 'integer' },
     updatedAt: { type: 'string' },
@@ -235,9 +235,9 @@ export function createTools(host: ToolHost): ToolDefinition[] {
       additionalProperties: false,
       required: ['type', 'title', 'content'],
       properties: {
-        type: { type: 'string', enum: ['page', 'doc'], description: 'page for HTML, doc for Markdown.' },
+        type: { type: 'string', enum: ['page', 'doc', 'design'], description: 'page for HTML, doc for Markdown, design for OpenPencil Design JSX. For a design, load the artifact-design skill first: no imports, no HTML, no <Icon>.' },
         title: { type: 'string', description: 'Short title, 1 to 120 characters.' },
-        content: { type: 'string', description: 'The full HTML document or Markdown text, up to 2 MiB.' },
+        content: { type: 'string', description: 'The full HTML document, Markdown text, or Design JSX source, up to 2 MiB.' },
         scope: SCOPE_PARAM,
       },
     },
@@ -257,7 +257,10 @@ export function createTools(host: ToolHost): ToolDefinition[] {
         content,
         source: { origin: 'agent', action: 'create', ...(exec.agent === undefined ? {} : { sessionId: exec.agent.id }) },
       });
-      return { ...summary(manifest, target), warnings: warningsFor(type, content) };
+      const warnings = type === 'design'
+        ? (await service.read(target, manifest.id)).designInfo?.warnings ?? []
+        : warningsFor(type, content);
+      return { ...summary(manifest, target), warnings };
     },
   };
 
@@ -279,15 +282,28 @@ export function createTools(host: ToolHost): ToolDefinition[] {
         type: 'object',
         additionalProperties: false,
         required: ['artifact', 'readVersion', 'content'],
-        properties: { artifact: SUMMARY_SCHEMA, readVersion: { type: 'integer' }, content: { type: 'string' } },
+        properties: {
+          artifact: SUMMARY_SCHEMA,
+          readVersion: { type: 'integer' },
+          content: { type: 'string' },
+          designInfo: {
+            type: 'object',
+            description: 'The compiled summary of a design: pages, nodes, type counts, fonts, and warnings.',
+          },
+        },
       },
       render: (_args, value) => {
         const fields = record(value);
         const artifact = record(fields.artifact ?? null);
+        const info = record(fields.designInfo ?? null);
+        const summaryLine = info.nodes === undefined
+          ? ''
+          : `\n\nDesign: ${String(info.nodes)} nodes, ${String(info.pages)} page(s), fonts ${Array.isArray(info.fonts) && info.fonts.length > 0 ? info.fonts.map(String).join(', ') : 'none'}.`
+            + (Array.isArray(info.warnings) && info.warnings.length > 0 ? `\nWarnings:\n${info.warnings.map((item) => `- ${String(item)}`).join('\n')}` : '');
         return [
           {
             type: 'text',
-            text: `${line(artifact, 'Artifact')} Showing version ${String(fields.readVersion)}.\n\n${String(fields.content)}`,
+            text: `${line(artifact, 'Artifact')} Showing version ${String(fields.readVersion)}.${summaryLine}\n\n${String(fields.content)}`,
           },
         ];
       },
@@ -297,7 +313,15 @@ export function createTools(host: ToolHost): ToolDefinition[] {
       const id = requiredString(fields, 'id');
       const target = await targetFor(host, exec, id.startsWith('art_lib_') ? 'library' : undefined);
       const result = await service.read(target, id, optionalInteger(fields, 'version'));
-      return { artifact: summary(result.manifest, target), readVersion: result.version, content: result.content };
+      const info = result.designInfo;
+      return {
+        artifact: summary(result.manifest, target),
+        readVersion: result.version,
+        content: result.content,
+        ...(info === undefined
+          ? {}
+          : { designInfo: { pages: info.pages, nodes: info.nodes, types: info.types, fonts: info.fonts, warnings: info.warnings } }),
+      };
     },
   };
 
@@ -307,6 +331,7 @@ export function createTools(host: ToolHost): ToolDefinition[] {
       'Save a new version of an artifact. For a few local changes send edits; send complete content only when you rewrite most of it. Each edit oldText must occur exactly once.',
       'The update is refused when baseVersion is not the current version, for example after the user edited it; read it again and reapply your change. Never discard the user\'s edits.',
       'A layout or styling change follows the artifact-design skill and the same precedence: the user\'s request, then the design system, then your own choices.',
+      'For a design, send the complete Design JSX source as content and read it first if you did not write it; edits are applied and validated too, but a design rewrite is usually smaller as one content value.',
       'Each call writes a version the user sees. Put every fix for one request, including all returned warnings, into one update; never send one update per finding.',
     ].join('\n'),
     parameters: {
@@ -316,7 +341,7 @@ export function createTools(host: ToolHost): ToolDefinition[] {
       properties: {
         id: { type: 'string' },
         baseVersion: { type: 'integer', description: 'The version your change is based on.' },
-        content: { type: 'string', description: 'Complete replacement content. Use this or edits.' },
+        content: { type: 'string', description: 'Complete replacement content. Use this or edits. For a design, send the complete Design JSX source.' },
         edits: {
           type: 'array',
           description: 'Replace-once edits applied in order. Each oldText must occur exactly once.',
@@ -352,7 +377,10 @@ export function createTools(host: ToolHost): ToolDefinition[] {
         title,
         source: { origin: 'agent', action: 'update', ...(exec.agent === undefined ? {} : { sessionId: exec.agent.id }) },
       });
-      return { ...summary(manifest, target), warnings: await writtenWarnings(manifest.type, content, edits === undefined ? undefined : () => service.read(target, id, manifest.version)) };
+      const warnings = manifest.type === 'design'
+        ? (await service.read(target, id, manifest.version)).designInfo?.warnings ?? []
+        : await writtenWarnings(manifest.type, content, edits === undefined ? undefined : () => service.read(target, id, manifest.version));
+      return { ...summary(manifest, target), warnings };
     },
   };
 
@@ -364,7 +392,7 @@ export function createTools(host: ToolHost): ToolDefinition[] {
       additionalProperties: false,
       properties: {
         scope: { type: 'string', enum: ['workspace', 'library'], description: 'Defaults to workspace.' },
-        type: { type: 'string', enum: ['page', 'doc'] },
+        type: { type: 'string', enum: ['page', 'doc', 'design'] },
         query: { type: 'string', description: 'Title substring, case-insensitive.' },
         offset: { type: 'integer' },
       },
@@ -424,12 +452,12 @@ export function createTools(host: ToolHost): ToolDefinition[] {
   const exportTool: ToolDefinition = {
     name: 'artifact_export',
     description:
-      'Write an artifact to a standalone file and return its path. A page exports as html; a doc exports as md, docx, or printable html.',
+      'Write an artifact to a standalone file and return its path. A page exports as html; a doc exports as md, docx, or printable html; a design exports as png, svg, or .fig.',
     parameters: {
       type: 'object',
       additionalProperties: false,
       required: ['id', 'format'],
-      properties: { id: { type: 'string' }, format: { type: 'string', enum: ['html', 'md', 'docx'] },
+      properties: { id: { type: 'string' }, format: { type: 'string', enum: ['html', 'md', 'docx', 'png', 'svg', 'fig'] },
         version: { type: 'integer', minimum: 1, description: 'Saved version to export. Omit for the current version.' } },
     },
     output: {

@@ -22,6 +22,7 @@ import type { MarkedToken, Token, Tokens } from 'marked';
 import { FORMATS_BY_TYPE } from '../../contract.js';
 import type { DesignTokens, ExportFormat, ExportedFile, Manifest } from '../../contract.js';
 import { DOC_CSP, DOC_STYLE, PAGE_CSP, PRINT_CSP, composePage, escapeHtml } from '../../render.js';
+import type { DesignRenderer } from './design-render.js';
 import { ArtifactError } from './errors.js';
 import { assertWithin, withLock } from './fsutil.js';
 import type { ScopeRoot } from './paths.js';
@@ -30,6 +31,9 @@ const MEDIA_TYPES: Readonly<Record<ExportFormat, string>> = {
   html: 'text/html',
   md: 'text/markdown',
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  png: 'image/png',
+  svg: 'image/svg+xml',
+  fig: 'application/octet-stream',
 };
 
 const MARKED_TYPES: ReadonlySet<string> = new Set([
@@ -351,6 +355,7 @@ export async function docToDocx(title: string, markdown: string, design: DesignT
  * @param format the requested format.
  * @param design the resolved design system.
  * @param now the clock value.
+ * @param designs the design renderer, needed for a design's derived formats.
  * @returns the written file and its bytes, base64 encoded for a browser download.
  */
 export async function writeExport(
@@ -360,6 +365,7 @@ export async function writeExport(
   format: ExportFormat,
   design: { tokens: DesignTokens; css: string },
   now: Date,
+  designs?: DesignRenderer,
 ): Promise<ExportedFile> {
   if (!FORMATS_BY_TYPE[manifest.type].includes(format)) {
     throw new ArtifactError('artifact/unsupported-format', `A ${manifest.type} cannot be exported as ${format}.`, {
@@ -367,7 +373,20 @@ export async function writeExport(
     });
   }
   let data: Buffer;
-  if (format === 'docx') data = await docToDocx(manifest.title, content, design.tokens);
+  let mediaType = MEDIA_TYPES[format];
+  if (manifest.type === 'design') {
+    if (designs === undefined) {
+      throw new ArtifactError('artifact/design-unavailable', 'The design renderer is not available.', {});
+    }
+    if (format !== 'png' && format !== 'svg' && format !== 'fig') {
+      throw new ArtifactError('artifact/unsupported-format', `A design cannot be exported as ${format}.`, {
+        supported: FORMATS_BY_TYPE.design,
+      });
+    }
+    const rendered = await designs.exportContent(content, format);
+    data = rendered.bytes;
+    mediaType = rendered.mediaType;
+  } else if (format === 'docx') data = await docToDocx(manifest.title, content, design.tokens);
   else if (format === 'md') data = Buffer.from(content, 'utf8');
   else if (manifest.type === 'page') data = Buffer.from(composePage(content, design.css, PAGE_CSP, manifest.title), 'utf8');
   else data = Buffer.from(docToHtml(manifest.title, content, design.css), 'utf8');
@@ -380,5 +399,5 @@ export async function writeExport(
     await assertWithin(root.root, file);
     await fs.writeFile(file, data, { flag: 'wx' });
   });
-  return { path: file, bytes: data.length, fileName, mediaType: MEDIA_TYPES[format], data: data.toString('base64') };
+  return { path: file, bytes: data.length, fileName, mediaType, data: data.toString('base64') };
 }

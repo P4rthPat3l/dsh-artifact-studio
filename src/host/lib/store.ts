@@ -393,6 +393,16 @@ export class ArtifactStore {
   }
 
   /**
+   * Read only the manifest, without its content.
+   * @param root the scope root.
+   * @param id the artifact id.
+   * @returns the manifest.
+   */
+  async manifest(root: ScopeRoot, id: string): Promise<Manifest> {
+    return this.readManifest(await artifactDir(root, id));
+  }
+
+  /**
    * Read the manifest and content of the current or an earlier version.
    * @param root the scope root.
    * @param id the artifact id.

@@ -3,14 +3,14 @@ import { IconChevronRightOutlineRegular, StateDot, TextShimmer } from '@deepseek
 import { formatArtifactAddress, scopeOfId } from '../contract.js';
 import type { ArtifactAddress } from '../contract.js';
 import type { ToolViewProps } from './harness.js';
-import { IconDoc, IconPage } from './icons.jsx';
+import { IconDesign, IconDoc, IconPage } from './icons.jsx';
 import { runtime } from './runtime.js';
 import { announceListChange, announceVersion, rememberTitle } from './store.js';
 
 /** The card payload a tool result stores in its meta. */
 export interface CardMeta {
   id: string;
-  type: 'page' | 'doc';
+  type: 'page' | 'doc' | 'design';
   title: string;
   version: number;
   address: ArtifactAddress;
@@ -28,7 +28,7 @@ export function readCardMeta(meta: unknown): CardMeta | null {
   if (fields.kind !== 'artifact' || typeof id !== 'string' || typeof title !== 'string' || typeof version !== 'number') {
     return null;
   }
-  if (type !== 'page' && type !== 'doc') return null;
+  if (type !== 'page' && type !== 'doc' && type !== 'design') return null;
   const scope = scopeOfId(id);
   if (scope === undefined) return null;
   if (scope === 'workspace') {
@@ -139,7 +139,7 @@ export function ArtifactCard({ t, phase, toolName, block }: ToolViewProps) {
       aria-label={t('card.openNamed', { title: meta.title })}
       onClick={() => runtime.sidebarRight?.openResource(address)}
     >
-      <span className="art-card-icon">{meta.type === 'page' ? <IconPage /> : <IconDoc />}</span>
+      <span className="art-card-icon">{meta.type === 'page' ? <IconPage /> : meta.type === 'doc' ? <IconDoc /> : <IconDesign />}</span>
       <span className="art-card-text">
         <span className="art-card-title" title={meta.title}>{meta.title}</span>
         <span className="art-card-sub">

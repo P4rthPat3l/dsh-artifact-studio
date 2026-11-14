@@ -43,6 +43,14 @@ export const IconDoc = ({ size }: { size?: number }) => (
   </Glyph>
 );
 
+export const IconDesign = ({ size }: { size?: number }) => (
+  <Glyph size={size}>
+    <rect x="3.5" y="4.5" width="17" height="15" rx="2" />
+    <path d="M3.5 14.5l4.5-4.5 4 4 3-3 5 5" />
+    <circle cx="8.5" cy="8.5" r="1.2" />
+  </Glyph>
+);
+
 /** A palette with paint wells: the design system, not a settings control. */
 export const IconPalette = ({ size }: { size?: number }) => (
   <Glyph size={size}>

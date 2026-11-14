@@ -227,6 +227,17 @@ const CSS = `
 .art-drawer-head { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 8px 8px 12px; border-bottom: .5px solid var(--dsw-alias-border-l2); }
 .art-drawer-head h2 { margin: 0; font-size: 13px; font-weight: 600; line-height: 1.4; }
 .art-drawer-body { flex: 1; min-height: 0; overflow: auto; }
+
+/* Design previews are rendered on the host; the plugin only frames the image. */
+.art-design-preview { flex: 1; min-height: 0; overflow: auto; padding: 16px; display: flex; flex-direction: column; align-items: center; gap: 12px; background: var(--dsw-alias-bg-layer-1); }
+.art-design-canvas { display: flex; justify-content: center; width: 100%; }
+.art-design-image { display: block; max-width: 100%; height: auto; border-radius: 10px; background: #ffffff; box-shadow: 0 1px 2px rgba(0, 0, 0, .14), 0 10px 30px rgba(0, 0, 0, .10); }
+.art-design-state { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 24px; color: var(--dsw-alias-label-secondary); font-size: 12px; text-align: center; }
+.art-design-error { max-width: 52ch; color: var(--dsw-alias-label-primary); line-height: 1.5; }
+.art-design-warnings { width: 100%; max-width: 720px; padding: 10px 12px; border: .5px solid var(--dsw-alias-border-l2); border-radius: 8px; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-secondary); font-size: 12px; }
+.art-design-warnings-title { display: block; margin-bottom: 4px; font-weight: 600; color: var(--dsw-alias-label-primary); }
+.art-design-warnings ul { margin: 0; padding-left: 18px; }
+
 /* The iframe canvas is the artifact's, not plugin chrome: HTML paints white by default, so a page that sets no background must not inherit the host theme. */
 .art-frame { flex: 1; width: 100%; min-height: 0; border: none; background: var(--dsw-static-neutral-00); }
 .art-source {
@@ -500,6 +511,16 @@ const CSS = `
 .art-starter-name { font-size: 13px; font-weight: 600; color: var(--dsw-alias-label-primary); }
 .art-starter-hint { font-size: 12px; line-height: 1.5; color: var(--dsw-alias-label-secondary); }
 .art-tile-pin svg { width: 14px; height: 14px; }
+.art-canvas { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.art-canvas-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 8px; border-bottom: .5px solid var(--dsw-alias-border-l2); background: var(--dsw-alias-bg-base); }
+.art-canvas-stage { position: relative; flex: 1; min-height: 0; overflow: hidden; background: var(--dsw-alias-bg-layer-1); }
+.art-canvas-mount { position: absolute; inset: 0; }
+.art-canvas-mount[hidden] { display: none; }
+.art-canvas-mount:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: -2px; }
+.art-canvas-fallback { position: absolute; inset: 0; display: flex; overflow: auto; }
+.art-canvas-loading { position: absolute; left: 8px; bottom: 8px; padding: 4px 8px; border-radius: 6px; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-secondary); font-size: 12px; }
+.art-canvas-error { position: absolute; left: 8px; right: 8px; bottom: 8px; display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: .5px solid var(--dsw-alias-border-l2); border-radius: 8px; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); font-size: 12px; }
+.art-canvas-detail { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dsw-alias-label-secondary); }
 `;
 
 /** Install the plugin stylesheet once. */

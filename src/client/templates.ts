@@ -34,12 +34,32 @@ const DOC = `# {{title}}
 Start writing, or select text and choose Edit with agent.
 `;
 
+/** Starter Design JSX; the title is inserted as text, never as code. */
+const DESIGN = `<Frame w={720} p={40} bg="#ffffff" flex="col" gap={12}>
+  <Text size={13} weight={600} color="#2856c7">DESIGN</Text>
+  <Text size={40} weight={700} color="#16181d">{{title}}</Text>
+  <Text size={16} color="#5b6170">Edit the source, or ask the agent for a change.</Text>
+  <Frame w={148} h={44} bg="#2856c7" rounded={10} flex="col" items="center" justify="center">
+    <Text size={15} weight={600} color="#ffffff">Get started</Text>
+  </Frame>
+</Frame>
+`;
+
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (char) => `&#${char.charCodeAt(0)};`);
 }
 
 function escapeMarkdown(value: string): string {
   return value.replace(/[\\`*_\[\]#]/g, (char) => `\\${char}`);
+}
+
+/**
+ * Keep a title from opening a JSX expression or an element in the starter.
+ * @param value the title.
+ * @returns the text with syntax characters replaced.
+ */
+function escapeJsx(value: string): string {
+  return value.replace(/[{}<>]/g, ' ');
 }
 
 /**
@@ -50,5 +70,6 @@ function escapeMarkdown(value: string): string {
  */
 export function starterContent(type: ArtifactType, title: string): string {
   if (type === 'doc') return DOC.replace('{{title}}', escapeMarkdown(title));
+  if (type === 'design') return DESIGN.replace('{{title}}', escapeJsx(title));
   return PAGE.replace('{{title}}', escapeHtml(title));
 }

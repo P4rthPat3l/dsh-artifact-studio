@@ -32,7 +32,7 @@ export async function withLock<T>(key: string, task: () => Promise<T>): Promise<
  * @param file the destination.
  * @param data the content.
  */
-export async function writeAtomic(file: string, data: string): Promise<void> {
+export async function writeAtomic(file: string, data: string | Uint8Array): Promise<void> {
   const temp = path.join(
     path.dirname(file),
     `.${path.basename(file)}.${randomBytes(8).toString('hex')}.tmp`,
@@ -40,7 +40,8 @@ export async function writeAtomic(file: string, data: string): Promise<void> {
   try {
     const handle = await fs.open(temp, 'wx');
     try {
-      await handle.writeFile(data, 'utf8');
+      if (typeof data === 'string') await handle.writeFile(data, 'utf8');
+      else await handle.writeFile(data);
       await handle.sync();
     } finally {
       await handle.close();

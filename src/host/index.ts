@@ -1,3 +1,4 @@
+import { registerCanvasAssetsRoute } from './lib/assets.js';
 import { registerArtifactsRoute } from './lib/http.js';
 import { createHandler } from './lib/rpc.js';
 import { createService } from './lib/setup.js';
@@ -23,4 +24,5 @@ export interface RouteHostContext {
 export function apply(ctx: RouteHostContext): void {
   const handler = createHandler(createService(ctx.workspaceRegistry));
   ctx.effect(() => registerArtifactsRoute(ctx, handler), 'dsh-artifact-studio: authenticated artifact channel');
+  ctx.effect(() => registerCanvasAssetsRoute(ctx), 'dsh-artifact-studio: engine assets');
 }

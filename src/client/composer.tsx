@@ -6,7 +6,7 @@ import type { Manifest } from '../contract.js';
 import { api } from './api.js';
 import { useWorkspaceBinding } from './binding.js';
 import type { SessionSlotProps } from './harness.js';
-import { IconArtifacts, IconDoc, IconPage } from './icons.jsx';
+import { IconArtifacts, IconDesign, IconDoc, IconPage } from './icons.jsx';
 import { PANEL_ID } from './ids.js';
 import { runtime } from './runtime.js';
 import { rememberTitle, useListChanges } from './store.js';
@@ -58,7 +58,7 @@ export function ComposerButton(props: SessionSlotProps) {
       ? [{ type: 'label', id: 'loading', text: t('empty.loading') }]
       : items.length === 0
         ? [{ type: 'label', id: 'empty', text: t('composer.empty') }]
-        : items.map((item) => ({ id: 'open:' + item.id, label: item.title, icon: item.type === 'page' ? <IconPage size={14} /> : <IconDoc size={14} /> }));
+        : items.map((item) => ({ id: 'open:' + item.id, label: item.title, icon: item.type === 'page' ? <IconPage size={14} /> : item.type === 'doc' ? <IconDoc size={14} /> : <IconDesign size={14} /> }));
   const entries: MenuEntry[] = [
     { type: 'label', id: 'recent', text: t('composer.recent') },
     ...recent,

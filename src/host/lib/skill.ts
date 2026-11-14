@@ -14,7 +14,7 @@ Use this before you call \`artifact_create\`, and before an \`artifact_update\` 
 
 ## When to use an artifact
 
-Use \`artifact_create\` when the user asks for an artifact, an artifact page, or an artifact doc. Pick \`page\` for an artifact page and \`doc\` for an artifact doc. Never write a file in the project instead. Write a project file only when the user asks for a file in the repo.
+Use \`artifact_create\` when the user asks for an artifact, an artifact page, an artifact doc, or an artifact design. Pick \`page\` for an artifact page, \`doc\` for an artifact doc, and \`design\` for an OpenPencil design. Never write a file in the project instead. Write a project file only when the user asks for a file in the repo.
 
 ## Precedence
 
@@ -26,6 +26,22 @@ Use \`artifact_create\` when the user asks for an artifact, an artifact page, or
 
 - \`doc\` for prose: reports, briefs, plans, specs, notes. It is Markdown, edited in a rich-text editor, and exported to Word, Markdown, and HTML. Use headings, short paragraphs, lists, tables, task lists, quotes, and fenced code. Do not paste HTML into a doc.
 - \`page\` for anything visual or interactive: dashboards, one-pagers, explainers, calculators, diagrams, prototypes.
+- \`design\` for a layout the user will open on a canvas: UI mockups, layout explorations, and screens that export as PNG, SVG, or a \`.fig\` document.
+
+## Designs (OpenPencil Design JSX)
+
+A design is OpenPencil Design JSX, not React DOM and not HTML. There are no imports, no HTML tags, no CSS classes, and no \`<Icon>\`; an icon is rejected with a clear error. Use shapes and text instead.
+
+- Elements: \`Frame\`, \`Text\`, \`Rectangle\`, \`Ellipse\`, \`Line\`, \`Star\`, \`Polygon\`, \`Vector\`, \`Group\`, \`Section\`.
+- Layout props: \`w\`, \`h\`, \`p\`, \`px\`, \`py\`, \`gap\`, \`flex\` (\`row\` or \`col\`), \`items\`, \`justify\`, \`bg\`, \`rounded\`, \`stroke\`, \`strokeWidth\`, \`opacity\`.
+- Use \`flex\`, not \`dir\`. \`dir\` is accepted and does nothing, so every child sits at the same origin. A frame with \`flex\` sizes itself to its children unless you give it \`w\` or \`h\`.
+- Text props: \`size\`, \`weight\`, \`color\`, \`font\`, \`lineHeight\`, \`letterSpacing\`, \`textAlign\`, \`maxLines\`.
+- Put a background on the outer \`Frame\`; the preview crops transparent space around the content.
+- Example: \`<Frame w={720} p={40} bg="#ffffff" flex="col" gap={12}><Text size={40} weight={700} color="#16181d">Title</Text><Text size={16} color="#5b6170">One line of context.</Text></Frame>\`
+- Text uses Inter, which ships with the engine. Any other family substitutes a default face and returns a warning; keep Inter.
+- A design has no network and no external images. Use solid and gradient fills, shapes, and text.
+- The stored artifact is the JSX source. Send the complete source as \`content\` when you update a design. The host compiles and validates before saving, so a compile error refuses the write and returns the compiler message.
+- Export is PNG, SVG, or \`.fig\`. The user can open the \`.fig\` in OpenPencil for a full canvas editor.
 
 ## The page sandbox
 
@@ -92,7 +108,7 @@ Tell the user in one or two sentences what you made or changed. Do not repeat th
 export const ARTIFACT_DESIGN_SKILL: BundledSkill = {
   name: 'artifact-design',
   description:
-    'Design rules for artifact pages and documents: when to use an artifact, precedence, the page sandbox, design tokens, dark mode, layout, typography, and the update rule.',
+    'Design rules for artifact pages, documents, and OpenPencil designs: when to use an artifact, precedence, the page sandbox, Design JSX, design tokens, dark mode, layout, typography, and the update rule.',
   whenToUse: 'Load before artifact_create, when the user asks for an artifact, and before an artifact_update that changes layout or styling.',
   source: 'bundled',
   content: CONTENT,
