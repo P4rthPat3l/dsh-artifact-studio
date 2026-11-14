@@ -168,7 +168,7 @@ function fields(where: Where): Record<string, unknown> {
 }
 
 export const api = {
-  list: (where: Where, query: { query?: string; type?: ArtifactType; offset?: number }, signal?: AbortSignal) =>
+  list: (where: Where, query: { query?: string; type?: ArtifactType; offset?: number; limit?: number }, signal?: AbortSignal) =>
     call('list', { ...fields(where), ...query }, isList, signal),
   get: (where: Where, id: string, version?: number, signal?: AbortSignal) =>
     call('get', { ...fields(where), id, ...(version === undefined ? {} : { version }) }, isPayload, signal),

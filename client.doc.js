@@ -1,5 +1,5 @@
 window.__ModuleLoader__.load({
-  id: "dsh-artifacts",
+  id: "dsh-artifact-studio",
   chunk: "client.doc.js",
   factory(require) {
     var module = { exports: {} };

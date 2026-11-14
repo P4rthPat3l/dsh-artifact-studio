@@ -25,7 +25,7 @@ let registry;
 const PAGE = '<!doctype html><html><head><title>t</title></head><body><h1>Hello</h1></body></html>';
 
 before(async () => {
-  base = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-artifacts-'));
+  base = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-artifact-studio-'));
   wsA = path.join(base, 'project-a');
   wsB = path.join(base, 'project-b');
   home = path.join(base, 'home');
@@ -661,3 +661,11 @@ test('AC-073: dark tokens and the display font resolve and old files still load'
   assert.match(optedIn, /<html data-artifact-theme="dark">/);
   assert.match(composePage('<p>x</p>', css, PAGE_CSP, 't', '', 'dark'), /<html><head>/);
 });
+
+test('AC-084: artifact_create description tells the model to use an artifact when the user asks for one', () => {
+  const { byName } = toolsFor('ses-a', wsA);
+  const description = byName.artifact_create.description;
+  assert.match(description, /If the user asks for an artifact, an artifact page, or an artifact doc/);
+  assert.match(description, /create it here with the matching type and never write a project file instead/);
+});
+

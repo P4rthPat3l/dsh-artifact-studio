@@ -1,6 +1,6 @@
 import { DOC_STYLE } from '../render.js';
 
-const STYLE_ID = 'dsh-artifacts/styles';
+const STYLE_ID = 'dsh-artifact-studio/styles';
 
 /** The export's document typography, scoped to the editor's page surface. */
 const DOC_SURFACE = DOC_STYLE.split('\n').map((rule) => {
@@ -507,7 +507,7 @@ export function installStyles(): void {
   if (typeof document === 'undefined') return;
   if (document.querySelector(`style[data-plugin-css="${STYLE_ID}"]`) !== null) return;
   const tag = document.createElement('style');
-  tag.dataset.plugin = 'dsh-artifacts';
+  tag.dataset.plugin = 'dsh-artifact-studio';
   tag.dataset.pluginCss = STYLE_ID;
   tag.textContent = CSS + DOC_SURFACE;
   document.head.appendChild(tag);

@@ -24,7 +24,13 @@ The agent creates pages and documents as versioned files, and you open them besi
 
 ## Install
 
-In the Plugin manager, install the local bundle at `/home/parth/Production/dsh-artifacts`, then reload the window.
+The npm package name is `dsh-artifact-studio`. Add it to the current DSH profile with the plugin manager, then reload the window.
+
+```bash
+dsh plugin --profile web add dsh-artifact-studio
+```
+
+For a local checkout, install the bundle at `/home/parth/Production/dsh-artifacts` instead.
 
 ## Develop
 

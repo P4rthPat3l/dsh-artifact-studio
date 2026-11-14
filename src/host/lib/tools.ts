@@ -225,6 +225,7 @@ export function createTools(host: ToolHost): ToolDefinition[] {
     name: 'artifact_create',
     description: [
       'Create a versioned artifact the user opens, edits, and exports in a panel beside the chat. Use it for a substantial deliverable the user will look at or reuse: a dashboard, report, one-pager, landing page, interactive tool, or long document. Do not use it for short answers or for project source files.',
+      'If the user asks for an artifact, an artifact page, or an artifact doc, create it here with the matching type and never write a project file instead.',
       '',
       PAGE_GUIDE,
     ].join('\n'),

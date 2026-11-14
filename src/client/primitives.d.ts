@@ -114,7 +114,6 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
   export const IconTrashOutlineRegular: Icon;
   export const IconEditOutlineRegular: Icon;
   export const IconSparkleRegular: Icon;
-  export const IconSlidersTwoOutlineRegular: Icon;
   export const IconWarningOutlineRegular: Icon;
   export const IconRightUpOutlineRegular: Icon;
   export const IconSaveOutlineRegular: Icon;

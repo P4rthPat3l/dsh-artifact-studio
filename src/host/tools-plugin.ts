@@ -3,7 +3,7 @@ import { createTools } from './lib/tools.js';
 import type { ToolDefinition, WorkingDirectory } from './lib/tools.js';
 import type { WorkspaceRegistry } from './lib/types.js';
 
-export const name = 'dsh-artifacts-tools';
+export const name = 'dsh-artifact-studio-tools';
 
 export const inject = ['tools', 'workspaceRegistry', 'workingDirectory'];
 

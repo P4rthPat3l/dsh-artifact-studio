@@ -93,7 +93,6 @@ module.exports = {
   IconTrashOutlineRegular: icon('IconTrashOutlineRegular'),
   IconEditOutlineRegular: icon('IconEditOutlineRegular'),
   IconSparkleRegular: icon('IconSparkleRegular'),
-  IconSlidersTwoOutlineRegular: icon('IconSlidersTwoOutlineRegular'),
   IconWarningOutlineRegular: icon('IconWarningOutlineRegular'),
   IconRightUpOutlineRegular: icon('IconRightUpOutlineRegular'),
   IconSaveOutlineRegular: icon('IconSaveOutlineRegular'),

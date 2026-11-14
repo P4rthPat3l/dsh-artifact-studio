@@ -1,7 +1,7 @@
 import { ARTIFACT_DESIGN_SKILL } from './lib/skill.js';
 import type { BundledSkill } from './lib/skill.js';
 
-export const name = 'dsh-artifacts-skill';
+export const name = 'dsh-artifact-studio-skill';
 
 export const inject = ['skills'];
 

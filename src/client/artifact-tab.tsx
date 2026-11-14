@@ -419,7 +419,7 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
   };
 
   if (payload === null) return (
-    <section className="art-root" data-dsh-artifacts="" ref={rootRef}><div className="art-center" role={failure === undefined ? 'status' : 'alert'}>
+    <section className="art-root" data-dsh-artifact-studio="" ref={rootRef}><div className="art-center" role={failure === undefined ? 'status' : 'alert'}>
       <p className="art-center-hint">{t(failure === undefined ? 'empty.loading' : errorKey(failure))}</p>
       <div className="art-center-actions">
         {failure === undefined ? null : <Button size="sm" variant="outline" onClick={() => void model.load()}>{t('action.retry')}</Button>}
@@ -488,7 +488,7 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
   const editWithAgent = <Button size="sm" variant="primary" className="art-ask" icon={<IconSparkleRegular size={14} />} disabled={busy || conflict || historyLoading} onClick={() => void askAgent(selection)}>{t('agent.ask')}</Button>;
 
   return (
-    <section className="art-root" data-dsh-artifacts="" data-artifact-id={id} aria-busy={busy} ref={rootRef}>
+    <section className="art-root" data-dsh-artifact-studio="" data-artifact-id={id} aria-busy={busy} ref={rootRef}>
       <header className="art-header art-editor-header">
         <div className="art-heading">
           {!back || onBack === undefined ? null : <IconButton label={t('action.back')} icon={<IconChevronLeftOutlineRegular size={16} />} onClick={() => guarded(onBack)} />}

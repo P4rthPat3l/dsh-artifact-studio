@@ -12,6 +12,10 @@ const CONTENT = String.raw`# Artifact design
 
 Use this before you call \`artifact_create\`, and before an \`artifact_update\` that changes layout or styling. An artifact is a deliverable the user will look at and keep, so it should read as finished work, not a demo.
 
+## When to use an artifact
+
+Use \`artifact_create\` when the user asks for an artifact, an artifact page, or an artifact doc. Pick \`page\` for an artifact page and \`doc\` for an artifact doc. Never write a file in the project instead. Write a project file only when the user asks for a file in the repo.
+
 ## Precedence
 
 1. The user's request wins. If they name a palette, font, layout, or tone, follow it.
@@ -74,12 +78,12 @@ Dark mode is opt in. Add \`<meta name="color-scheme" content="light dark">\` and
 Tell the user in one or two sentences what you made or changed. Do not repeat the artifact's content in the chat, and do not describe the card.
 `;
 
-/** The artifact design skill, registered by the \`dsh-artifacts/skill\` host plugin. */
+/** The artifact design skill, registered by the \`dsh-artifact-studio/skill\` host plugin. */
 export const ARTIFACT_DESIGN_SKILL: BundledSkill = {
   name: 'artifact-design',
   description:
-    'Design rules for artifact pages and documents: precedence, the page sandbox, design tokens, dark mode, layout, typography, and the update rule.',
-  whenToUse: 'Load before artifact_create, and before an artifact_update that changes layout or styling.',
+    'Design rules for artifact pages and documents: when to use an artifact, precedence, the page sandbox, design tokens, dark mode, layout, typography, and the update rule.',
+  whenToUse: 'Load before artifact_create, when the user asks for an artifact, and before an artifact_update that changes layout or styling.',
   source: 'bundled',
   content: CONTENT,
 };

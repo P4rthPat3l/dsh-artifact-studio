@@ -34,7 +34,7 @@ export class SurfaceBoundary extends React.Component<SurfaceBoundaryProps, Surfa
   override render(): ReactNode {
     if (!this.state.failed) return this.props.children;
     return (
-      <section className="art-root" data-dsh-artifacts="">
+      <section className="art-root" data-dsh-artifact-studio="">
         <div className="art-center" role="alert">
           <p className="art-center-title">{this.props.title}</p>
           <p className="art-center-hint">{this.props.hint}</p>

@@ -42,3 +42,14 @@ export const IconDoc = ({ size }: { size?: number }) => (
     <path d="M13.5 3.5v4h4M9 12h6M9 15.5h6" />
   </Glyph>
 );
+
+/** A palette with paint wells: the design system, not a settings control. */
+export const IconPalette = ({ size }: { size?: number }) => (
+  <Glyph size={size}>
+    <path d="M20.5 12a8.5 8.5 0 1 1-8.5-8.5c4.7 0 8.5 3.4 8.5 7.6 0 2.1-1.7 3.8-3.8 3.8h-1.4c-1 0-1.9.8-1.9 1.8 0 .8.5 1.3.5 2.1 0 1-.7 1.7-1.9 1.7Z" />
+    <circle cx="7.6" cy="10" r="1.1" fill="currentColor" stroke="none" />
+    <circle cx="10" cy="6.8" r="1.1" fill="currentColor" stroke="none" />
+    <circle cx="14" cy="7" r="1.1" fill="currentColor" stroke="none" />
+    <circle cx="17" cy="10.2" r="1.1" fill="currentColor" stroke="none" />
+  </Glyph>
+);

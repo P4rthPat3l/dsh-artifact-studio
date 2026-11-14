@@ -311,7 +311,7 @@ export async function docToDocx(title: string, markdown: string, design: DesignT
     : undefined;
   const document = new Document({
     title,
-    creator: 'dsh-artifacts',
+    creator: 'dsh-artifact-studio',
     styles: {
       default: { document: { run: { font: firstFamily(design.typography.fontFamily), size: 22 } } },
       paragraphStyles: [1, 2, 3].map((level) => ({

@@ -34,6 +34,7 @@ function isHex(value: string): boolean {
 export interface DesignEditorProps {
   t: Translator;
   workspaceId: string | null;
+  workspaceTitle?: string;
 }
 
 /**
@@ -42,7 +43,7 @@ export interface DesignEditorProps {
  * @param props the translator and workspace.
  * @returns the editor.
  */
-export function DesignEditor({ t, workspaceId }: DesignEditorProps) {
+export function DesignEditor({ t, workspaceId, workspaceTitle }: DesignEditorProps) {
   const [resolved, setResolved] = useState<ResolvedDesignSystem | null>(null);
   const [tokens, setTokens] = useState<DesignTokens | null>(null);
   const [failed, setFailed] = useState(false);
@@ -197,7 +198,7 @@ export function DesignEditor({ t, workspaceId }: DesignEditorProps) {
       <div className="art-design-actions">
         {workspaceId === null ? null : (
           <Button size="sm" variant="primary" disabled={busy} onClick={() => void saveTo('workspace')}>
-            {t('design.saveWorkspace')}
+            {workspaceTitle === undefined ? t('design.saveWorkspace') : t('design.saveWorkspaceNamed', { name: workspaceTitle })}
           </Button>
         )}
         <Button size="sm" variant={workspaceId === null ? 'primary' : 'outline'} disabled={busy} onClick={() => void saveTo('library')}>

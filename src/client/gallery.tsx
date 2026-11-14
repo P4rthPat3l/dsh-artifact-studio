@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
 import {
   Button,
   IconChevronLeftOutlineRegular,
@@ -8,7 +7,6 @@ import {
   IconPinOutlineRegular,
   IconPlusOutlineRegular,
   IconRefreshOutlineRegular,
-  IconSlidersTwoOutlineRegular,
   Menu,
   SegmentedControl,
   Tooltip,
@@ -20,7 +18,7 @@ import type { Where } from './api.js';
 import { DesignEditor } from './design-editor.jsx';
 import { pageDocument } from './frames.js';
 import type { Translator } from './harness.js';
-import { IconDoc, IconPage } from './icons.jsx';
+import { IconDoc, IconPage, IconPalette } from './icons.jsx';
 import { relativeTime } from './locale.js';
 import { useHarnessDark } from './theme.js';
 import { togglePin, usePins } from './preferences.js';
@@ -28,34 +26,71 @@ import { announceListChange, notify, rememberTitle, useListChanges } from './sto
 import { STARTERS } from './composer.jsx';
 import { starterContent } from './templates.js';
 
-type SectionState = { status: 'loading' } | { status: 'ready'; page: ListResult } | { status: 'failed'; code?: string };
+/** Where the full page is looking: every project, one project, or the library. */
+export type GalleryScope =
+  | { kind: 'all' }
+  | { kind: 'library' }
+  | { kind: 'workspace'; workspaceId: string };
 
-type Filter = 'all' | Scope;
+/** A registered project, as the scope control and the global list label it. */
+export interface GalleryProject {
+  workspaceId: string;
+  title: string;
+}
 
 /** One artifact with the address and request target it needs from any gallery card. */
 interface ArtifactView {
   manifest: Manifest;
   address: ArtifactAddress;
   where: Where;
+  /** The owning project's title, for a card in the global list. */
+  project: string | null;
 }
 
-const EMPTY_LIST: ListResult = { items: [], total: 0, hasMore: false, truncated: false };
+/**
+ * Encode a scope for the select control and local storage.
+ * @param scope the scope.
+ * @returns all, library, or ws:<id>.
+ */
+export function formatScope(scope: GalleryScope): string {
+  return scope.kind === 'workspace' ? 'ws:' + scope.workspaceId : scope.kind;
+}
+
+/**
+ * Read a scope from the select value or local storage.
+ * @param value the encoded scope.
+ * @returns the scope, or undefined when the value is not one.
+ */
+export function parseScopeValue(value: string | null | undefined): GalleryScope | undefined {
+  if (value === 'all') return { kind: 'all' };
+  if (value === 'library') return { kind: 'library' };
+  if (value === null || value === undefined || !value.startsWith('ws:')) return undefined;
+  const workspaceId = value.slice(3);
+  return workspaceId === '' ? undefined : { kind: 'workspace', workspaceId };
+}
 
 /**
  * Build the view of one manifest, or nothing when a workspace is unknown.
  * @param manifest the listed manifest.
- * @param workspaceId the selected workspace.
+ * @param contextWorkspaceId the project that supplies design tokens to library renders.
+ * @param project the owning project, or null for a library artifact.
  * @returns the view.
  */
-function viewOf(manifest: Manifest, workspaceId: string | null): ArtifactView | null {
+function viewOf(manifest: Manifest, contextWorkspaceId: string | null, project: GalleryProject | null): ArtifactView | null {
   if (manifest.scope === 'library') {
-    return { manifest, address: { scope: 'library', id: manifest.id }, where: { scope: 'library', workspaceId } };
+    return {
+      manifest,
+      address: { scope: 'library', id: manifest.id },
+      where: { scope: 'library', workspaceId: contextWorkspaceId },
+      project: null,
+    };
   }
-  if (workspaceId === null) return null;
+  if (project === null) return null;
   return {
     manifest,
-    address: { scope: 'workspace', workspaceId, id: manifest.id },
-    where: { scope: 'workspace', workspaceId },
+    address: { scope: 'workspace', workspaceId: project.workspaceId, id: manifest.id },
+    where: { scope: 'workspace', workspaceId: project.workspaceId },
+    project: project.title,
   };
 }
 
@@ -76,6 +111,17 @@ interface CoverData {
   designCss: string;
 }
 
+/**
+ * The cache key of a cover. A library render uses the context project's
+ * tokens, so the same library artifact can look different per project.
+ * @param view the artifact.
+ * @returns the cache key.
+ */
+function coverKey(view: ArtifactView): string {
+  const address = formatArtifactAddress(view.address);
+  return view.manifest.scope === 'library' ? address + '@' + (view.where.workspaceId ?? '') : address;
+}
+
 const coverCache = new Map<string, CoverData>();
 const coverPending = new Map<string, Promise<CoverData>>();
 
@@ -85,10 +131,10 @@ const coverPending = new Map<string, Promise<CoverData>>();
  * @returns the content and tokens.
  */
 function loadCover(view: ArtifactView): Promise<CoverData> {
-  const key = formatArtifactAddress(view.address);
+  const key = coverKey(view);
   const cached = coverCache.get(key);
   if (cached !== undefined && cached.version >= view.manifest.version) return Promise.resolve(cached);
-  const pendingKey = `${key}:${view.manifest.version}`;
+  const pendingKey = key + ':' + view.manifest.version;
   const pending = coverPending.get(pendingKey);
   if (pending !== undefined) return pending;
   const request = api
@@ -140,14 +186,14 @@ function coverHtml(html: string): string {
  */
 function excerpt(markdown: string): string {
   const plain = markdown
-    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/\x60{3}[\s\S]*?\x60{3}/g, ' ')
     .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
     .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
     .replace(/<[^>]+>/g, ' ')
-    .replace(/[#>*_`~]/g, ' ')
+    .replace(/[#>*_\x60~]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
-  return plain.length > 220 ? `${plain.slice(0, 220).trimEnd()}...` : plain;
+  return plain.length > 220 ? plain.slice(0, 220).trimEnd() + '...' : plain;
 }
 
 /**
@@ -164,7 +210,7 @@ function ArtifactCover({ t, view }: { t: Translator; view: ArtifactView }) {
   const [url, setUrl] = useState<string | null>(null);
   const ref = useRef<HTMLSpanElement | null>(null);
   const dark = useHarnessDark();
-  const key = formatArtifactAddress(view.address);
+  const key = coverKey(view);
   const title = view.manifest.title;
   const type = view.manifest.type;
   const version = view.manifest.version;
@@ -235,14 +281,18 @@ function ArtifactCover({ t, view }: { t: Translator; view: ArtifactView }) {
  * @param props the artifact, pin state, and open action.
  * @returns the card.
  */
-function ArtifactTile({ t, view, pinned, onOpen }: {
+function ArtifactTile({ t, view, pinned, onOpen, showProject }: {
   t: Translator;
   view: ArtifactView;
   pinned: boolean;
   onOpen: (view: ArtifactView) => void;
+  showProject: boolean;
 }) {
   const address = formatArtifactAddress(view.address);
   const pinLabel = t(pinned ? 'gallery.unpin' : 'gallery.pin', { title: view.manifest.title });
+  const badge = view.manifest.scope === 'library'
+    ? ' · ' + t('scope.library')
+    : showProject && view.project !== null ? ' · ' + view.project : '';
   return (
     <li className="art-tile">
       <button type="button" className="art-tile-open" onClick={() => onOpen(view)}>
@@ -251,7 +301,7 @@ function ArtifactTile({ t, view, pinned, onOpen }: {
           <span className="art-tile-title" title={view.manifest.title}>{view.manifest.title}</span>
           <span className="art-tile-sub">
             {t(`type.${view.manifest.type}`)} · {t('gallery.updated', { time: relativeTime(t, view.manifest.updatedAt) })} · {t('gallery.version', { version: view.manifest.version })}
-            {view.manifest.scope === 'library' ? ' · ' + t('scope.library') : ''}
+            {badge}
           </span>
         </span>
       </button>
@@ -269,12 +319,13 @@ function ArtifactTile({ t, view, pinned, onOpen }: {
  * @param props the heading and artifacts.
  * @returns the section.
  */
-function TileSection({ t, heading, views, pinned, onOpen }: {
+function TileSection({ t, heading, views, pinned, onOpen, showProject }: {
   t: Translator;
   heading: string;
   views: ArtifactView[];
   pinned: ReadonlySet<string>;
   onOpen: (view: ArtifactView) => void;
+  showProject: boolean;
 }) {
   const headingId = useId();
   if (views.length === 0) return null;
@@ -286,74 +337,167 @@ function TileSection({ t, heading, views, pinned, onOpen }: {
       </div>
       <ul className="art-grid">
         {views.map((view) => (
-          <ArtifactTile key={formatArtifactAddress(view.address)} t={t} view={view} pinned={pinned.has(formatArtifactAddress(view.address))} onOpen={onOpen} />
+          <ArtifactTile key={formatArtifactAddress(view.address)} t={t} view={view} pinned={pinned.has(formatArtifactAddress(view.address))} onOpen={onOpen} showProject={showProject} />
         ))}
       </ul>
     </section>
   );
 }
 
+/** One list target: a project or the library. */
+interface ListSource {
+  where: Where;
+  project: GalleryProject | null;
+}
+
 /**
- * Load one scope's list with search and paging.
- * @param where the scope target, or null when it cannot be listed.
+ * The sources the current scope reads.
+ * @param scope the scope.
+ * @param projects the registered projects.
+ * @param contextWorkspaceId the project that supplies library design tokens.
+ * @returns one source per store.
+ */
+function sourcesOf(scope: GalleryScope, projects: readonly GalleryProject[], contextWorkspaceId: string | null): ListSource[] {
+  const library: ListSource = { where: { scope: 'library', workspaceId: contextWorkspaceId }, project: null };
+  if (scope.kind === 'library') return [library];
+  if (scope.kind === 'workspace') {
+    const project = projects.find((item) => item.workspaceId === scope.workspaceId);
+    return project === undefined ? [] : [{ where: { scope: 'workspace', workspaceId: project.workspaceId }, project }];
+  }
+  return [
+    ...projects.map((project): ListSource => ({ where: { scope: 'workspace', workspaceId: project.workspaceId }, project })),
+    library,
+  ];
+}
+
+/** How many artifacts one project contributes to a global page. */
+const GLOBAL_LIMIT = 12;
+
+type ScopeState =
+  | { status: 'loading' }
+  | { status: 'ready'; items: ArtifactView[]; hasMore: boolean; truncated: boolean; failed: number }
+  | { status: 'failed'; code?: string };
+
+/**
+ * Load the scope's list with search, type filtering, paging, and partial
+ * failures. The global scope fans out to every project and the library.
+ * @param scope the scope.
+ * @param projects the registered projects.
+ * @param contextWorkspaceId the project that supplies library design tokens.
  * @param query the search text.
  * @param type the type filter.
  * @param changes a counter that forces a reload.
  * @returns the state and a show-more action.
  */
-function useSection(where: Where | null, query: string, type: ArtifactType | undefined, changes: number): { state: SectionState; more: () => void } {
-  const [result, setResult] = useState<{ key: string; state: SectionState }>({ key: '', state: { status: 'loading' } });
-  const [shown, setShown] = useState(1);
-  const key = (where === null ? 'none' : where.scope + ':' + (where.workspaceId ?? '')) + ':' + query + ':' + (type ?? '');
-  const state: SectionState = where === null
-    ? { status: 'ready', page: EMPTY_LIST }
-    : result.key === key ? result.state : { status: 'loading' };
+function useScopeList(
+  scope: GalleryScope,
+  projects: readonly GalleryProject[],
+  contextWorkspaceId: string | null,
+  query: string,
+  type: ArtifactType | undefined,
+  changes: number,
+): { state: ScopeState; more: () => void } {
+  const [pages, setPages] = useState(1);
+  const [result, setResult] = useState<{ key: string; state: ScopeState }>({ key: '', state: { status: 'loading' } });
+  const projectKey = projects.map((project) => project.workspaceId + ':' + project.title).join(',');
+  const key = formatScope(scope) + ':' + projectKey + ':' + (contextWorkspaceId ?? '') + ':' + query + ':' + (type ?? '');
+  const global = scope.kind === 'all';
+  const state: ScopeState = result.key === key ? result.state : { status: 'loading' };
 
-  useEffect(() => setShown(1), [key, query]);
+  useEffect(() => setPages(1), [key, query]);
 
   useEffect(() => {
-    if (where === null) return undefined;
+    const targets = sourcesOf(scope, projects, contextWorkspaceId);
+    if (targets.length === 0) {
+      setResult({ key, state: { status: 'ready', items: [], hasMore: false, truncated: false, failed: 0 } });
+      return undefined;
+    }
     const controller = new AbortController();
     const timer = setTimeout(async () => {
-      try {
-        const pages: ListResult[] = [];
-        for (let index = 0; index < shown; index += 1) {
-          pages.push(await api.list(where, { query, type, offset: index * 50 }, controller.signal));
-          if (!pages[pages.length - 1]?.hasMore) break;
+      const limit = global ? GLOBAL_LIMIT : undefined;
+      // Keep the pages a source already returned when a later page fails, so
+      // Show more cannot erase the first page of that source.
+      const outcomes = await Promise.all(targets.map(async (target): Promise<{ loaded: ListResult[]; failed: boolean; code?: string }> => {
+        const loaded: ListResult[] = [];
+        for (let index = 0; index < pages; index += 1) {
+          try {
+            const page = await api.list(
+              target.where,
+              {
+                query,
+                type,
+                offset: index * (limit ?? 50),
+                ...(limit === undefined ? {} : { limit }),
+              },
+              controller.signal,
+            );
+            loaded.push(page);
+            if (!page.hasMore) break;
+          } catch (error) {
+            return { loaded, failed: true, code: codeOf(error) };
+          }
         }
-        const last = pages[pages.length - 1];
-        if (last === undefined || controller.signal.aborted) return;
-        setResult({ key, state: { status: 'ready', page: { ...last, items: pages.flatMap((page) => page.items) } } });
-      } catch (error) {
-        if (!controller.signal.aborted) setResult({ key, state: { status: 'failed', code: codeOf(error) } });
+        return { loaded, failed: false };
+      }));
+      if (controller.signal.aborted) return;
+      const items: ArtifactView[] = [];
+      let hasMore = false;
+      let truncated = false;
+      let failed = 0;
+      let firstCode: string | undefined;
+      outcomes.forEach((outcome, index) => {
+        const target = targets[index];
+        if (target === undefined) return;
+        if (outcome.failed) {
+          failed += 1;
+          if (firstCode === undefined) firstCode = outcome.code;
+        }
+        const last = outcome.loaded[outcome.loaded.length - 1];
+        if (last === undefined) return;
+        if (last.hasMore) hasMore = true;
+        if (last.truncated) truncated = true;
+        for (const page of outcome.loaded) {
+          for (const manifest of page.items) {
+            const view = viewOf(manifest, contextWorkspaceId, target.project);
+            if (view !== null) items.push(view);
+          }
+        }
+      });
+      if (failed === targets.length) {
+        setResult({ key, state: { status: 'failed', code: firstCode } });
+        return;
       }
+      items.sort((left, right) => Date.parse(right.manifest.updatedAt) - Date.parse(left.manifest.updatedAt));
+      setResult({ key, state: { status: 'ready', items, hasMore, truncated, failed } });
     }, query === '' ? 0 : 180);
     return () => {
       controller.abort();
       clearTimeout(timer);
     };
-    // where is captured by key.
+    // key captures scope, projects, context, query, and type.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, query, changes, shown]);
+  }, [key, changes, pages]);
 
-  return { state, more: () => setShown((value) => value + 1) };
+  return { state, more: () => setPages((value) => value + 1) };
 }
 
 /**
  * The first-run state: what to ask the agent for, with a copy action because
  * this page has no conversation of its own.
- * @param props the translator and the scope that is empty.
+ * @param props the translator and the empty scope.
  * @returns the empty state.
  */
-function Starters({ t, scope }: { t: Translator; scope: Scope }) {
+function Starters({ t, variant }: { t: Translator; variant: 'all' | Scope }) {
+  const title = variant === 'all' ? 'empty.allTitle' : variant === 'library' ? 'empty.libraryTitle' : 'empty.workspaceTitle';
+  const hint = variant === 'all' ? 'empty.allHint' : variant === 'library' ? 'empty.libraryHint' : 'empty.workspaceHint';
   const copy = async (text: string) => {
     try { await navigator.clipboard.writeText(text); notify(t('gallery.promptCopied')); }
     catch { notify(t('action.copyFailed')); }
   };
   return (
     <div className="art-empty">
-      <p className="art-empty-title">{t(scope === 'library' ? 'empty.libraryTitle' : 'empty.workspaceTitle')}</p>
-      <p className="art-empty-hint">{t(scope === 'library' ? 'empty.libraryHint' : 'empty.workspaceHint')}</p>
+      <p className="art-empty-title">{t(title)}</p>
+      <p className="art-empty-hint">{t(hint)}</p>
       <ul className="art-starters">
         {STARTERS.map((starter) => (
           <li key={starter} className="art-starter">
@@ -376,81 +520,65 @@ function Starters({ t, scope }: { t: Translator; scope: Scope }) {
 /** Props for the gallery body on the full Artifacts page. */
 export interface GalleryBodyProps {
   t: Translator;
-  workspaceId: string | null;
+  projects: readonly GalleryProject[];
+  scope: GalleryScope;
+  contextWorkspaceId: string | null;
+  onScopeChange: (scope: GalleryScope) => void;
   open?: (address: string) => void;
-  toolbar?: ReactNode;
 }
 
 /**
- * The Artifacts gallery: one recent grid with pins, the chosen workspace and
- * the profile library, filters, and blank page and document creation.
- * @param props the workspace, the open action, and an optional header control.
+ * The Artifacts gallery: one recent grid with pins, one scope control, and
+ * blank page and document creation.
+ * @param props the projects, the scope, the open action, and the scope action.
  * @returns the page body.
  */
-export function GalleryBody({ t, workspaceId, open, toolbar }: GalleryBodyProps) {
+export function GalleryBody({ t, projects, scope, contextWorkspaceId, onScopeChange, open }: GalleryBodyProps) {
   const [query, setQuery] = useState('');
-  const [filter, setFilter] = useState<Filter>('all');
   const [type, setType] = useState<ArtifactType | undefined>(undefined);
   const [view, setView] = useState<'list' | 'design'>('list');
   const [menu, setMenu] = useState(false);
   const [localChanges, setLocalChanges] = useState(0);
   const changes = useListChanges() + localChanges;
   const pins = usePins();
-  const workspace = useSection(workspaceId === null ? null : { scope: 'workspace', workspaceId }, query, type, changes);
-  const library = useSection({ scope: 'library', workspaceId }, query, type, changes);
-  const filterId = useId();
+  const list = useScopeList(scope, projects, contextWorkspaceId, query, type, changes);
   const typeId = useId();
+  const targetProject = projects.find((project) => project.workspaceId === contextWorkspaceId) ?? null;
+  const designWorkspaceId = scope.kind === 'library' ? null : contextWorkspaceId;
+  const designProject = designWorkspaceId === null
+    ? null
+    : projects.find((project) => project.workspaceId === designWorkspaceId) ?? null;
+  const createScope: Scope = scope.kind === 'library' || targetProject === null ? 'library' : 'workspace';
+  const createTitle = createScope === 'library' ? t('scope.library') : targetProject?.title ?? t('scope.library');
+  const state = list.state;
+  const views = state.status === 'ready' ? state.items : [];
 
   const onOpen = useCallback((target: ArtifactView) => openArtifact(open, target), [open]);
 
   const onCreate = useCallback(
-    async (nextType: ArtifactType, scope: Scope) => {
-      if (scope === 'workspace' && workspaceId === null) return;
+    async (nextType: ArtifactType, nextScope: Scope) => {
+      if (nextScope === 'workspace' && contextWorkspaceId === null) return;
       const title = t(nextType === 'page' ? 'create.untitledPage' : 'create.untitledDoc');
       try {
-        const { manifest } = await api.create({ scope, workspaceId }, nextType, title, starterContent(nextType, title));
+        const { manifest } = await api.create({ scope: nextScope, workspaceId: contextWorkspaceId }, nextType, title, starterContent(nextType, title));
         announceListChange();
-        const next = viewOf(manifest, workspaceId);
+        const project = nextScope === 'workspace'
+          ? projects.find((item) => item.workspaceId === contextWorkspaceId) ?? null
+          : null;
+        const next = viewOf(manifest, contextWorkspaceId, project);
         if (next !== null) onOpen(next);
       } catch (error) {
         notify(t(errorKey(codeOf(error))));
       }
     },
-    [workspaceId, t, onOpen],
+    [contextWorkspaceId, projects, t, onOpen],
   );
 
-  const createScope: Scope = filter === 'library' || workspaceId === null ? 'library' : 'workspace';
-  const workspaceItems = filter !== 'library' && workspace.state.status === 'ready' ? workspace.state.page : null;
-  const libraryItems = filter !== 'workspace' && library.state.status === 'ready' ? library.state.page : null;
-  const loading = (filter !== 'library' && workspaceId !== null && workspace.state.status === 'loading')
-    || (filter !== 'workspace' && library.state.status === 'loading');
-  const failure = (filter !== 'library' && workspaceId !== null && workspace.state.status === 'failed')
-    ? workspace.state.code
-    : (filter !== 'workspace' && library.state.status === 'failed' ? library.state.code : undefined);
-  const views: ArtifactView[] = [];
-  for (const item of workspaceItems?.items ?? []) {
-    const next = viewOf(item, workspaceId);
-    if (next !== null) views.push(next);
-  }
-  for (const item of libraryItems?.items ?? []) {
-    const next = viewOf(item, workspaceId);
-    if (next !== null) views.push(next);
-  }
-  views.sort((left, right) => Date.parse(right.manifest.updatedAt) - Date.parse(left.manifest.updatedAt));
   const pinnedViews = views.filter((item) => pins.has(formatArtifactAddress(item.address)));
   const recentViews = views.filter((item) => !pins.has(formatArtifactAddress(item.address)));
-  const hasMore = workspaceItems?.hasMore === true || libraryItems?.hasMore === true;
-  const truncated = workspaceItems?.truncated === true || libraryItems?.truncated === true;
-  const noWorkspace = workspaceId === null && filter === 'workspace';
-  const emptyScope: Scope = filter === 'library' || workspaceId === null ? 'library' : 'workspace';
-
-  const more = () => {
-    if (filter !== 'library') workspace.more();
-    if (filter !== 'workspace') library.more();
-  };
 
   return (
-    <section className="art-root" data-dsh-artifacts="">
+    <section className="art-root" data-dsh-artifact-studio="">
       <header className="art-header">
         <div className="art-heading">
           {view === 'design' ? (
@@ -462,12 +590,31 @@ export function GalleryBody({ t, workspaceId, open, toolbar }: GalleryBodyProps)
           ) : null}
           <span className="art-title">{view === 'design' ? t('design.title') : t('panel')}</span>
         </div>
-        {view === 'list' ? toolbar : null}
+        {view === 'list' ? (
+          <label className="art-workspace">
+            <span className="art-workspace-label">{t('scope.label')}</span>
+            <select
+              className="art-workspace-select"
+              aria-label={t('scope.label')}
+              value={formatScope(scope)}
+              onChange={(event) => {
+                const next = parseScopeValue(event.target.value);
+                if (next !== undefined) onScopeChange(next);
+              }}
+            >
+              <option value="all">{t('scope.all')}</option>
+              {projects.map((project) => (
+                <option key={project.workspaceId} value={'ws:' + project.workspaceId}>{project.title}</option>
+              ))}
+              <option value="library">{t('scope.library')}</option>
+            </select>
+          </label>
+        ) : null}
         {view === 'list' ? (
           <div className="art-actions">
             <Tooltip label={t('gallery.design')} side="bottom" portal>
               <Button size="sm" className="art-icon-button" aria-label={t('gallery.design')} onClick={() => setView('design')}>
-                <IconSlidersTwoOutlineRegular size={16} />
+                <IconPalette size={16} />
               </Button>
             </Tooltip>
             <Tooltip label={t('gallery.refresh')} side="bottom" portal>
@@ -482,8 +629,8 @@ export function GalleryBody({ t, workspaceId, open, toolbar }: GalleryBodyProps)
               portal
               autoFocus
               items={[
-                { id: 'page', label: t('gallery.newPage') + ' · ' + t(`scope.${createScope}`), icon: <IconPage size={14} /> },
-                { id: 'doc', label: t('gallery.newDoc') + ' · ' + t(`scope.${createScope}`), icon: <IconDoc size={14} /> },
+                { id: 'page', label: t('gallery.newPage') + ' · ' + createTitle, icon: <IconPage size={14} /> },
+                { id: 'doc', label: t('gallery.newDoc') + ' · ' + createTitle, icon: <IconDoc size={14} /> },
               ]}
               onSelect={(entry) => { setMenu(false); void onCreate(entry === 'doc' ? 'doc' : 'page', createScope); }}
               anchor={<Button size="sm" variant="outline" icon={<IconPlusOutlineRegular size={14} />} aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu((value) => !value)}>{t('gallery.create')}</Button>}
@@ -493,7 +640,7 @@ export function GalleryBody({ t, workspaceId, open, toolbar }: GalleryBodyProps)
       </header>
       {view === 'design' ? (
         <div className="art-scroll">
-          <DesignEditor t={t} workspaceId={workspaceId} />
+          <DesignEditor t={t} workspaceId={designWorkspaceId} workspaceTitle={designProject?.title} />
         </div>
       ) : (
         <div className="art-scroll">
@@ -515,50 +662,38 @@ export function GalleryBody({ t, workspaceId, open, toolbar }: GalleryBodyProps)
                 options={[{ value: 'all', label: t('type.all') }, { value: 'page', label: t('type.page') }, { value: 'doc', label: t('type.doc') }]}
                 onChange={(next) => setType(next === 'all' ? undefined : next)}
               />
-              <SegmentedControl<Filter>
-                id={filterId}
-                className="art-segment"
-                label={t('filter.scope')}
-                value={filter}
-                options={[{ value: 'all', label: t('filter.all') }, { value: 'workspace', label: t('scope.workspace') }, { value: 'library', label: t('scope.library') }]}
-                onChange={setFilter}
-              />
             </div>
             <div role="tabpanel" id={typeId + '-' + (type ?? 'all') + '-panel'} aria-labelledby={typeId + '-' + (type ?? 'all')}>
-            <div role="tabpanel" id={filterId + '-' + filter + '-panel'} aria-labelledby={filterId + '-' + filter}>
-            {loading ? <p className="art-note">{t('empty.loading')}</p> : null}
-            {!loading && failure !== undefined && views.length === 0 ? (
-              <div className="art-empty" role="alert">
-                <p className="art-empty-title">{t(errorKey(failure))}</p>
-                <Button size="sm" variant="outline" onClick={() => setLocalChanges((value) => value + 1)}>{t('action.retry')}</Button>
-              </div>
-            ) : null}
-            {!loading && failure !== undefined && views.length > 0 ? (
-              <div className="art-bar" role="status">
-                <span>{t(errorKey(failure))}</span>
-                <Button size="sm" variant="outline" onClick={() => setLocalChanges((value) => value + 1)}>{t('action.retry')}</Button>
-              </div>
-            ) : null}
-            {!loading && failure === undefined && views.length === 0 ? (
-              query !== '' ? (
-                <p className="art-note">{t('empty.noMatch')}</p>
-              ) : type !== undefined ? (
-                <p className="art-note">{t('empty.typeMatch', { type: t(`type.${type}`) })}</p>
-              ) : noWorkspace ? (
-                <p className="art-note">{t('empty.noWorkspace')}</p>
-              ) : (
-                <Starters t={t} scope={emptyScope} />
-              )
-            ) : null}
-            {!loading && views.length > 0 ? (
-              <>
-                <TileSection t={t} heading={t('gallery.pinned')} views={pinnedViews} pinned={pins} onOpen={onOpen} />
-                {recentViews.length === 0 ? <p className="art-note">{t('gallery.allPinned')}</p> : <TileSection t={t} heading={t('gallery.recent')} views={recentViews} pinned={pins} onOpen={onOpen} />}
-                {hasMore ? <div className="art-gallery-more"><Button size="sm" variant="outline" onClick={more}>{t('gallery.more')}</Button></div> : null}
-                {truncated ? <p className="art-note">{t('gallery.truncated')}</p> : null}
-              </>
-            ) : null}
-            </div>
+              {state.status === 'loading' ? <p className="art-note">{t('empty.loading')}</p> : null}
+              {state.status === 'failed' ? (
+                <div className="art-empty" role="alert">
+                  <p className="art-empty-title">{t(errorKey(state.code))}</p>
+                  <Button size="sm" variant="outline" onClick={() => setLocalChanges((value) => value + 1)}>{t('action.retry')}</Button>
+                </div>
+              ) : null}
+              {state.status === 'ready' && state.failed > 0 ? (
+                <div className="art-bar" data-tone="warn" role="status">
+                  <span>{t('gallery.failedProjects')}</span>
+                  <Button size="sm" variant="outline" onClick={() => setLocalChanges((value) => value + 1)}>{t('action.retry')}</Button>
+                </div>
+              ) : null}
+              {state.status === 'ready' && state.items.length === 0 && state.failed === 0 ? (
+                query !== '' ? (
+                  <p className="art-note">{t('empty.noMatch')}</p>
+                ) : type !== undefined ? (
+                  <p className="art-note">{t('empty.typeMatch', { type: t(`type.${type}`) })}</p>
+                ) : (
+                  <Starters t={t} variant={scope.kind} />
+                )
+              ) : null}
+              {state.status === 'ready' && state.items.length > 0 ? (
+                <>
+                  <TileSection t={t} heading={t('gallery.pinned')} views={pinnedViews} pinned={pins} onOpen={onOpen} showProject={scope.kind === 'all'} />
+                  {recentViews.length === 0 ? <p className="art-note">{t('gallery.allPinned')}</p> : <TileSection t={t} heading={t('gallery.recent')} views={recentViews} pinned={pins} onOpen={onOpen} showProject={scope.kind === 'all'} />}
+                  {state.hasMore ? <div className="art-gallery-more"><Button size="sm" variant="outline" onClick={list.more}>{t('gallery.more')}</Button></div> : null}
+                  {state.truncated ? <p className="art-note">{t('gallery.truncated')}</p> : null}
+                </>
+              ) : null}
             </div>
           </div>
         </div>

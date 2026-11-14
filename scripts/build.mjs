@@ -57,7 +57,7 @@ ${js}
 
 const main = await bundle('src/client/index.tsx');
 const doc = await bundle('src/client/doc/entry.ts');
-await fs.writeFile(path.join(ROOT, 'client.js'), wrap(main, { id: 'dsh-artifacts', bridge: true }));
-await fs.writeFile(path.join(ROOT, 'client.doc.js'), wrap(doc, { id: 'dsh-artifacts', chunk: 'client.doc.js' }));
+await fs.writeFile(path.join(ROOT, 'client.js'), wrap(main, { id: 'dsh-artifact-studio', bridge: true }));
+await fs.writeFile(path.join(ROOT, 'client.doc.js'), wrap(doc, { id: 'dsh-artifact-studio', chunk: 'client.doc.js' }));
 console.log(`client.js ${main.length} bytes`);
 console.log(`client.doc.js ${doc.length} bytes`);

@@ -82,7 +82,7 @@ function ArtifactTitle({ useTabInfo }: { useTabInfo: UseTabInfo }): ReactNode {
  */
 export function apply(ctx: ClientContext): void {
   installStyles();
-  ctx.effect(installDraftGuard, 'dsh-artifacts: unsaved draft guard');
+  ctx.effect(installDraftGuard, 'dsh-artifact-studio: unsaved draft guard');
   configureConnection(ctx.connection);
   runtime.sidebarRight = ctx.sidebarRight;
   runtime.layout = layoutOf(ctx.get('layout'));
@@ -104,13 +104,13 @@ export function apply(ctx: ClientContext): void {
           return parsed === undefined ? '' : (titleOf(parsed.id) ?? parsed.id);
         },
       }),
-    'dsh-artifacts: artifact tab type',
+    'dsh-artifact-studio: artifact tab type',
   );
 
   const inject = () => ({ t });
-  ctx.effect(() => () => clearNotice(), 'dsh-artifacts: notification cleanup');
+  ctx.effect(() => () => clearNotice(), 'dsh-artifact-studio: notification cleanup');
   ctx.slots.inject('shell.overlay', () =>
-    ctx.slots.register({ name: 'shell.overlay', id: 'dsh-artifacts.notice' }, Notice),
+    ctx.slots.register({ name: 'shell.overlay', id: 'dsh-artifact-studio.notice' }, Notice),
   );
   ctx.slots.inject('sidebar.right.pane.tab', () =>
     ctx.slots.register<TabProps>({ name: 'sidebar.right.pane.tab', key: ARTIFACT_ID, locale: NS, inject }, guarded(ArtifactTab)),
@@ -125,7 +125,7 @@ export function apply(ctx: ClientContext): void {
   }
   ctx.slots.inject('conversation.input.left', () =>
     ctx.slots.register<SessionSlotProps>(
-      { name: 'conversation.input.left', id: 'dsh-artifacts', order: 40, locale: NS, inject },
+      { name: 'conversation.input.left', id: 'dsh-artifact-studio', order: 40, locale: NS, inject },
       ComposerButton,
     ),
   );

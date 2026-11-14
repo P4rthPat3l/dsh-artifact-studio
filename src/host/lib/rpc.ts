@@ -141,7 +141,7 @@ export function createHandler(service: ArtifactService): EndpointHandler {
       if (error instanceof ArtifactError) {
         return { ok: false, error: { code: error.code, message: error.message, details: error.details } };
       }
-      console.error('[dsh-artifacts] request failed', endpoint, error instanceof Error ? error.message : error);
+      console.error('[dsh-artifact-studio] request failed', endpoint, error instanceof Error ? error.message : error);
       return {
         ok: false,
         error: { code: 'artifact/storage-failure', message: 'The artifact request failed.', details: {} },

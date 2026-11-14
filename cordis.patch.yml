@@ -1,10 +1,10 @@
 - insert:
-    - id: dsh-artifacts
-      name: 'dsh-artifacts'
+    - id: dsh-artifact-studio
+      name: 'dsh-artifact-studio'
       config: {}
-    - id: dsh-artifacts-tools
-      name: 'dsh-artifacts/tools'
+    - id: dsh-artifact-studio-tools
+      name: 'dsh-artifact-studio/tools'
       config: {}
-    - id: dsh-artifacts-skill
-      name: 'dsh-artifacts/skill'
+    - id: dsh-artifact-studio-skill
+      name: 'dsh-artifact-studio/skill'
       config: {}

@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react';
 
 /** Local view preferences. Pins are a shortcut, never artifact data. */
-const PIN_KEY = 'dsh-artifacts.pins';
+const PIN_KEY = 'dsh-artifact-studio.pins';
 
 function readPins(): ReadonlySet<string> {
   if (typeof window === 'undefined') return new Set();

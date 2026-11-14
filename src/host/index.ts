@@ -3,7 +3,7 @@ import { createHandler } from './lib/rpc.js';
 import { createService } from './lib/setup.js';
 import type { Connection, WebServer, WorkspaceRegistry } from './lib/types.js';
 
-export const name = 'dsh-artifacts';
+export const name = 'dsh-artifact-studio';
 
 export const inject = ['workspaceRegistry', 'connection', 'webServer'];
 
@@ -22,5 +22,5 @@ export interface RouteHostContext {
  */
 export function apply(ctx: RouteHostContext): void {
   const handler = createHandler(createService(ctx.workspaceRegistry));
-  ctx.effect(() => registerArtifactsRoute(ctx, handler), 'dsh-artifacts: authenticated artifact channel');
+  ctx.effect(() => registerArtifactsRoute(ctx, handler), 'dsh-artifact-studio: authenticated artifact channel');
 }

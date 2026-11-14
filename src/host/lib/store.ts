@@ -287,7 +287,7 @@ export class ArtifactStore {
       await this.prune(dir, manifest.version);
     } catch (error) {
       // The version is saved; a prune failure must not make the caller retry a write that succeeded.
-      console.warn('[dsh-artifacts] prune failed', manifest.id, error instanceof Error ? error.message : error);
+      console.warn('[dsh-artifact-studio] prune failed', manifest.id, error instanceof Error ? error.message : error);
     }
   }
 
@@ -549,7 +549,7 @@ export class ArtifactStore {
         if (manifest.scope === root.scope) manifests.push(manifest);
       } catch (error) {
         if (!(error instanceof ArtifactError)) throw error;
-        console.warn('[dsh-artifacts] skipped artifact', name, error.code);
+        console.warn('[dsh-artifact-studio] skipped artifact', name, error.code);
       }
     }
     const query = input.query?.trim().toLowerCase() ?? '';
