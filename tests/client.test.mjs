@@ -574,10 +574,10 @@ test('AC-036: dirty back can save or cancel and a failed save stays in place', a
     await click(view.container.querySelector('[aria-label="action.back"]'));
     assert.ok(view.container.querySelector('[role="dialog"][aria-modal="true"]'));
     host.state.failNext = { endpoint: 'update', error: { code: 'artifact/storage-failure', message: 'failed', details: {} } };
-    await click([...view.container.querySelectorAll('button')].find(button => button.textContent === 'tab.saveContinue'));
+    await click([...view.container.querySelectorAll('button')].find(button => button.textContent === 'tab.leaveSave'));
     assert.equal(view.container.querySelector('textarea').value, 'keep me');
     assert.ok(view.container.querySelector('[role="dialog"][aria-modal="true"]'));
-    await click([...view.container.querySelectorAll('button')].find(button => button.textContent === 'tab.saveContinue'));
+    await click([...view.container.querySelectorAll('button')].find(button => button.textContent === 'tab.leaveSave'));
     assert.equal(view.container.querySelector('[data-artifact-id]'), null);
     assert.equal(host.state.artifacts.get(id).content, 'keep me');
   } finally { await view.unmount(); }
@@ -1338,7 +1338,7 @@ test('AC-057: save protection, conflict, sandbox, exact-version output, and docu
     assert.equal(pageView.container.querySelector('.art-source').value, '<p>mine</p>');
 
     await click(findButton(pageView, 'tab.discardReload'));
-    await click(findButton(pageView, 'tab.discardContinue'));
+    await click(findButton(pageView, 'tab.leaveDiscard'));
     assert.equal(pageView.container.querySelector('.art-source').value, '<p>two</p>');
 
     const clean = await render(tab.component, tabProps(`dsh-resource://artifact/workspace/ws-a/${pageId}`));

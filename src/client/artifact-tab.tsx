@@ -765,8 +765,8 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
         description={t(conflict ? 'tab.conflictHint' : 'tab.leaveHint')}
         footer={<>
           <Button variant="outline" disabled={busy} onClick={() => setLeave(null)}>{t('create.cancel')}</Button>
-          <Button variant="outline" disabled={saving || busy} onClick={() => { const run = leave?.run; setLeave(null); if (run !== undefined) void model.discardAndReload().then(run); }}>{t('tab.discardContinue')}</Button>
-          <Button variant="primary" disabled={conflict || busy} onClick={async () => { setBusy(true); const ok = await model.save(); setBusy(false); const run = leave?.run; if (ok && run !== undefined) { setLeave(null); await run(); } }}>{t('tab.saveContinue')}</Button>
+          <Button variant="outline" disabled={saving || busy} onClick={() => { const run = leave?.run; setLeave(null); if (run !== undefined) void model.discardAndReload().then(run); }}>{t('tab.leaveDiscard')}</Button>
+          <Button variant="primary" disabled={conflict || busy} onClick={async () => { setBusy(true); const ok = await model.save(); setBusy(false); const run = leave?.run; if (ok && run !== undefined) { setLeave(null); await run(); } }}>{t('tab.leaveSave')}</Button>
         </>}
       >
         {failure === undefined ? null : <p className="art-modal-error" role="alert">{failureMessage ?? t(errorKey(failure))}</p>}
