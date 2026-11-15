@@ -62,8 +62,9 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ## OpenPencil
 
-The canvas chunk bundles `@open-pencil/vue` 0.16.0, and the host depends on
-`@open-pencil/core` 0.16.0.
+The canvas chunk bundles `@open-pencil/vue` and `@open-pencil/design-jsx`
+0.16.0, and the host depends on `@open-pencil/core` and
+`@open-pencil/scene-graph` 0.16.0.
 
 MIT License
 

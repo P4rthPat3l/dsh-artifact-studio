@@ -25,8 +25,10 @@ Use \`artifact_create\` when the user asks for an artifact, an artifact page, an
 ## Pick the type
 
 - \`doc\` for prose: reports, briefs, plans, specs, notes. It is Markdown, edited in a rich-text editor, and exported to Word, Markdown, and HTML. Use headings, short paragraphs, lists, tables, task lists, quotes, and fenced code. Do not paste HTML into a doc.
-- \`page\` for anything visual or interactive: dashboards, one-pagers, explainers, calculators, diagrams, prototypes.
-- \`design\` for a layout the user will open on a canvas: UI mockups, layout explorations, and screens that export as PNG, SVG, or a \`.fig\` document.
+- \`page\` for anything visual or interactive: dashboards, one-pagers, explainers, calculators, diagrams, and clickable prototypes the user asks for as a page.
+- \`design\` for a layout the user will open on a canvas: UI mockups, wireframes, layout explorations, and screens that export as PNG, SVG, or a \`.fig\` document.
+
+A request for a mockup or a wireframe always gets \`design\`, even when it shows a flow. Draw each step of the flow as its own frame. If the user offers both, such as "a page or a mockup", make a mockup. Use \`page\` for a mockup only when the user asks for a page or for something clickable. Never title or describe a page as a mockup.
 
 ## Designs (OpenPencil Design JSX)
 
@@ -45,6 +47,12 @@ Call this artifact a mockup when you talk to the user. The tools still take type
 - A design has no network and no external images. Use solid and gradient fills, shapes, and text.
 - The stored artifact is the JSX source. Send the complete source as \`content\` when you update a design. The host compiles and validates before saving, so a compile error refuses the write and returns the compiler message.
 - Export is PNG, SVG, or \`.fig\`. The user can open the \`.fig\` in OpenPencil for a full canvas editor.
+
+### When a design write fails
+
+- A compile, icon, or validation error names a problem in your source. Fix the source and try again.
+- Any other error, such as "The design renderer stopped" or a missing module, is a fault in the plugin, not in your source. Stop and show the user the exact error.
+- Never switch to a \`page\` or a \`doc\` to work around a failed design. Do it only when the user tells you to.
 
 ## The page sandbox
 

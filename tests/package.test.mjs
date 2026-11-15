@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+import path from 'node:path';
 import { checkIcon } from '../scripts/check-icon.mjs';
 
 test('the icon fits the harness metadata cap', async () => {
@@ -34,4 +35,36 @@ test('the canvas build dependencies stay out of runtime dependencies and ship a 
   assert.match(notices, /Material Design Icons/);
   assert.match(notices, /Roboto/);
   assert.match(notices, /Apache/);
+});
+
+/**
+ * Collect the bare package names a source tree imports.
+ * @param {string} dir - directory relative to the repository.
+ * @returns {Promise<Set<string>>} package names, without subpaths.
+ */
+async function importedPackages(dir) {
+  const root = new URL('../', import.meta.url).pathname;
+  const names = new Set();
+  for (const file of await fs.readdir(path.join(root, dir), { recursive: true })) {
+    if (!/\.tsx?$/.test(file) || file.endsWith('.d.ts')) continue;
+    const text = await fs.readFile(path.join(root, dir, file), 'utf8');
+    for (const [, spec] of text.matchAll(/(?:from|import\()\s*'([^'.][^']*)'/g)) {
+      if (spec.startsWith('node:')) continue;
+      names.add(spec.startsWith('@') ? spec.split('/').slice(0, 2).join('/') : spec.split('/')[0]);
+    }
+  }
+  return names;
+}
+
+test('FEAT-007 AC-067: every package the source imports is declared in package.json', async () => {
+  const manifest = JSON.parse(await fs.readFile(new URL('../package.json', import.meta.url), 'utf8'));
+  // A strict install such as pnpm links only declared packages, so an undeclared import fails at runtime.
+  for (const name of await importedPackages('src/host')) {
+    assert.ok(manifest.dependencies[name], `src/host imports ${name}, which is not a runtime dependency`);
+  }
+  const provided = new Set(['react', 'react-dom', '@deepseek-ai/dsh-client-ui-primitives']);
+  for (const name of await importedPackages('src/client')) {
+    if (provided.has(name)) continue;
+    assert.ok(manifest.dependencies[name] ?? manifest.devDependencies[name], `src/client imports ${name}, which is not declared`);
+  }
 });

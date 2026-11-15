@@ -680,6 +680,22 @@ test('AC-091: the skill and write tools tell the agent to check before saving an
   }
 });
 
+test('FEAT-007 AC-068: a mockup request gets a design, and a failed design is reported, not redone as a page', () => {
+  const skills = [];
+  applySkill({ skills: { register: (skill) => { skills.push(skill); return () => {}; } } });
+  const [skill] = skills;
+  assert.match(skill.content, /A request for a mockup or a wireframe always gets \S*design\S*, even when it shows a flow/);
+  assert.match(skill.content, /If the user offers both, such as "a page or a mockup", make a mockup/);
+  assert.match(skill.content, /Never title or describe a page as a mockup/);
+  assert.match(skill.content, /### When a design write fails/);
+  assert.match(skill.content, /Never switch to a \S*page\S* or a \S*doc\S* to work around a failed design/);
+  assert.doesNotMatch(skill.content, /calculators, diagrams, prototypes\./);
+  const { byName } = toolsFor('ses-a', wsA);
+  const type = byName.artifact_create.parameters.properties.type.description;
+  assert.match(type, /A mockup or wireframe is always design/);
+  assert.match(type, /never redo it as a page/);
+});
+
 test('AC-084: artifact_create description tells the model to use an artifact when the user asks for one', () => {
   const { byName } = toolsFor('ses-a', wsA);
   const description = byName.artifact_create.description;

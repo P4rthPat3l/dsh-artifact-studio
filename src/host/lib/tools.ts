@@ -235,7 +235,7 @@ export function createTools(host: ToolHost): ToolDefinition[] {
       additionalProperties: false,
       required: ['type', 'title', 'content'],
       properties: {
-        type: { type: 'string', enum: ['page', 'doc', 'design'], description: 'page for HTML, doc for Markdown, design for OpenPencil Design JSX. For a design, load the artifact-design skill first: no imports, no HTML.' },
+        type: { type: 'string', enum: ['page', 'doc', 'design'], description: 'page for HTML, doc for Markdown, design for OpenPencil Design JSX. A mockup or wireframe is always design. For a design, load the artifact-design skill first: no imports, no HTML. If a design fails for a reason other than its source, report the error; never redo it as a page.' },
         title: { type: 'string', description: 'Short title, 1 to 120 characters.' },
         content: { type: 'string', description: 'The full HTML document, Markdown text, or Design JSX source, up to 2 MiB.' },
         scope: SCOPE_PARAM,
