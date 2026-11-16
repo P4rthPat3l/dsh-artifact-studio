@@ -1,7 +1,7 @@
 import type { Manifest, Scope } from '../../contract.js';
 import { checkPage } from './checks.js';
 import { ArtifactError } from './errors.js';
-import { workspaceForSession } from './paths.js';
+import { requireWorkspace, workspaceForSession } from './paths.js';
 import type { ArtifactService, Target } from './service.js';
 import type { WorkspaceRegistry } from './types.js';
 import {
@@ -69,10 +69,16 @@ const SCOPE_PARAM = {
     'workspace (default) stores it under the Harness home for this workspace. library stores it in the user profile, shared by every project; use it only when the user asks for something reusable across projects.',
 };
 
+const WORKSPACE_PARAM = {
+  type: 'string',
+  description:
+    "Another registered project's workspace id, from an artifact reference. Omit for this session's project.",
+};
+
 const PAGE_GUIDE = [
   'Load the artifact-design skill first if not loaded yet. Precedence: the user\'s request, then the design system, then your own choices.',
   'A page is one self-contained HTML document in a sandbox with no network or browser storage: inline all CSS and JavaScript, draw charts with inline SVG or canvas, and use data: URIs for images. Keep the layout fluid for a 380 to 700 px panel.',
-  'Style pages with the injected variables: --artifact-color-primary, -accent, -surface, -text, -muted; --artifact-font-family, -display, -mono; and the size, space, and radius scales in the skill.',
+  'Use injected --artifact-* color, font, size, space, and radius variables. The skill covers semantic roles and the packaged page reference.',
   'A doc is Markdown: headings, lists, task lists, tables, quotes, and fenced code.',
   'Each save is a version the user sees. Check before saving and batch fixes into one update.',
 ].join('\n');
@@ -104,13 +110,22 @@ function warningsFor(type: string, content: string | undefined): string[] {
 }
 
 /**
- * The scope context of a call: the session's workspace, plus an explicit scope.
+ * The scope context of a call: the session's workspace, or an explicitly named
+ * registered workspace, plus an explicit scope.
  * @param host the tool host.
  * @param exec the execution.
  * @param scope an explicit scope.
+ * @param workspaceId another registered workspace, when the call names one.
  * @returns the target.
  */
-async function targetFor(host: ToolHost, exec: ToolExec, scope: Scope | undefined): Promise<Target> {
+async function targetFor(host: ToolHost, exec: ToolExec, scope: Scope | undefined, workspaceId?: string): Promise<Target> {
+  if (workspaceId !== undefined) {
+    requireWorkspace(host.registry, workspaceId);
+    if (scope === 'library') {
+      throw new ArtifactError('artifact/bad-request', '"workspaceId" applies only to workspace artifacts.', { workspaceId });
+    }
+    return { workspaceId, scope: 'workspace' };
+  }
   if (exec.agent === undefined) {
     if (scope === 'library') return { scope };
     throw new ArtifactError('artifact/no-workspace', 'Workspace artifacts need an agent session.');
@@ -239,6 +254,7 @@ export function createTools(host: ToolHost): ToolDefinition[] {
         title: { type: 'string', description: 'Short title, 1 to 120 characters.' },
         content: { type: 'string', description: 'The full HTML document, Markdown text, or Design JSX source, up to 2 MiB.' },
         scope: SCOPE_PARAM,
+        workspaceId: WORKSPACE_PARAM,
       },
     },
     output: {
@@ -248,7 +264,7 @@ export function createTools(host: ToolHost): ToolDefinition[] {
     },
     async execute(args, exec) {
       const fields = fieldsOf(args);
-      const target = await targetFor(host, exec, optionalScope(fields));
+      const target = await targetFor(host, exec, optionalScope(fields), optionalString(fields, 'workspaceId'));
       const type = requiredType(fields);
       const content = optionalString(fields, 'content') ?? '';
       const manifest = await service.create(target, {
@@ -267,7 +283,7 @@ export function createTools(host: ToolHost): ToolDefinition[] {
   const read: ToolDefinition = {
     name: 'artifact_read',
     description:
-      'Read an artifact\'s current content and version, or an earlier version. Read before updating an artifact the user may have edited.',
+      'Read an artifact\'s current content and version, or an earlier version. Read before updating an artifact the user may have edited. Pass workspaceId for an artifact in another project.',
     parameters: {
       type: 'object',
       additionalProperties: false,
@@ -275,6 +291,7 @@ export function createTools(host: ToolHost): ToolDefinition[] {
       properties: {
         id: { type: 'string', description: 'Artifact id from artifact_create or artifact_list.' },
         version: { type: 'integer', description: 'An earlier version to read. Omit for the current one.' },
+        workspaceId: WORKSPACE_PARAM,
       },
     },
     output: {
@@ -311,7 +328,7 @@ export function createTools(host: ToolHost): ToolDefinition[] {
     async execute(args, exec) {
       const fields = fieldsOf(args);
       const id = requiredString(fields, 'id');
-      const target = await targetFor(host, exec, id.startsWith('art_lib_') ? 'library' : undefined);
+      const target = await targetFor(host, exec, id.startsWith('art_lib_') ? 'library' : undefined, optionalString(fields, 'workspaceId'));
       const result = await service.read(target, id, optionalInteger(fields, 'version'));
       const info = result.designInfo;
       return {
@@ -353,6 +370,7 @@ export function createTools(host: ToolHost): ToolDefinition[] {
           },
         },
         title: { type: 'string', description: 'A new title.' },
+        workspaceId: WORKSPACE_PARAM,
       },
     },
     output: {
@@ -363,7 +381,7 @@ export function createTools(host: ToolHost): ToolDefinition[] {
     async execute(args, exec) {
       const fields = fieldsOf(args);
       const id = requiredString(fields, 'id');
-      const target = await targetFor(host, exec, id.startsWith('art_lib_') ? 'library' : undefined);
+      const target = await targetFor(host, exec, id.startsWith('art_lib_') ? 'library' : undefined, optionalString(fields, 'workspaceId'));
       const content = optionalString(fields, 'content');
       const edits = optionalEdits(fields);
       const title = optionalString(fields, 'title');
@@ -386,12 +404,13 @@ export function createTools(host: ToolHost): ToolDefinition[] {
 
   const list: ToolDefinition = {
     name: 'artifact_list',
-    description: 'List artifacts in this project or the profile library, newest first, at most 50 per call.',
+    description: 'List artifacts in this project or the profile library, newest first, at most 50 per call. Pass workspaceId to list another project.',
     parameters: {
       type: 'object',
       additionalProperties: false,
       properties: {
         scope: { type: 'string', enum: ['workspace', 'library'], description: 'Defaults to workspace.' },
+        workspaceId: WORKSPACE_PARAM,
         type: { type: 'string', enum: ['page', 'doc', 'design'] },
         query: { type: 'string', description: 'Title substring, case-insensitive.' },
         offset: { type: 'integer' },
@@ -417,7 +436,7 @@ export function createTools(host: ToolHost): ToolDefinition[] {
     },
     async execute(args, exec) {
       const fields = fieldsOf(args);
-      const target = await targetFor(host, exec, optionalScope(fields));
+      const target = await targetFor(host, exec, optionalScope(fields), optionalString(fields, 'workspaceId'));
       const page = await service.list(target, {
         query: optionalString(fields, 'query'),
         type: optionalType(fields),
@@ -434,7 +453,7 @@ export function createTools(host: ToolHost): ToolDefinition[] {
       type: 'object',
       additionalProperties: false,
       required: ['id'],
-      properties: { id: { type: 'string' } },
+      properties: { id: { type: 'string' }, workspaceId: WORKSPACE_PARAM },
     },
     output: {
       schema: { type: 'object', additionalProperties: false, required: ['id', 'trashPath'], properties: { id: { type: 'string' }, trashPath: { type: 'string' } } },
@@ -443,7 +462,7 @@ export function createTools(host: ToolHost): ToolDefinition[] {
     async execute(args, exec) {
       const fields = fieldsOf(args);
       const id = requiredString(fields, 'id');
-      const target = await targetFor(host, exec, id.startsWith('art_lib_') ? 'library' : undefined);
+      const target = await targetFor(host, exec, id.startsWith('art_lib_') ? 'library' : undefined, optionalString(fields, 'workspaceId'));
       const result = await service.remove(target, id);
       return { id, trashPath: result.trashPath };
     },
@@ -458,7 +477,8 @@ export function createTools(host: ToolHost): ToolDefinition[] {
       additionalProperties: false,
       required: ['id', 'format'],
       properties: { id: { type: 'string' }, format: { type: 'string', enum: ['html', 'md', 'docx', 'png', 'svg', 'fig'] },
-        version: { type: 'integer', minimum: 1, description: 'Saved version to export. Omit for the current version.' } },
+        version: { type: 'integer', minimum: 1, description: 'Saved version to export. Omit for the current version.' },
+        workspaceId: WORKSPACE_PARAM },
     },
     output: {
       schema: { type: 'object', additionalProperties: false, required: ['path', 'bytes'], properties: { path: { type: 'string' }, bytes: { type: 'integer' } } },
@@ -467,7 +487,7 @@ export function createTools(host: ToolHost): ToolDefinition[] {
     async execute(args, exec) {
       const fields = fieldsOf(args);
       const id = requiredString(fields, 'id');
-      const target = await targetFor(host, exec, id.startsWith('art_lib_') ? 'library' : undefined);
+      const target = await targetFor(host, exec, id.startsWith('art_lib_') ? 'library' : undefined, optionalString(fields, 'workspaceId'));
       const file = await service.export(target, id, requiredFormat(fields), optionalInteger(fields, 'version'));
       return { path: file.path, bytes: file.bytes };
     },
@@ -477,14 +497,18 @@ export function createTools(host: ToolHost): ToolDefinition[] {
     name: 'design_system_read',
     description:
       'Read the design tokens that pages and docs in this project inherit, and whether they come from the project, the profile library, or the built-in default.',
-    parameters: { type: 'object', additionalProperties: false, properties: {} },
+    parameters: { type: 'object', additionalProperties: false, properties: { workspaceId: WORKSPACE_PARAM } },
     output: {
       schema: { type: 'object', additionalProperties: false, required: ['source', 'tokens'], properties: { source: { type: 'string' }, tokens: { type: 'string' } } },
       render: (_args, value) => [{ type: 'text', text: `Design system from ${String(record(value).source)}:\n${String(record(value).tokens)}` }],
     },
-    async execute(_args, exec) {
-      const target = await targetFor(host, exec, undefined).catch((error: unknown) => {
-        if (error instanceof ArtifactError && error.code === 'artifact/no-workspace') return {};
+    async execute(args, exec) {
+      const fields = fieldsOf(args);
+      const workspaceId = optionalString(fields, 'workspaceId');
+      const target = await targetFor(host, exec, undefined, workspaceId).catch((error: unknown) => {
+        // A session outside every workspace can still read the library. A named
+        // workspace that does not resolve is a real failure.
+        if (workspaceId === undefined && error instanceof ArtifactError && error.code === 'artifact/no-workspace') return {};
         throw error;
       });
       const resolved = await service.designSystem(target);
@@ -504,13 +528,14 @@ export function createTools(host: ToolHost): ToolDefinition[] {
         tokens: {
           type: 'object',
           description:
-            'Partial tokens: name, notes, colors and colorsDark {primary, accent, surface, text, muted}, typography {fontFamily, displayFamily, monoFamily, scale[]}, spacing {unit, scale[]}, radius {sm, md, lg}. Sizes are pixels.',
+            'Partial tokens: name, notes, colors and colorsDark {primary, accent, surface, text, muted, background, raised, border, control, action, actionText, focus, success, warning, danger}, typography {fontFamily, displayFamily, monoFamily, scale[]}, spacing {unit, scale[]}, radius {sm, md, lg}. Sizes are pixels.',
         },
         scope: {
           type: 'string',
           enum: ['workspace', 'library'],
           description: 'workspace (default) overrides tokens for this project only. library changes the profile default every project inherits.',
         },
+        workspaceId: WORKSPACE_PARAM,
       },
     },
     output: {
@@ -519,7 +544,7 @@ export function createTools(host: ToolHost): ToolDefinition[] {
     },
     async execute(args, exec) {
       const fields = fieldsOf(args);
-      const target = await targetFor(host, exec, optionalScope(fields));
+      const target = await targetFor(host, exec, optionalScope(fields), optionalString(fields, 'workspaceId'));
       const saved = await service.saveDesignSystem(target, fields.tokens);
       return { scope: saved.scope, tokens: JSON.stringify(saved.tokens, null, 2) };
     },

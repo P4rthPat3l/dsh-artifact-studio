@@ -72,7 +72,7 @@ function SelectionBar({ quote, askLabel, dismissLabel, onAsk, onDismiss }: {
   return (
     <div className="art-selection-bar" role="toolbar" aria-label={askLabel}>
       <span className="art-selection-quote" title={quote}>{quote}</span>
-      <Button size="sm" variant="primary" icon={<IconSparkleRegular size={14} />} onClick={onAsk}>{askLabel}</Button>
+      <Button size="sm" variant="primary" className="art-ask" icon={<IconSparkleRegular size={14} />} onClick={onAsk}>{askLabel}</Button>
       <IconButton label={dismissLabel} icon={<IconCloseOutlineRegular size={14} />} onClick={onDismiss} />
     </div>
   );
@@ -99,7 +99,7 @@ function LayerBar({ t, layer, askLabel, dismissLabel, onAsk, onDismiss }: {
         <span className="art-layer-bar-name" title={layer.name}>{layer.name}</span>
         <span className="art-layer-bar-sub">{layer.parentName === '' ? type : t('layer.parentLine', { type, parent: layer.parentName })}</span>
       </span>
-      <Button size="sm" variant="primary" icon={<IconSparkleRegular size={14} />} onClick={onAsk}>{askLabel}</Button>
+      <Button size="sm" variant="primary" className="art-ask" icon={<IconSparkleRegular size={14} />} onClick={onAsk}>{askLabel}</Button>
       <IconButton label={dismissLabel} icon={<IconCloseOutlineRegular size={14} />} onClick={onDismiss} />
     </div>
   );
@@ -185,10 +185,10 @@ export function ArtifactTab(props: TabProps) {
   return <ArtifactBody key={formatArtifactAddress(address)} t={props.t} address={address} useTabInfo={props.useTabInfo} onBack={info.tab.actions?.close} workspaceName={workspaceName} inputActions={props.inputActions} />;
 }
 
-export function ArtifactPanelBody({ t, address, onBack, workspaceName }: {
-  t: Translator; address: ArtifactAddress; onBack: () => void; workspaceName?: string;
+export function ArtifactPanelBody({ t, address, onBack, workspaceName, inputActions }: {
+  t: Translator; address: ArtifactAddress; onBack: () => void; workspaceName?: string; inputActions?: InputActions;
 }) {
-  return <ArtifactBody key={formatArtifactAddress(address)} t={t} address={address} onBack={onBack} workspaceName={workspaceName} back />;
+  return <ArtifactBody key={formatArtifactAddress(address)} t={t} address={address} onBack={onBack} workspaceName={workspaceName} back inputActions={inputActions} />;
 }
 
 interface ArtifactBodyProps {
@@ -454,7 +454,13 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
       const version = await resolveOutput();
       if (version === null) return;
       const current = model.getSnapshot().payload ?? payload;
-      const reference = buildReference(t, { title: current.manifest.title, id, version, current: current.version });
+      const reference = buildReference(t, {
+        title: current.manifest.title,
+        id,
+        version,
+        current: current.version,
+        ...(address.scope === 'workspace' ? { workspaceId: address.workspaceId } : {}),
+      });
       const text = quote?.text ?? '';
       setSelection(null);
       setCanvasSelection([]);

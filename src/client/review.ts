@@ -19,6 +19,8 @@ export interface ReferenceFields {
   id: string;
   version: number;
   current: number;
+  /** The owning project, when the artifact is a workspace artifact. */
+  workspaceId?: string;
 }
 
 /**
@@ -46,8 +48,12 @@ export function quoteText(value: string, limit = QUOTE_LIMIT): Quote {
  * @returns the reference text, ending in a space.
  */
 export function buildReference(t: Translator, fields: ReferenceFields): string {
-  const key = fields.version === fields.current ? 'agent.reference' : 'agent.referenceOld';
-  return `${t(key, { title: fields.title, id: fields.id, version: fields.version, current: fields.current })} `;
+  const project = fields.workspaceId !== undefined && fields.workspaceId !== '';
+  const key = fields.version === fields.current
+    ? project ? 'agent.referenceProject' : 'agent.reference'
+    : project ? 'agent.referenceOldProject' : 'agent.referenceOld';
+  const values = { title: fields.title, id: fields.id, version: fields.version, current: fields.current, ...(project ? { workspaceId: fields.workspaceId } : {}) };
+  return `${t(key, values)} `;
 }
 
 /**

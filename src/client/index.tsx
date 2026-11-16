@@ -8,17 +8,17 @@ import { SurfaceBoundary } from './boundary.jsx';
 import { ArtifactCard } from './card.jsx';
 import { ComposerButton } from './composer.jsx';
 import { DocView } from './doc-view.jsx';
-import { ArtifactsPanel } from './panel.jsx';
+import { ArtifactsPanel, WorkspaceArtifactsPanel } from './panel.jsx';
 import type { ClientContext, LayoutService, SessionSlotProps, TabProps, ToolViewProps, Translator, UseTabInfo } from './harness.js';
 import { IconArtifacts, IconDoc } from './icons.jsx';
-import { ARTIFACT_ID, ARTIFACT_KIND, PANEL_ID } from './ids.js';
+import { ARTIFACT_ID, ARTIFACT_KIND, GALLERY_ID, GALLERY_KIND, PANEL_ID } from './ids.js';
 import { EN, ZH } from './locale.js';
 import { runtime } from './runtime.js';
 import { clearNotice, titleOf, useNotice, useTitle } from './store.js';
 import { installStyles } from './styles.js';
 
 export { ArtifactCard, ArtifactTab, DocView };
-export { ARTIFACT_ID, ARTIFACT_KIND, PANEL_ID };
+export { ARTIFACT_ID, ARTIFACT_KIND, GALLERY_ID, GALLERY_KIND, PANEL_ID };
 
 const NS = 'artifacts';
 export const CARD_TOOLS = ['artifact_create', 'artifact_update'] as const;
@@ -107,6 +107,26 @@ export function apply(ctx: ClientContext): void {
     'dsh-artifact-studio: artifact tab type',
   );
 
+  ctx.effect(
+    () =>
+      ctx.sidebarRightTabs.register({
+        id: GALLERY_ID,
+        kind: GALLERY_KIND,
+        priority: 'extension',
+        title: () => t('panel'),
+        guide: [
+          {
+            id: 'artifacts',
+            order: 30,
+            title: () => t('panel'),
+            description: () => t('right.guideHint'),
+            icon: IconArtifacts,
+          },
+        ],
+      }),
+    'dsh-artifact-studio: right panel artifacts page',
+  );
+
   const inject = () => ({ t });
   ctx.effect(() => () => clearNotice(), 'dsh-artifact-studio: notification cleanup');
   ctx.slots.inject('shell.overlay', () =>
@@ -117,6 +137,9 @@ export function apply(ctx: ClientContext): void {
   );
   ctx.slots.inject('sidebar.right.pane.tab.title', () =>
     ctx.slots.register({ name: 'sidebar.right.pane.tab.title', key: ARTIFACT_ID, locale: NS, inject }, ArtifactTitle),
+  );
+  ctx.slots.inject('sidebar.right.pane.tab', () =>
+    ctx.slots.register<TabProps>({ name: 'sidebar.right.pane.tab', key: GALLERY_ID, locale: NS, inject }, guarded(WorkspaceArtifactsPanel)),
   );
   for (const tool of CARD_TOOLS) {
     ctx.slots.inject('tool.call.toolview', () =>

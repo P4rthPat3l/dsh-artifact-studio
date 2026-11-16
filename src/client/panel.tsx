@@ -4,7 +4,8 @@ import { parseArtifactAddress } from '../contract.js';
 import { ArtifactPanelBody } from './artifact-tab.jsx';
 import { GalleryBody, formatScope, parseScopeValue } from './gallery.jsx';
 import type { GalleryProject, GalleryScope } from './gallery.jsx';
-import type { Translator, WorkspacesSource } from './harness.js';
+import { useWorkspaceBinding } from './binding.js';
+import type { TabProps, Translator, WorkspacesSource } from './harness.js';
 
 /** Remembers the full page's scope: every project, one project, or the library. */
 const SCOPE_KEY = 'dsh-artifact-studio.panel.scope';
@@ -80,6 +81,65 @@ export function ArtifactsPanel({ t, workspaces }: { t: Translator; workspaces: W
         />
       </div>
       {address === undefined ? null : <div className="art-panel-region"><ArtifactPanelBody t={t} address={address} workspaceName={items.find(item => address.scope === 'workspace' && item.workspaceId === address.workspaceId)?.title} onBack={() => setSelected(null)} /></div>}
+    </div>
+  );
+}
+
+/**
+ * The Artifacts page in the right sidebar. It is the full page fixed to the
+ * session's workspace: one list, no scope control, and an in-place artifact view
+ * with Back, so the right panel and the left panel behave the same way.
+ * @param props the translator, the session, and the workspace hooks.
+ * @returns the page.
+ */
+export function WorkspaceArtifactsPanel({ t, sessionId, useSessions, useWorkspaces, inputActions }: TabProps): ReactNode {
+  const binding = useWorkspaceBinding({ sessionId, useSessions, useWorkspaces });
+  const workspaceId = binding.workspaceId;
+  const title = useWorkspaces((state) => state.items.find((item) => item.workspaceId === workspaceId)?.title);
+  const [selected, setSelected] = useState<string | null>(null);
+
+  // A different session workspace starts from the list again.
+  useEffect(() => { setSelected(null); }, [workspaceId]);
+
+  const projects = useMemo<GalleryProject[]>(
+    () => (workspaceId === null ? [] : [{ workspaceId, title: title ?? workspaceId }]),
+    [workspaceId, title],
+  );
+  const address = useMemo(() => (selected === null ? undefined : parseArtifactAddress(selected)), [selected]);
+
+  if (workspaceId === null) {
+    return (
+      <section className="art-root" data-dsh-artifact-studio="">
+        <div className="art-center" role="status">
+          <p className="art-center-hint">{t('empty.noWorkspace')}</p>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <div className="art-panel-stack">
+      <div className="art-panel-region" hidden={address !== undefined}>
+        <GalleryBody
+          t={t}
+          projects={projects}
+          scope={{ kind: 'workspace', workspaceId }}
+          contextWorkspaceId={workspaceId}
+          scopeLocked
+          open={(next) => setSelected(next)}
+        />
+      </div>
+      {address === undefined ? null : (
+        <div className="art-panel-region">
+          <ArtifactPanelBody
+            t={t}
+            address={address}
+            workspaceName={title}
+            onBack={() => setSelected(null)}
+            {...(inputActions === undefined ? {} : { inputActions })}
+          />
+        </div>
+      )}
     </div>
   );
 }

@@ -133,7 +133,26 @@ async function readScopeTokens(root: ScopeRoot): Promise<DesignTokens | undefine
   const file = path.join(root.root, FILE);
   if (!(await assertPlainFile(file))) return undefined;
   try {
-    return mergeTokens(DEFAULT_TOKENS, JSON.parse(await fs.readFile(file, 'utf8')));
+    const stored: unknown = JSON.parse(await fs.readFile(file, 'utf8'));
+    if (!isObject(stored)) return undefined;
+    const upgraded = { ...stored };
+    for (const set of ['colors', 'colorsDark'] as const) {
+      const defaults = DEFAULT_TOKENS[set];
+      const colors = stored[set];
+      if (!isObject(colors)) continue;
+      // Legacy brands must not inherit rust actions or warm backgrounds from the new default.
+      upgraded[set] = {
+        background: colors.surface ?? defaults.surface,
+        raised: colors.surface ?? defaults.surface,
+        border: colors.muted ?? defaults.muted,
+        control: colors.muted ?? defaults.muted,
+        action: colors.primary ?? defaults.primary,
+        actionText: colors.surface ?? defaults.surface,
+        focus: colors.primary ?? defaults.primary,
+        ...colors,
+      };
+    }
+    return mergeTokens(DEFAULT_TOKENS, upgraded);
   } catch (error) {
     if (error instanceof SyntaxError || error instanceof ArtifactError) return undefined;
     throw error;

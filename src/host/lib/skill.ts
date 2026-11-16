@@ -1,5 +1,9 @@
 /** The bundled design skill the agent loads before it writes an artifact. */
 
+import { fileURLToPath } from 'node:url';
+
+const PAGE_REFERENCE = fileURLToPath(new URL('../../../examples/page-design-system.html', import.meta.url));
+
 export interface BundledSkill {
   readonly name: string;
   readonly description: string;
@@ -19,8 +23,12 @@ Use \`artifact_create\` when the user asks for an artifact, an artifact page, an
 ## Precedence
 
 1. The user's request wins. If they name a palette, font, layout, or tone, follow it.
-2. The design system comes next. Read it with \`design_system_read\` when the work should match earlier artifacts, and use its \`--artifact-*\` variables.
+2. The design system comes next. Read it with \`design_system_read\` before styling a page, and use its \`--artifact-*\` variables.
 3. Your own choices come last, and only fill the gaps.
+
+## Projects and scopes
+
+An artifact belongs to the session's project unless the user opened or referenced another project's artifact. The artifact reference names that project's workspace id. Pass it as \`workspaceId\` to the artifact tools and to \`design_system_read\`; omit it for this project. The library is shared across projects, so it needs no workspace id.
 
 ## Pick the type
 
@@ -29,6 +37,29 @@ Use \`artifact_create\` when the user asks for an artifact, an artifact page, an
 - \`design\` for a layout the user will open on a canvas: UI mockups, wireframes, layout explorations, and screens that export as PNG, SVG, or a \`.fig\` document.
 
 A request for a mockup or a wireframe always gets \`design\`, even when it shows a flow. Draw each step of the flow as its own frame. If the user offers both, such as "a page or a mockup", make a mockup. Use \`page\` for a mockup only when the user asks for a page or for something clickable. Never title or describe a page as a mockup.
+
+## Choose the reader's task
+
+Establish the audience, their question, and the observable outcome from the request and available evidence. Ask only about a material unresolved decision. A simple artifact does not need its own planning document or approval round unless the project's rules require one.
+
+Choose the structure by the task, not by a favorite template:
+
+- Architecture walkthrough: show boundaries, dependencies, and one request or data flow. Label connections and provide a textual flow beside the diagram.
+- Feature walkthrough: name the actor and starting conditions, show the actions and alternate paths, and state the resulting behavior.
+- UI proposal: show only the relevant screens and interaction states. Mark simulated actions. A static canvas mockup remains type \`design\`; a requested clickable page remains type \`page\`.
+- Technical decision: state the recommendation, compare options with evidence and tradeoffs, and name what would change the decision.
+- Investigation report: separate observations, evidence, hypotheses, and unresolved checks. Do not present a hypothesis as a confirmed cause.
+- Metrics dashboard: name sources, units, time range, baseline, and missing data. Derive charts, tables, labels, and selection details from one dataset. Never turn missing values into zero.
+
+Do not invent metrics, owners, customer quotes, or product claims. Label illustrative data. Static reports need no fake loading, pending, or error states. Explain charts and diagrams in text as well as color.
+
+## Use one design system
+
+Inspect the project's design language before choosing styles: design docs, CSS custom properties, theme configuration, and existing components. The user's explicit visual brief still wins. If the project has a system, use its palette, type, spacing, radii, and motion together. Do not copy the Artifact Studio editor's controls into the artifact.
+
+Use resolved scope tokens when they match the project. For a requested page in a different project brand, map that brand into page-local semantic variables on \`body\` and use those variables consistently in that page. These local variables are the exception to using injected values directly. Define their dark values with \`:root[data-artifact-theme="dark"] body\` and their export/system values inside \`@media (prefers-color-scheme: dark)\` with \`:root[data-artifact-theme="auto"] body\`. A later bare \`:root\` rule cannot override the more specific injected dark rules. Keep both themes coherent. Do not call \`design_system_update\` to change shared settings unless the user asked for that change. If the project has no system, use the resolved artifact system and its default patterns rather than inventing a competing palette.
+
+For a page, read the packaged HTML reference with the file-read tool: \`${PAGE_REFERENCE}\`. It shows headers, sections, native buttons and fields, a table, status badges, and a callout. Read only the relevant sections. It uses injected tokens and is intended to render through the artifact renderer; opening the bare file alone does not supply tokens. Reuse the relevant structure and CSS inline, not the specimen copy, the complete page layout, or its theme inspection controls by default. Do not add a framework, CDN, build system, or local server for a self-contained page.
 
 ## Designs (OpenPencil Design JSX)
 
@@ -68,13 +99,15 @@ A page renders in an opaque-origin iframe with every network request blocked.
 
 The host injects these on \`:root\` before your markup:
 
-- Colors: \`--artifact-color-primary\`, \`-accent\`, \`-surface\`, \`-text\`, \`-muted\`.
+- Colors use the prefix \`--artifact-color-\`: \`background\` for the page, \`surface\` for an object, \`raised\` for secondary grouping, \`text\` and \`muted\` for text, \`primary\` for links, and \`accent\` for non-text emphasis.
+- \`border\` is a quiet divider; \`control\` is the stronger border that identifies an input. Use \`focus\` for keyboard focus and \`success\`, \`warning\`, or \`danger\` with a text status on a neutral background. Do not rely on color alone.
+- Pair \`--artifact-color-action\` backgrounds with \`--artifact-color-action-text\` foregrounds. Never assume the surface color is readable button text. JSON calls this role \`actionText\`; CSS uses \`action-text\`.
 - Fonts: \`--artifact-font-family\` for body text, \`--artifact-font-display\` for headings, \`--artifact-font-mono\` for code and data.
 - Sizes: \`--artifact-font-size-0\` to \`-6\`, \`--artifact-space-0\` to \`-6\`, \`--artifact-radius-sm\`, \`-md\`, \`-lg\`.
 
 Use the variables instead of literal colors and fonts. Derive borders and subtle fills from them, for example \`color-mix(in srgb, var(--artifact-color-text) 12%, transparent)\`. A page that hard-codes \`#fff\` cards over token text breaks in dark mode.
 
-Dark mode is opt in. Add \`<meta name="color-scheme" content="light dark">\` and the host switches the color variables to the dark set when the user's theme is dark. Only add it when every color on the page comes from the variables or from \`color-mix\` over them.
+Dark mode is opt in. Add \`<meta name="color-scheme" content="light dark">\` and the host switches the color variables to the dark set when the user's theme is dark. Use it for new fully token-based pages and verify both themes. Only add it when every color on the page comes from the variables or from \`color-mix\` over them. The root attribute is \`data-artifact-theme\`, not \`data-theme\`. Do not add a theme switcher to every deliverable; the host already selects its theme.
 
 ## Layout and type
 
@@ -84,7 +117,9 @@ Dark mode is opt in. Add \`<meta name="color-scheme" content="light dark">\` and
 - Prefer one strong layout over many equal boxes. Avoid a grid of identical icon cards, an all-caps label above every heading, gradient text, glassmorphism, and decorative emoji.
 - Use one motion moment at most, and respect \`prefers-reduced-motion\`.
 - Numbers use \`font-variant-numeric: tabular-nums\`. Charts label their axes and units, and color encodes meaning, not decoration.
-- Interactive controls are real \`button\` and \`input\` elements with visible focus and labels.
+- Interactive controls are real \`button\`, \`input\`, and \`select\` elements with visible focus and labels. Use \`type="button"\` for actions; native form navigation is blocked. Handle Enter without navigation, validate inputs, and state what a simulated action does. Keep user input on an actual error; add pending and retry states only for actions that need them.
+- Match control borders and placeholder text to their semantic roles. Style selection, caret, scrollbars, and tabular numerals as part of the same system. Keep body text at 4.5:1 contrast, large text and control boundaries at 3:1, and provide keyboard access. Saved custom palettes are preserved, so verify their contrast rather than assuming it.
+- A page has no storage or feedback bridge and no bundled chart libraries. Interactions are local to the view unless the tools explicitly provide another contract. Do not imply that a local form updates an account or sends a chat message.
 
 ## Documents
 
@@ -97,7 +132,9 @@ Dark mode is opt in. Add \`<meta name="color-scheme" content="light dark">\` and
 Every \`artifact_create\` and \`artifact_update\` call writes a new version the user sees in History. Treat each save as a release, not a draft.
 
 - Finish the artifact before the first save. Reread the full draft once for broken markup, CSS that hides or overrides elements such as \`[hidden]\`, controls without handlers, placeholder copy, and the sandbox rules above.
-- To check a page visually, render a scratch copy outside the artifact, for example a temporary HTML file in a browser tool. Fix what you find there, then create the artifact once.
+- To check a page visually, render a scratch copy outside the artifact using the real resolved token CSS, \`composePage\`, CSP, and \`sandbox="allow-scripts"\` when available. A bare HTML file cannot verify injected tokens or sandbox behavior. This plugin has no unpublished page-preview tool.
+- In one batched pass, check 380 and 700 pixel panels and a wide view in light and dark when supported. Check overflow, long labels, reading order, keyboard focus, contrast, chart/table agreement, and every actual interaction. Check script/resource errors. Fix all concrete findings together and use at most one confirmation pass for normal refinement.
+- If browser verification is unavailable, state that rendering and interactions remain unverified. Do not install browser infrastructure or create repeated versions to compensate. If the user needs a saved deliverable, use source preflight and save once with that limit disclosed.
 - If a check after saving finds problems, fix all of them in one \`artifact_update\`. Never send one update per finding.
 - Do not run polish passes the user did not ask for. One create, plus at most one corrective update, is the normal result of one request.
 
@@ -119,7 +156,7 @@ Tell the user in one or two sentences what you made or changed. Do not repeat th
 export const ARTIFACT_DESIGN_SKILL: BundledSkill = {
   name: 'artifact-design',
   description:
-    'Design rules for artifact pages, documents, and OpenPencil designs: when to use an artifact, precedence, the page sandbox, Design JSX, design tokens, dark mode, layout, typography, and the update rule.',
+    'Author artifact pages, documents, and OpenPencil mockups with project-first design, task-specific structure, semantic tokens, a packaged HTML reference, sandbox rules, accessibility, bounded verification, and version-safe revisions.',
   whenToUse: 'Load before artifact_create, when the user asks for an artifact, and before an artifact_update that changes layout or styling.',
   source: 'bundled',
   content: CONTENT,

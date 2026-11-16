@@ -607,7 +607,9 @@ export interface GalleryBodyProps {
   projects: readonly GalleryProject[];
   scope: GalleryScope;
   contextWorkspaceId: string | null;
-  onScopeChange: (scope: GalleryScope) => void;
+  onScopeChange?: (scope: GalleryScope) => void;
+  /** The caller owns the scope, so the select is replaced by the project name. */
+  scopeLocked?: boolean;
   open?: (address: string) => void;
 }
 
@@ -617,7 +619,7 @@ export interface GalleryBodyProps {
  * @param props the projects, the scope, the open action, and the scope action.
  * @returns the page body.
  */
-export function GalleryBody({ t, projects, scope, contextWorkspaceId, onScopeChange, open }: GalleryBodyProps) {
+export function GalleryBody({ t, projects, scope, contextWorkspaceId, onScopeChange, scopeLocked = false, open }: GalleryBodyProps) {
   const [query, setQuery] = useState('');
   const [type, setType] = useState<ArtifactType | undefined>(undefined);
   const [view, setView] = useState<'list' | 'design'>('list');
@@ -675,24 +677,30 @@ export function GalleryBody({ t, projects, scope, contextWorkspaceId, onScopeCha
           <span className="art-title">{view === 'design' ? t('design.title') : t('panel')}</span>
         </div>
         {view === 'list' ? (
-          <label className="art-workspace">
-            <span className="art-workspace-label">{t('scope.label')}</span>
-            <select
-              className="art-workspace-select"
-              aria-label={t('scope.label')}
-              value={formatScope(scope)}
-              onChange={(event) => {
-                const next = parseScopeValue(event.target.value);
-                if (next !== undefined) onScopeChange(next);
-              }}
-            >
-              <option value="all">{t('scope.all')}</option>
-              {projects.map((project) => (
-                <option key={project.workspaceId} value={'ws:' + project.workspaceId}>{project.title}</option>
-              ))}
-              <option value="library">{t('scope.library')}</option>
-            </select>
-          </label>
+          scopeLocked ? (
+            <span className="art-scope-fixed" title={targetProject?.title ?? t('scope.workspace')}>
+              {targetProject?.title ?? t('scope.workspace')}
+            </span>
+          ) : (
+            <label className="art-workspace">
+              <span className="art-workspace-label">{t('scope.label')}</span>
+              <select
+                className="art-workspace-select"
+                aria-label={t('scope.label')}
+                value={formatScope(scope)}
+                onChange={(event) => {
+                  const next = parseScopeValue(event.target.value);
+                  if (next !== undefined) onScopeChange?.(next);
+                }}
+              >
+                <option value="all">{t('scope.all')}</option>
+                {projects.map((project) => (
+                  <option key={project.workspaceId} value={'ws:' + project.workspaceId}>{project.title}</option>
+                ))}
+                <option value="library">{t('scope.library')}</option>
+              </select>
+            </label>
+          )
         ) : null}
         {view === 'list' ? (
           <div className="art-actions">

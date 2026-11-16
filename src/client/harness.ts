@@ -104,8 +104,8 @@ export interface GuideEntry {
   id: string;
   order: number;
   title: () => string;
-  description: () => string;
-  icon: () => ReactNode;
+  description?: () => string;
+  icon?: ComponentType<{ size?: number }>;
 }
 
 export interface TabTypeDefinition {

@@ -5,6 +5,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { installDom, settle } from './dom.mjs';
+import { DEFAULT_TOKENS, COLOR_ROLES } from '../dist/contract.js';
 
 const require = createRequire(import.meta.url);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -185,8 +186,8 @@ const DESIGN_SOURCE = '<Frame w={320} p={24} bg="#ffffff"><Text size={24}>Quarte
 const TOKENS = {
   schemaVersion: 1,
   name: 'Default',
-  colors: { primary: '#1a4d8f', accent: '#d97706', surface: '#f8fafc', text: '#0f172a', muted: '#64748b' },
-  colorsDark: { primary: '#86a8ff', accent: '#45c9a8', surface: '#15171b', text: '#e8e9ec', muted: '#a0a6b2' },
+  colors: { ...DEFAULT_TOKENS.colors, primary: '#1a4d8f', accent: '#d97706', surface: '#f8fafc', text: '#0f172a', muted: '#64748b' },
+  colorsDark: { ...DEFAULT_TOKENS.colorsDark, primary: '#86a8ff', accent: '#45c9a8', surface: '#15171b', text: '#e8e9ec', muted: '#a0a6b2' },
   typography: { fontFamily: 'system-ui', displayFamily: 'Georgia, serif', monoFamily: 'monospace', scale: [12] },
   spacing: { unit: 4, scale: [4] },
   radius: { sm: 4, md: 8, lg: 12 },
@@ -426,6 +427,13 @@ function composerActions(options = {}) {
 async function galleryView(records) {
   const main = slot(records, 'main', 'dsh-artifact-studio-panel');
   return render(main.component, main.spec.inject());
+}
+
+/** Render the right sidebar's Artifacts page, bound to session ses-a in Work A. */
+async function rightGalleryView(records, extra = {}) {
+  const body = slot(records, 'sidebar.right.pane.tab', 'dsh-artifact-studio/artifacts');
+  const useWorkspaces = (select) => select({ items: [{ workspaceId: 'ws-a', path: '/work/a', title: 'Work A', sessionIds: ['ses-a'] }] });
+  return { body, view: await render(body.component, { ...tabProps(null), useWorkspaces, ...extra }) };
 }
 
 /**
@@ -1065,6 +1073,160 @@ test('AC-090: the design system control is a palette and edits the scope in cont
   } finally { await view.unmount(); }
 });
 
+test('AC-094: agent requests name the artifact workspace', async () => {
+  const host = fakeHost();
+  const ownId = 'art_ws_ref0940001';
+  host.state.artifacts.set(ownId, { manifest: host.manifest(ownId, 'page', 'Own page', 2), content: '<p>x</p>' });
+  const sharedId = 'art_lib_ref0940001';
+  host.state.artifacts.set(sharedId, { manifest: host.manifest(sharedId, 'doc', 'Shared doc', 1, 'library'), content: '# x' });
+  const { ctx, records } = stubContext(host);
+  plugin.apply(ctx);
+  const tab = slot(records, 'sidebar.right.pane.tab', 'dsh-artifact-studio/artifact');
+
+  const own = composerActions();
+  const ownView = await render(tab.component, { ...tabProps('dsh-resource://artifact/workspace/ws-a/' + ownId), inputActions: own.actions });
+  try {
+    await click(findButton(ownView, 'agent.ask'));
+    const insert = own.calls.find((call) => call[0] === 'insertText');
+    assert.ok(insert, 'the workspace reference was not inserted');
+    assert.match(insert[1], new RegExp('agent\\.referenceProject\\|title=Own page\\|id=' + ownId));
+    assert.match(insert[1], /workspaceId=ws-a/);
+  } finally { await ownView.unmount(); }
+
+  const shared = composerActions();
+  const sharedView = await render(tab.component, { ...tabProps('dsh-resource://artifact/library/' + sharedId), inputActions: shared.actions });
+  try {
+    await click(findButton(sharedView, 'agent.ask'));
+    const insert = shared.calls.find((call) => call[0] === 'insertText');
+    assert.ok(insert, 'the library reference was not inserted');
+    assert.match(insert[1], new RegExp('agent\\.reference\\|title=Shared doc\\|id=' + sharedId));
+    assert.doesNotMatch(insert[1], /workspaceId/, 'a library request named a workspace');
+  } finally { await sharedView.unmount(); }
+});
+
+test('AC-095: the right panel lists the current workspace only', async () => {
+  const host = fakeHost();
+  const ownId = 'art_ws_right095001';
+  host.state.artifacts.set(ownId, { workspaceId: 'ws-a', manifest: host.manifest(ownId, 'page', 'Own page', 2), content: '<p>a</p>' });
+  const otherId = 'art_ws_right095002';
+  host.state.artifacts.set(otherId, { workspaceId: 'ws-b', manifest: host.manifest(otherId, 'doc', 'Other project', 1), content: '# b' });
+  const { ctx, records } = stubContext(host);
+  plugin.apply(ctx);
+
+  const definition = records.tabs.find((entry) => entry.kind === 'artifacts');
+  assert.ok(definition, 'the right-panel artifacts type is not registered');
+  assert.equal(definition.id, 'dsh-artifact-studio/artifacts');
+  assert.equal(definition.priority, 'extension');
+  assert.equal(definition.patterns, undefined, 'a page type must not claim resource addresses');
+  assert.equal(definition.guide.length, 1, 'the guide has no artifacts entry');
+  assert.equal(definition.guide[0].order, 30);
+  assert.equal(definition.guide[0].title(), 'panel');
+  assert.ok(definition.guide[0].description().startsWith('right.guideHint'));
+  assert.ok(definition.guide[0].icon, 'the guide entry has no glyph');
+
+  const { view } = await rightGalleryView(records);
+  try {
+    await act(async () => settle(80));
+    assert.match(view.container.textContent, /Own page/);
+    assert.doesNotMatch(view.container.textContent, /Other project/);
+    assert.equal(view.container.querySelector('[aria-label="scope.label"]'), null, 'the fixed list still shows a scope select');
+    assert.match(view.container.querySelector('.art-scope-fixed').textContent, /Work A/);
+    const lists = host.calls.filter((call) => call.endpoint === 'list').map((call) => call.payload);
+    assert.ok(lists.length > 0, 'no list call was made');
+    assert.ok(lists.every((payload) => payload.scope === 'workspace' && payload.workspaceId === 'ws-a'), 'the fixed list asked for another scope');
+    for (const button of view.container.querySelectorAll('button')) {
+      const name = button.getAttribute('aria-label') ?? button.textContent.trim();
+      assert.ok(name.length > 0, 'unnamed button in the right-panel list: ' + button.outerHTML);
+    }
+  } finally { await view.unmount(); }
+});
+
+test('AC-096: the right panel opens an artifact in place and creates in the workspace', async () => {
+  const host = fakeHost();
+  const id = 'art_ws_right096001';
+  host.state.artifacts.set(id, { workspaceId: 'ws-a', manifest: host.manifest(id, 'page', 'Right page', 2), content: '<p>right</p>' });
+  const { ctx, records } = stubContext(host);
+  plugin.apply(ctx);
+  const { view } = await rightGalleryView(records);
+  try {
+    await act(async () => settle(80));
+    await click(view.container.querySelector('.art-tile-open'));
+    await act(async () => settle(120));
+    assert.match(view.container.textContent, /Right page/);
+    assert.ok(byLabel(view, 'action.back'), 'the in-place view has no Back control');
+
+    await click(byLabel(view, 'action.back'));
+    await act(async () => settle(80));
+    assert.ok(view.container.querySelector('.art-tile-open'), 'Back did not return to the list');
+
+    await click(findButton(view, 'gallery.create'));
+    const items = [...view.container.querySelectorAll('[role="menuitem"]')];
+    assert.equal(items.length, 3);
+    assert.ok(items.every((item) => item.textContent.includes('Work A')), 'the create menu did not name the workspace');
+    await click(items[1]);
+    await act(async () => settle(120));
+    const create = host.calls.find((call) => call.endpoint === 'create');
+    assert.ok(create, 'no create call was made');
+    assert.equal(create.payload.scope, 'workspace');
+    assert.equal(create.payload.workspaceId, 'ws-a');
+  } finally { await view.unmount(); }
+});
+
+test('AC-097: gallery card titles are not truncated', async () => {
+  const css = await fs.readFile(path.join(root, 'src/client/styles.ts'), 'utf8');
+  const rule = css.match(/\.art-tile-title \{([^}]*)\}/);
+  assert.ok(rule, 'no gallery card title rule');
+  assert.doesNotMatch(rule[1], /text-overflow:\s*ellipsis/, 'the card title still ellipsizes');
+  assert.doesNotMatch(rule[1], /white-space:\s*nowrap/, 'the card title is still one line');
+  assert.match(rule[1], /overflow-wrap:\s*anywhere/, 'a long name cannot wrap inside a narrow card');
+});
+
+test('AC-098: the right-panel page strings and controls are localized and named', async () => {
+  const { EN, ZH } = await import('../src/client/locale.ts');
+  for (const key of ['right.guideHint', 'agent.referenceProject', 'agent.referenceOldProject']) {
+    assert.ok(EN[key], 'en is missing ' + key);
+    assert.ok(ZH[key], 'zh is missing ' + key);
+  }
+  assert.deepEqual(Object.keys(EN).sort(), Object.keys(ZH).sort());
+  const host = fakeHost();
+  const { ctx, records } = stubContext(host);
+  plugin.apply(ctx);
+  const { view } = await rightGalleryView(records);
+  try {
+    await act(async () => settle(80));
+    assert.ok(view.container.querySelector('[aria-label="gallery.searchLabel"]'), 'the search box has no label');
+    assert.ok(findButton(view, 'gallery.create'), 'the create action has no accessible name');
+    assert.ok(byLabel(view, 'gallery.refresh'), 'the refresh action has no accessible name');
+  } finally { await view.unmount(); }
+});
+
+test('DS-AC-008: semantic colors have localized form controls and a paired action preview', async () => {
+  const { EN, ZH } = await import('../src/client/locale.ts');
+  for (const role of COLOR_ROLES) {
+    assert.ok(EN['design.color.' + role], role + ' EN');
+    assert.ok(ZH['design.color.' + role], role + ' ZH');
+  }
+  const host = fakeHost();
+  const { ctx, records } = stubContext(host);
+  plugin.apply(ctx);
+  const view = await galleryView(records);
+  try {
+    await click(view.container.querySelector('[aria-label="gallery.design"]'));
+    for (const role of COLOR_ROLES) {
+      for (const set of ['design.colors', 'design.colorsDark']) {
+        const input = [...view.container.querySelectorAll('input[type="text"]')]
+          .find((item) => item.getAttribute('aria-label') === 'design.color.' + role + ' ' + set + ' CSS');
+        assert.ok(input, role + ' ' + set);
+        assert.ok(input.value, role + ' has no resolved value');
+      }
+    }
+    const preview = [...blobs.values()].map((blob) => blob.text());
+    const html = (await Promise.all(preview)).join('\n');
+    assert.match(html, /background: var\(--artifact-color-action\); color: var\(--artifact-color-action-text\)/);
+    assert.match(html, /background: var\(--artifact-color-raised\); color: var\(--artifact-color-success\)/);
+  } finally { await view.unmount(); }
+});
+
 test('AC-019: a stale UI save shows the conflict bar and keeps the draft', async () => {
   const host = fakeHost();
   host.state.artifacts.set('art_ws_conflict001', { manifest: host.manifest('art_ws_conflict001', 'page', 'Race', 1), content: '<p>a</p>' });
@@ -1141,7 +1303,7 @@ test('AC-023: locale dictionaries cover every used key', async () => {
     'design.radius.sm', 'design.radius.md', 'design.radius.lg',
     'format.heading', 'format.bold', 'format.italic', 'format.bulletList', 'format.orderedList', 'format.codeBlock',
     'prompt.dashboard', 'prompt.dashboardText', 'prompt.explainer', 'prompt.explainerText', 'prompt.report', 'prompt.reportText', 'prompt.brief', 'prompt.briefText',
-    'agent.reference', 'agent.referenceOld', 'agent.added', 'agent.addedTruncated', 'agent.insertFailed', 'agent.copied',
+    'agent.reference', 'agent.referenceOld', 'agent.referenceProject', 'agent.referenceOldProject', 'agent.added', 'agent.addedTruncated', 'agent.insertFailed', 'agent.copied',
     'card.creating', 'card.updating', 'card.updatingUntitled', 'card.working', 'card.created', 'card.updated',
   ];
   for (const key of dynamic) used.add(key);
@@ -1645,11 +1807,16 @@ test('AC-078: edit with agent inserts a quote and reference without sending', as
     await act(async () => { area.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })); await settle(40); });
     const bar = view.container.querySelector('.art-selection-bar');
     assert.ok(bar, 'no selection action appeared');
-    await click([...bar.querySelectorAll('button')].find(button => button.textContent === 'agent.ask'));
+    const action = [...bar.querySelectorAll('button')].find(button => button.textContent === 'agent.ask');
+    assert.ok(action.classList.contains('art-ask'), 'the selection action can shrink and wrap its label');
+    const styles = await fs.readFile(path.join(root, 'src/client/styles.ts'), 'utf8');
+    assert.match(styles, /\.art-ask \{ flex: none; white-space: nowrap; \}/, 'the selection action can wrap to several lines');
+    await click(action);
     assert.equal(host.state.artifacts.get(id).content, '<p>unsaved</p>', 'the draft was not saved first');
     assert.deepEqual(composer.calls.map(call => call[0]), ['insertQuote', 'captureInsertion', 'insertText']);
     assert.equal(composer.calls[0][1], '<p>');
-    assert.match(composer.calls[2][1], new RegExp('agent\\.reference\\|title=Regression\\|id=' + id + '\\|version=4'));
+    assert.match(composer.calls[2][1], new RegExp('agent\\.referenceProject\\|title=Regression\\|id=' + id + '\\|version=4'));
+    assert.match(composer.calls[2][1], /workspaceId=ws-a/, 'the request does not name the artifact workspace');
     assert.equal(view.container.querySelector('.art-selection-bar'), null);
 
     composer.calls.length = 0;
@@ -1679,7 +1846,8 @@ test('AC-079: the full page copies the reference instead', async () => {
     await click(view.container.querySelector('.art-tile-open'));
     await click(findButton(view, 'agent.ask'));
     assert.equal(writes.length, 1, 'the request was not copied');
-    assert.match(writes[0], new RegExp('agent\\.reference\\|title=Full page\\|id=' + id + '\\|version=2'));
+    assert.match(writes[0], new RegExp('agent\\.referenceProject\\|title=Full page\\|id=' + id + '\\|version=2'));
+    assert.match(writes[0], /workspaceId=ws-a/);
 
     Object.defineProperty(window.navigator, 'clipboard', { value: { writeText: async () => { throw new Error('denied'); } }, configurable: true });
     await click(findButton(view, 'agent.ask'));
@@ -1734,8 +1902,8 @@ test('AC-082: the composer menu lists recent artifacts and inserts starter promp
   }
   const { ctx, records } = stubContext(host);
   plugin.apply(ctx);
-  assert.equal(records.tabs.some(definition => definition.kind === 'artifacts'), false, 'the right-sidebar gallery is still registered');
-  assert.equal(records.slots.some(entry => entry.spec?.key === 'dsh-artifact-studio' && entry.spec.name === 'sidebar.right.pane.tab'), false);
+  assert.ok(records.tabs.some(definition => definition.kind === 'artifacts'), 'the right-panel artifacts page is not registered');
+  assert.equal(records.slots.some(entry => entry.spec?.key === 'dsh-artifact-studio' && entry.spec.name === 'sidebar.right.pane.tab'), false, 'the retired unnamed gallery is back');
   const button = slot(records, 'conversation.input.left', 'dsh-artifact-studio');
   const composer = composerActions();
   const props = { t, sessionId: 'ses-a', inputActions: composer.actions, useSessions: (select) => select({ byId: { 'ses-a': { cwd: '/work/a' } } }), useWorkspaces: (select) => select({ items: [{ workspaceId: 'ws-a', path: '/work/a', sessionIds: ['ses-a'] }] }) };

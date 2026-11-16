@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Page design reference</title>
+<!-- Render through composePage with resolved tokens. The skill supplies this file's installed path. -->
+<style>
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { background: var(--artifact-color-background); scrollbar-color: var(--artifact-color-control) var(--artifact-color-background); }
+body { margin: 0; color: var(--artifact-color-text); font: var(--artifact-font-size-2)/1.6 var(--artifact-font-family); overflow-wrap: anywhere; caret-color: var(--artifact-color-primary); }
+::selection { background: var(--artifact-color-action); color: var(--artifact-color-action-text); }
+:focus-visible { outline: 2px solid var(--artifact-color-focus); outline-offset: 3px; }
+button, input, select { font: inherit; }
+button { cursor: pointer; }
+a { color: var(--artifact-color-primary); text-underline-offset: .2em; }
+h1, h2, h3, p { margin: 0; }
+h1, h2 { font-family: var(--artifact-font-display); font-weight: 600; text-wrap: balance; }
+h1 { max-width: 16ch; font-size: clamp(2.5rem, 7vw, 4.5rem); line-height: 1.03; letter-spacing: -.03em; }
+h2 { font-size: clamp(1.75rem, 4vw, 2.5rem); line-height: 1.15; letter-spacing: -.02em; }
+h3 { font-size: var(--artifact-font-size-2); line-height: 1.4; }
+p { max-width: 65ch; }
+code, .num { font-family: var(--artifact-font-mono); }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+.page { width: min(100% - 2 * var(--artifact-space-4), 72rem); margin: auto; padding: var(--artifact-space-6) 0; }
+.header { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--artifact-space-5); padding-bottom: var(--artifact-space-5); border-bottom: 1px solid var(--artifact-color-border); }
+.lede { max-width: 55ch; margin-top: var(--artifact-space-4); color: var(--artifact-color-muted); }
+.theme { display: flex; flex-wrap: wrap; gap: var(--artifact-space-1); flex-shrink: 0; }
+.button { min-height: 44px; padding: var(--artifact-space-1) var(--artifact-space-3); border: 1px solid var(--artifact-color-control); border-radius: var(--artifact-radius-sm); background: var(--artifact-color-surface); color: var(--artifact-color-text); font-size: var(--artifact-font-size-1); font-weight: 600; }
+.button:hover:not(:disabled) { border-color: var(--artifact-color-text); }
+.button--primary, .theme [aria-pressed="true"] { border-color: var(--artifact-color-action); background: var(--artifact-color-action); color: var(--artifact-color-action-text); }
+.button:disabled { opacity: .5; cursor: not-allowed; }
+.section { padding-top: var(--artifact-space-6); }
+.section-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--artifact-space-4); margin-bottom: var(--artifact-space-4); }
+.note { max-width: 42ch; color: var(--artifact-color-muted); font-size: var(--artifact-font-size-1); }
+.foundations { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--artifact-space-5); }
+.type-example { padding-top: var(--artifact-space-3); }
+.type-example p + p { margin-top: var(--artifact-space-2); }
+.display-example { font: 600 var(--artifact-font-size-5)/1.15 var(--artifact-font-display); letter-spacing: -.02em; }
+.swatches { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--artifact-space-3); }
+.swatch { display: grid; gap: var(--artifact-space-1); font-size: var(--artifact-font-size-1); }
+.swatch::before { content: ""; height: 44px; border: 1px solid var(--artifact-color-border); border-radius: var(--artifact-radius-sm); background: var(--swatch); }
+.split { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: var(--artifact-space-4); align-items: start; }
+.card { padding: var(--artifact-space-4); background: var(--artifact-color-surface); border: 1px solid var(--artifact-color-border); border-radius: var(--artifact-radius-lg); }
+.card > p { margin-top: var(--artifact-space-2); }
+.card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--artifact-space-3); }
+.card-head h3 { font: 600 var(--artifact-font-size-4)/1.2 var(--artifact-font-display); }
+.facts { display: grid; grid-template-columns: 1fr 1fr; gap: var(--artifact-space-3); margin: var(--artifact-space-4) 0 0; }
+.facts div { border-top: 1px solid var(--artifact-color-border); padding-top: var(--artifact-space-2); }
+.facts dt { color: var(--artifact-color-muted); font-size: var(--artifact-font-size-1); }
+.facts dd { margin: var(--artifact-space-0) 0 0; font-weight: 600; }
+.callout { background: var(--artifact-color-raised); border-radius: var(--artifact-radius-md); padding: var(--artifact-space-4); }
+.callout p { margin-top: var(--artifact-space-1); }
+.badge { display: inline-flex; align-items: center; gap: var(--artifact-space-1); font-size: var(--artifact-font-size-1); font-weight: 600; }
+.badge::before { content: ""; width: 6px; height: 6px; flex-shrink: 0; border-radius: 50%; background: currentColor; }
+.badge--success { color: var(--artifact-color-success); }
+.badge--warning { color: var(--artifact-color-warning); }
+.badge--danger { color: var(--artifact-color-danger); }
+.form { display: grid; gap: var(--artifact-space-3); max-width: 36rem; }
+.field { display: grid; gap: var(--artifact-space-1); font-size: var(--artifact-font-size-1); font-weight: 600; }
+.input { min-height: 44px; width: 100%; min-width: 0; padding: var(--artifact-space-1) var(--artifact-space-2); border: 1px solid var(--artifact-color-control); border-radius: var(--artifact-radius-sm); background: var(--artifact-color-surface); color: var(--artifact-color-text); }
+.input::placeholder { color: var(--artifact-color-muted); opacity: 1; }
+.input[aria-invalid="true"] { border-color: var(--artifact-color-danger); }
+.actions { display: flex; flex-wrap: wrap; gap: var(--artifact-space-1); }
+.status { color: var(--artifact-color-success); }
+.error { color: var(--artifact-color-danger); }
+.table-wrap { max-width: 100%; overflow-x: auto; border: 1px solid var(--artifact-color-border); border-radius: var(--artifact-radius-md); background: var(--artifact-color-surface); }
+table { width: 100%; min-width: 36rem; border-collapse: collapse; font-size: var(--artifact-font-size-1); }
+caption { padding: var(--artifact-space-3); text-align: left; font-weight: 600; }
+th, td { padding: var(--artifact-space-2) var(--artifact-space-3); text-align: left; border-bottom: 1px solid var(--artifact-color-border); }
+thead { background: var(--artifact-color-raised); }
+tbody tr:last-child > * { border-bottom: 0; }
+.table-hint { margin-top: var(--artifact-space-1); }
+footer { margin-top: var(--artifact-space-6); border-top: 1px solid var(--artifact-color-border); padding-top: var(--artifact-space-4); }
+@media (max-width: 760px) { .header, .section-head { display: grid; gap: var(--artifact-space-3); } .foundations, .split { grid-template-columns: minmax(0, 1fr); } .page { padding-top: var(--artifact-space-4); } }
+@media (max-width: 420px) { .page { width: calc(100% - 2 * var(--artifact-space-3)); } .swatches { grid-template-columns: repeat(2, minmax(0, 1fr)); } .card-head { flex-wrap: wrap; } }
+@media (prefers-reduced-motion: no-preference) { .button { transition: border-color .15s ease; } }
+</style>
+</head>
+<body>
+<main class="page">
+<header class="header">
+<div><h1>Page design reference</h1><p class="lede">A quiet editorial starting point for readable artifacts. Use the project's design language when it exists. Reuse the relevant patterns, not this specimen's content.</p></div>
+<div class="theme" role="group" aria-label="Inspect theme"><button type="button" class="button" data-theme="light" aria-pressed="true">Light</button><button type="button" class="button" data-theme="dark" aria-pressed="false">Dark</button><button type="button" class="button" data-theme="host" aria-pressed="false">Follow host</button></div>
+</header>
+<section class="section" aria-labelledby="foundations">
+<div class="section-head"><h2 id="foundations">Foundations</h2><p class="note">Warm neutral backgrounds, rust actions, and separate colors for focus and status.</p></div>
+<div class="foundations"><div class="type-example"><p class="display-example">Make the decision clear.</p><p>Headings establish the hierarchy. Body text explains the evidence. Keep the reading measure near 65 characters and group related content with the spacing scale.</p><p class="note">Captions explain a source or a limit. They do not repeat the heading.</p></div>
+<div class="swatches"><div class="swatch" style="--swatch:var(--artifact-color-background)">Page</div><div class="swatch" style="--swatch:var(--artifact-color-surface)">Surface</div><div class="swatch" style="--swatch:var(--artifact-color-raised)">Raised</div><div class="swatch" style="--swatch:var(--artifact-color-action)">Action</div><div class="swatch" style="--swatch:var(--artifact-color-focus)">Focus</div><div class="swatch" style="--swatch:var(--artifact-color-success)">Success</div></div></div>
+</section>
+<section class="section" aria-labelledby="grouping">
+<div class="section-head"><h2 id="grouping">Group by meaning</h2><p class="note">Use a card for an object and a callout for a decision or limitation.</p></div>
+<div class="split"><article class="card"><div class="card-head"><h3>Release review</h3><span class="badge badge--warning">Needs review</span></div><p class="note">Sample content. The mobile layout needs a review before deployment.</p><dl class="facts"><div><dt>Owner</dt><dd>Design team</dd></div><div><dt>Open checks</dt><dd class="num">3</dd></div></dl></article><aside class="callout"><h3>One system per artifact</h3><p>Use the project palette, type, and spacing together. Do not mix selected project colors with an unrelated default theme.</p></aside></div>
+</section>
+<section class="section" aria-labelledby="controls">
+<div class="section-head"><h2 id="controls">Controls that work</h2><p class="note">This form simulates a local choice. It does not save preferences or send data.</p></div>
+<form class="form" novalidate>
+<label class="field" for="workspace">Workspace name<input class="input" id="workspace" name="workspaceName" autocomplete="off" maxlength="80" required aria-describedby="workspace-error" placeholder="Enter a workspace name"></label>
+<p id="workspace-error" class="error" hidden>Enter a workspace name, then try again.</p>
+<label class="field" for="cadence">Review cadence<select class="input" id="cadence" name="reviewCadence"><option value="weekly">Weekly</option><option value="fortnightly">Every two weeks</option><option value="monthly">Monthly</option></select></label>
+<div class="actions"><button class="button button--primary" type="button" id="apply">Preview choice</button><button class="button" type="button" id="reset-choice">Reset</button><button class="button" type="button" disabled>Unavailable</button></div>
+<p class="status" role="status" id="choice-status">No choice previewed yet.</p>
+</form>
+</section>
+<section class="section" aria-labelledby="data">
+<div class="section-head"><h2 id="data">Readable data</h2><p class="note">Name the units and comparison. Use text and color together for status.</p></div>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Sample release checks, scroll horizontally"><table><caption>Sample release checks. Illustrative data.</caption><thead><tr><th scope="col">Check</th><th scope="col">Owner</th><th scope="col" class="num">Open items</th><th scope="col">Status</th></tr></thead><tbody>
+<tr><th scope="row">API contract</th><td>Engineering</td><td class="num">0</td><td><span class="badge badge--success">Passed</span></td></tr>
+<tr><th scope="row">Mobile layout</th><td>Design</td><td class="num">2</td><td><span class="badge badge--warning">Review</span></td></tr>
+<tr><th scope="row">Deployment approval</th><td>Release team</td><td class="num">1</td><td><span class="badge badge--danger">Blocked</span></td></tr>
+</tbody></table></div><p class="note table-hint">If columns do not fit, scroll within the table or focus it and use the arrow keys.</p>
+</section>
+<footer><p class="note">Use only the parts the content needs. A static report does not need fake loading states or a form. Keep charts, tables, and details tied to the same data.</p></footer>
+</main>
+<script>
+const root = document.documentElement;
+const hostTheme = root.getAttribute('data-artifact-theme');
+const themeButtons = [...document.querySelectorAll('button[data-theme]')];
+function setTheme(value) {
+  if (value === 'host') {
+    if (hostTheme === null) root.removeAttribute('data-artifact-theme');
+    else root.setAttribute('data-artifact-theme', hostTheme);
+  } else root.setAttribute('data-artifact-theme', value);
+  for (const button of themeButtons) button.setAttribute('aria-pressed', String(button.dataset.theme === value));
+}
+for (const button of themeButtons) button.addEventListener('click', () => setTheme(button.dataset.theme));
+setTheme('host');
+const form = document.querySelector('form');
+const workspace = document.getElementById('workspace');
+const error = document.getElementById('workspace-error');
+const status = document.getElementById('choice-status');
+function previewChoice() {
+  const valid = workspace.value.trim().length > 0;
+  workspace.setAttribute('aria-invalid', String(!valid));
+  error.hidden = valid;
+  if (!valid) { status.textContent = 'Choice not previewed. Enter a workspace name.'; workspace.focus(); return; }
+  const cadence = document.getElementById('cadence');
+  status.textContent = 'Preview only: ' + workspace.value.trim() + ', ' + cadence.selectedOptions[0].text.toLowerCase() + ' review. Nothing was saved or sent.';
+}
+form.addEventListener('submit', (event) => { event.preventDefault(); previewChoice(); });
+document.getElementById('apply').addEventListener('click', previewChoice);
+document.getElementById('reset-choice').addEventListener('click', () => {
+  form.reset(); workspace.removeAttribute('aria-invalid'); error.hidden = true;
+  status.textContent = 'No choice previewed yet.'; workspace.focus();
+});
+</script>
+</body>
+</html>

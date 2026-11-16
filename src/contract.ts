@@ -78,16 +78,29 @@ export interface ListResult {
 }
 
 /** Design tokens that page and doc output inherit. */
-/** The five color roles every token set defines. */
+/** Semantic colors shared by pages, documents, and the token editor. */
 export interface TokenColors {
   primary: string;
   accent: string;
   surface: string;
   text: string;
   muted: string;
+  background: string;
+  raised: string;
+  border: string;
+  control: string;
+  action: string;
+  actionText: string;
+  focus: string;
+  success: string;
+  warning: string;
+  danger: string;
 }
 
-export const COLOR_ROLES = ['primary', 'accent', 'surface', 'text', 'muted'] as const satisfies readonly (keyof TokenColors)[];
+export const COLOR_ROLES = [
+  'primary', 'accent', 'surface', 'text', 'muted', 'background', 'raised',
+  'border', 'control', 'action', 'actionText', 'focus', 'success', 'warning', 'danger',
+] as const satisfies readonly (keyof TokenColors)[];
 
 export interface DesignTokens {
   schemaVersion: 1;
@@ -276,8 +289,18 @@ export function scopeOfId(id: string): Scope | undefined {
 export const DEFAULT_TOKENS: DesignTokens = {
   schemaVersion: 1,
   name: 'Default',
-  colors: { primary: '#2856c7', accent: '#0f8a72', surface: '#ffffff', text: '#16181d', muted: '#5b6170' },
-  colorsDark: { primary: '#86a8ff', accent: '#45c9a8', surface: '#15171b', text: '#e8e9ec', muted: '#a0a6b2' },
+  colors: {
+    primary: '#8c3e25', accent: '#b85c3b', surface: '#fffdf8', text: '#211f1b', muted: '#6c655b',
+    background: '#f3efe7', raised: '#ebe4d7', border: '#d8cfbf', control: '#8a7c68',
+    action: '#8c3e25', actionText: '#fffdf8', focus: '#2f5f7a',
+    success: '#2f6b4f', warning: '#855714', danger: '#923b3b',
+  },
+  colorsDark: {
+    primary: '#f0a888', accent: '#e08a66', surface: '#201c17', text: '#f3eee5', muted: '#b9b0a2',
+    background: '#171411', raised: '#29241d', border: '#3b342b', control: '#8f806c',
+    action: '#e08a66', actionText: '#171411', focus: '#8fc7e0',
+    success: '#8fc9a7', warning: '#e0b66f', danger: '#e59a9a',
+  },
   typography: {
     fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
     displayFamily: 'ui-serif, "Iowan Old Style", Charter, Georgia, serif',
@@ -289,6 +312,11 @@ export const DEFAULT_TOKENS: DesignTokens = {
   notes: '',
 };
 
+/** Map JSON role names to the CSS naming convention. */
+function colorProperty(role: keyof TokenColors): string {
+  return `--artifact-color-` + role.replace(/[A-Z]/g, (letter) => '-' + letter.toLowerCase());
+}
+
 /**
  * Turn tokens into CSS custom properties on `:root`.
  * @param tokens the design tokens.
@@ -296,7 +324,7 @@ export const DEFAULT_TOKENS: DesignTokens = {
  */
 export function tokensToCss(tokens: DesignTokens): string {
   const lines: string[] = [];
-  for (const role of COLOR_ROLES) lines.push(`--artifact-color-${role}: ${tokens.colors[role]};`);
+  for (const role of COLOR_ROLES) lines.push(`${colorProperty(role)}: ${tokens.colors[role]};`);
   lines.push(`--artifact-font-family: ${tokens.typography.fontFamily};`);
   lines.push(`--artifact-font-display: ${tokens.typography.displayFamily};`);
   lines.push(`--artifact-font-mono: ${tokens.typography.monoFamily};`);
@@ -304,7 +332,7 @@ export function tokensToCss(tokens: DesignTokens): string {
   lines.push(`--artifact-space-unit: ${tokens.spacing.unit}px;`);
   tokens.spacing.scale.forEach((size, index) => lines.push(`--artifact-space-${index}: ${size}px;`));
   for (const [key, value] of Object.entries(tokens.radius)) lines.push(`--artifact-radius-${key}: ${value}px;`);
-  const dark = COLOR_ROLES.map((role) => `--artifact-color-${role}: ${tokens.colorsDark[role]};`).join('\n  ');
+  const dark = COLOR_ROLES.map((role) => `${colorProperty(role)}: ${tokens.colorsDark[role]};`).join('\n  ');
   return [
     `:root {\n  ${lines.join('\n  ')}\n}`,
     `:root[${THEME_ATTRIBUTE}="dark"] {\n  color-scheme: dark;\n  ${dark}\n}`,
@@ -326,7 +354,7 @@ export function tokenVariables(tokens: DesignTokens, dark: boolean): Record<stri
     '--artifact-font-display': tokens.typography.displayFamily,
     '--artifact-font-mono': tokens.typography.monoFamily,
   };
-  for (const role of COLOR_ROLES) vars[`--artifact-color-${role}`] = colors[role];
+  for (const role of COLOR_ROLES) vars[colorProperty(role)] = colors[role];
   tokens.typography.scale.forEach((size, index) => { vars[`--artifact-font-size-${index}`] = `${size}px`; });
   tokens.spacing.scale.forEach((size, index) => { vars[`--artifact-space-${index}`] = `${size}px`; });
   for (const [key, value] of Object.entries(tokens.radius)) vars[`--artifact-radius-${key}`] = `${value}px`;

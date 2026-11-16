@@ -296,7 +296,7 @@ test('AC-017: design tokens reach the page', async () => {
   const svc = service();
   const page = await svc.create(A, { type: 'page', title: 'Tokens', content: PAGE, source: agent });
   const before = await svc.read(A, page.id);
-  assert.match(before.designCss, /--artifact-color-primary: #2856c7;/);
+  assert.match(before.designCss, /--artifact-color-primary: #8c3e25;/);
   await svc.saveDesignSystem({ ...A, scope: 'workspace' }, { colors: { primary: '#ff0055' } });
   const after = await svc.read(A, page.id);
   assert.match(after.designCss, /--artifact-color-primary: #ff0055;/);
@@ -372,14 +372,80 @@ test('AC-024: library artifacts are visible across workspaces', async () => {
   assert.equal(read.content, '# Brand');
 });
 
-test('AC-025: workspace scope is isolated', async () => {
+test('AC-025: workspace scope is isolated unless the call names the workspace', async () => {
   const svc = service();
   const own = await svc.create(A, { type: 'doc', title: 'Private to A', content: 'a-only', source: agent });
   assert.ok((await svc.list(B, {})).items.every((item) => item.id !== own.id));
   const fromB = toolsFor('ses-b', wsB, svc);
   await rejects(fromB.run('artifact_read', { id: own.id }), 'artifact/not-found');
   await rejects(fromB.run('artifact_update', { id: own.id, baseVersion: 1, content: 'x' }), 'artifact/not-found');
+  const read = await fromB.run('artifact_read', { id: own.id, workspaceId: 'ws-a' });
+  assert.equal(read.content, 'a-only');
+  assert.equal(read.artifact.workspaceId, 'ws-a');
   assert.equal((await svc.read(A, own.id)).content, 'a-only');
+});
+
+test('AC-092: tool reads accept an explicit workspace id and default to the session workspace', async () => {
+  const svc = service();
+  const { run } = toolsFor('ses-a', wsA, svc);
+  const remote = await svc.create(B, { type: 'doc', title: 'B notes', content: '# B', source: agent });
+  const own = await svc.create(A, { type: 'doc', title: 'A notes', content: '# A', source: agent });
+
+  await rejects(run('artifact_read', { id: remote.id }), 'artifact/not-found');
+  const read = await run('artifact_read', { id: remote.id, workspaceId: 'ws-b' });
+  assert.equal(read.content, '# B');
+  assert.equal(read.artifact.workspaceId, 'ws-b');
+  assert.equal(read.artifact.title, 'B notes');
+
+  const remoteList = await run('artifact_list', { workspaceId: 'ws-b' });
+  assert.ok(remoteList.items.some((item) => item.id === remote.id));
+  assert.ok(remoteList.items.every((item) => item.workspaceId === 'ws-b'));
+  const ownList = await run('artifact_list', {});
+  assert.ok(ownList.items.some((item) => item.id === own.id));
+  assert.ok(ownList.items.every((item) => item.id !== remote.id), 'the default list included another project');
+  assert.ok((await run('artifact_list', { workspaceId: 'ws-b', query: 'B notes' })).items.some((item) => item.id === remote.id));
+
+  await rejects(run('artifact_read', { id: remote.id, workspaceId: 'ws-missing' }), 'artifact/no-workspace');
+  await rejects(run('artifact_list', { workspaceId: 'ws-missing' }), 'artifact/no-workspace');
+});
+
+test('AC-093: tool writes and the design system honor an explicit workspace id', async () => {
+  const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-artifact-scope-'));
+  try {
+    const svc = new ArtifactService({ workspaceBase: WORKSPACE_BASE, libraryDir: 'artifacts/v1', home: scratch }, registry);
+    const { run } = toolsFor('ses-a', wsA, svc);
+
+    const created = await run('artifact_create', { type: 'doc', title: 'Remote', content: 'v1', workspaceId: 'ws-b' });
+    assert.equal(created.workspaceId, 'ws-b');
+    assert.equal(created.scope, 'workspace');
+    assert.equal(await exists(path.join(wsA, '.dsh')), false, 'the source project must stay clean');
+    assert.ok(await exists(path.join(storeHome('ws-b', scratch), created.id, 'artifact.json')));
+    assert.equal(await exists(path.join(storeHome('ws-a', scratch), created.id)), false);
+
+    const updated = await run('artifact_update', { id: created.id, baseVersion: 1, content: 'v2', workspaceId: 'ws-b' });
+    assert.equal(updated.version, 2);
+    assert.equal((await svc.read(B, created.id)).content, 'v2');
+    await rejects(run('artifact_update', { id: created.id, baseVersion: 2, content: 'lost' }), 'artifact/not-found');
+
+    const exported = await run('artifact_export', { id: created.id, format: 'md', workspaceId: 'ws-b' });
+    assert.ok(exported.path.startsWith(path.join(storeHome('ws-b', scratch), 'exports') + path.sep), exported.path);
+
+    await svc.saveDesignSystem({ ...B, scope: 'workspace' }, { colors: { primary: '#0b0c0d' } });
+    const tokens = await run('design_system_read', { workspaceId: 'ws-b' });
+    assert.equal(tokens.source, 'workspace');
+    assert.match(tokens.tokens, /#0b0c0d/);
+    await run('design_system_update', { workspaceId: 'ws-b', tokens: { name: 'B brand' } });
+    assert.equal((await svc.designSystem(B)).tokens.name, 'B brand');
+
+    await rejects(run('artifact_list', { scope: 'library', workspaceId: 'ws-b' }), 'artifact/bad-request');
+    await rejects(run('design_system_update', { scope: 'library', workspaceId: 'ws-b', tokens: { name: 'x' } }), 'artifact/bad-request');
+    await rejects(run('design_system_read', { workspaceId: 'ws-missing' }), 'artifact/no-workspace');
+
+    await run('artifact_delete', { id: created.id, workspaceId: 'ws-b' });
+    assert.ok((await svc.list(B, {})).items.every((item) => item.id !== created.id));
+  } finally {
+    await fs.rm(scratch, { recursive: true, force: true });
+  }
 });
 
 test('AC-026: scope prefixes and roots are enforced', async () => {

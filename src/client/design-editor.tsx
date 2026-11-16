@@ -15,8 +15,8 @@ body { margin: 0; padding: 20px; font-family: var(--artifact-font-family); backg
 h2 { margin: 0 0 6px; font-family: var(--artifact-font-display); font-size: var(--artifact-font-size-4); letter-spacing: -0.02em; }
 p { margin: 0 0 14px; color: var(--artifact-color-muted); }
 .row { display: flex; gap: 8px; align-items: center; }
-button { padding: 8px 14px; border: 0; border-radius: var(--artifact-radius-md); background: var(--artifact-color-primary); color: var(--artifact-color-surface); font: inherit; }
-.tag { padding: 3px 8px; border-radius: var(--artifact-radius-sm); background: color-mix(in srgb, var(--artifact-color-accent) 18%, transparent); color: var(--artifact-color-accent); font-size: 12px; }
+button { padding: 8px 14px; border: 0; border-radius: var(--artifact-radius-md); background: var(--artifact-color-action); color: var(--artifact-color-action-text); font: inherit; }
+.tag { padding: 3px 8px; border-radius: var(--artifact-radius-sm); background: var(--artifact-color-raised); color: var(--artifact-color-success); font-size: 12px; }
 code { font-family: var(--artifact-font-mono); font-size: 12px; }
 </style></head><body><h2>${t('design.previewHeading')}</h2><p>${t('design.previewBody')}</p>
 <div class="row"><button>${t('design.previewButton')}</button><span class="tag">+12%</span><code>var(--artifact-color-primary)</code></div></body></html>`;
