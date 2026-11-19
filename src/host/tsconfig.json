@@ -17,5 +17,5 @@
     "sourceMap": false,
     "skipLibCheck": true
   },
-  "include": ["./**/*.ts", "../contract.ts", "../icon-set.ts", "../render.ts", "../kit.ts", "../sheet/**/*.ts", "../sheet/**/*.d.ts"]
+  "include": ["./**/*.ts", "../contract.ts", "../icon-set.ts", "../render.ts", "../kit.ts", "../board.ts", "../sheet/**/*.ts", "../sheet/**/*.d.ts"]
 }

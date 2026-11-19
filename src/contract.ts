@@ -1,6 +1,6 @@
 /** Wire shapes shared by the host route, the tools, and the browser client. */
 
-export const ARTIFACT_TYPES = ['page', 'doc', 'design', 'sheet'] as const;
+export const ARTIFACT_TYPES = ['page', 'doc', 'design', 'sheet', 'board'] as const;
 export type ArtifactType = (typeof ARTIFACT_TYPES)[number];
 
 /**
@@ -15,7 +15,7 @@ export function isArtifactType(value: unknown): value is ArtifactType {
 export const SCOPES = ['workspace', 'library'] as const;
 export type Scope = (typeof SCOPES)[number];
 
-export const EXPORT_FORMATS = ['html', 'md', 'docx', 'png', 'svg', 'fig', 'csv', 'xlsx'] as const;
+export const EXPORT_FORMATS = ['html', 'md', 'docx', 'png', 'svg', 'fig', 'csv', 'xlsx', 'excalidraw'] as const;
 export type ExportFormat = (typeof EXPORT_FORMATS)[number];
 
 /** Which exporters each type supports. */
@@ -24,6 +24,7 @@ export const FORMATS_BY_TYPE: Readonly<Record<ArtifactType, readonly ExportForma
   doc: ['md', 'docx', 'html'],
   design: ['png', 'svg', 'fig'],
   sheet: ['csv', 'xlsx'],
+  board: ['excalidraw'],
 };
 
 /** Content file name inside `content/`, by type. */
@@ -32,6 +33,7 @@ export const CONTENT_FILE: Readonly<Record<ArtifactType, string>> = {
   doc: 'document.md',
   design: 'design.jsx',
   sheet: 'sheet.json',
+  board: 'board.excalidraw',
 };
 
 export const ID_PATTERN = /^art_(ws|lib)_[a-z0-9]{10,32}$/;

@@ -8,7 +8,7 @@
  */
 
 import { zipSync, strToU8 } from 'fflate';
-import { columnName, evaluateWorkbook, formatNumber, usedBounds } from '../../sheet/index.js';
+import { columnName, effectiveTextColor, evaluateWorkbook, formatNumber, usedBounds } from '../../sheet/index.js';
 import type { CellResult, EvaluatedWorkbook, SheetCell, SheetStyle, SheetWorkbook } from '../../sheet/index.js';
 
 const MAIN = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
@@ -65,16 +65,17 @@ interface StyleTables {
 
 function normaliseStyle(style: SheetStyle | undefined): StyleSpec | undefined {
   if (style === undefined) return undefined;
+  const fill = style.background ?? null;
   const font: FontSpec = {
     bold: style.bold === true,
     italic: style.italic === true,
     underline: style.underline === true,
     strike: style.strike === true,
-    color: style.color ?? null,
+    color: effectiveTextColor(style) ?? null,
   };
   const spec: StyleSpec = {
     font,
-    fill: style.background ?? null,
+    fill,
     align: style.align ?? null,
     numberFormat: style.numberFormat === undefined || style.numberFormat === 'general' ? null : style.numberFormat,
   };

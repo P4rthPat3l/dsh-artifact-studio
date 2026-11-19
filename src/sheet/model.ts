@@ -273,6 +273,73 @@ function checkColor(raw: unknown, at: string): string {
   return color;
 }
 
+/**
+ * Read a normalised hex color as RGB channels.
+ * @param value a hex color such as #1f2933.
+ * @returns the channels, or undefined for an unreadable value.
+ */
+function hexChannels(value: string): [number, number, number] | undefined {
+  const text = value.trim().toLowerCase();
+  const match = /^#?([0-9a-f]{6})$/.exec(text);
+  if (match === null) return undefined;
+  const hex = match[1] ?? '';
+  return [Number.parseInt(hex.slice(0, 2), 16), Number.parseInt(hex.slice(2, 4), 16), Number.parseInt(hex.slice(4, 6), 16)];
+}
+
+/**
+ * Relative luminance in sRGB, as used by WCAG contrast.
+ * @param channels the RGB channels.
+ * @returns the luminance from 0 to 1.
+ */
+function luminance(channels: [number, number, number]): number {
+  const parts = channels.map((channel) => {
+    const value = channel / 255;
+    return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * (parts[0] ?? 0) + 0.7152 * (parts[1] ?? 0) + 0.0722 * (parts[2] ?? 0);
+}
+
+/**
+ * Contrast between two colors, from 1 to 21.
+ * @param foreground the text color.
+ * @param background the fill color.
+ * @returns the WCAG contrast ratio.
+ */
+export function contrastRatio(foreground: string, background: string): number {
+  const front = hexChannels(foreground);
+  const back = hexChannels(background);
+  if (front === undefined || back === undefined) return 1;
+  const bright = Math.max(luminance(front), luminance(back));
+  const dark = Math.min(luminance(front), luminance(back));
+  return (bright + 0.05) / (dark + 0.05);
+}
+
+/**
+ * Pick a readable default text color for a cell fill. The panel and XLSX use
+ * this when a style sets a background but leaves the text color implicit.
+ * @param background the cell fill.
+ * @returns the darker ink or white, whichever contrasts more.
+ */
+export function readableTextColor(background: string): '#1f2933' | '#ffffff' {
+  const dark = '#1f2933';
+  const light = '#ffffff';
+  return contrastRatio(dark, background) >= contrastRatio(light, background) ? dark : light;
+}
+
+/**
+ * The text color a renderer should use for one style. An explicit color wins
+ * only when it is readable on the fill; a missing or low-contrast color falls
+ * back to the automatic readable color. Stored content is never changed here.
+ * @param style the cell style.
+ * @returns the text color, or undefined when the theme default should apply.
+ */
+export function effectiveTextColor(style: SheetStyle | undefined): string | undefined {
+  if (style === undefined) return undefined;
+  if (style.background === undefined) return style.color;
+  if (style.color !== undefined && contrastRatio(style.color, style.background) >= 4.5) return style.color;
+  return readableTextColor(style.background);
+}
+
 function checkStyle(raw: unknown, at: string): SheetStyle {
   if (!isFields(raw)) throw new SheetError(at + ' must be an object.');
   onlyKeys(raw, STYLE_KEYS, at);

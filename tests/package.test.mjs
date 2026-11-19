@@ -36,6 +36,22 @@ test('the canvas build dependencies stay out of runtime dependencies and ship a 
   assert.match(notices, /Roboto/);
   assert.match(notices, /Apache/);
 });
+test('the whiteboard chunk, Excalidraw, and its fonts ship with notices', async () => {
+  const manifest = JSON.parse(await fs.readFile(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.ok(manifest.files.includes('client.board.js'), 'the whiteboard chunk is not shipped');
+  assert.equal(manifest.devDependencies['@excalidraw/excalidraw'], '^0.18.1');
+  assert.ok(!Object.hasOwn(manifest.dependencies, '@excalidraw/excalidraw'), 'Excalidraw must stay a build-time dependency');
+  const chunk = await fs.readFile(new URL('../client.board.js', import.meta.url), 'utf8');
+  assert.match(chunk, /client\.board\.js/);
+  const manifestFile = JSON.parse(await fs.readFile(new URL('../assets/whiteboard/manifest.json', import.meta.url), 'utf8'));
+  assert.ok(manifestFile.includes('subset-worker.chunk.js'), 'the font worker is missing from the whiteboard assets');
+  assert.ok(manifestFile.some((name) => name.endsWith('.woff2')), 'no whiteboard fonts were copied');
+  const notices = await fs.readFile(new URL('../THIRD_PARTY_NOTICES.md', import.meta.url), 'utf8');
+  assert.match(notices, /Excalidraw/);
+  assert.match(notices, /SIL Open Font License/);
+  assert.match(notices, /Xiaolai/);
+});
+
 test('the sheet chunk and its formula and zip dependencies ship with notices', async () => {
   const manifest = JSON.parse(await fs.readFile(new URL('../package.json', import.meta.url), 'utf8'));
   assert.ok(manifest.files.includes('client.sheet.js'), 'the sheet chunk is not shipped');

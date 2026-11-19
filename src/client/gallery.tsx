@@ -18,8 +18,9 @@ import type { Where } from './api.js';
 import { DesignEditor } from './design-editor.jsx';
 import { pageDocument } from './frames.js';
 import type { Translator } from './harness.js';
+import { parseBoardScene, summarizeBoard } from '../board.js';
 import { formatCellRef, parseSheetWorkbook, usedBounds } from '../sheet/model.js';
-import { IconDesign, IconDoc, IconPage, IconPalette, IconSheet } from './icons.jsx';
+import { IconBoard, IconDesign, IconDoc, IconPage, IconPalette, IconSheet } from './icons.jsx';
 import { relativeTime } from './locale.js';
 import { useHarnessDark } from './theme.js';
 import { togglePin, usePins } from './preferences.js';
@@ -237,6 +238,94 @@ function excerpt(markdown: string): string {
   return plain.length > 220 ? plain.slice(0, 220).trimEnd() + '...' : plain;
 }
 
+/** One primitive in a whiteboard cover. */
+interface BoardCoverShape {
+  type: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  stroke: string;
+  fill: string;
+  points?: [number, number][];
+  text?: string;
+  fontSize?: number;
+}
+
+/** A static, scriptless whiteboard thumbnail from scene bounds and elements. */
+function boardCover(content: string): { viewBox: string; shapes: BoardCoverShape[] } | null {
+  try {
+    const scene = parseBoardScene(content);
+    const summary = summarizeBoard(scene);
+    if (summary.bounds === null || summary.elements === 0) return null;
+    const pad = 24;
+    const viewBox = [
+      summary.bounds.x - pad,
+      summary.bounds.y - pad,
+      Math.max(1, summary.bounds.width + pad * 2),
+      Math.max(1, summary.bounds.height + pad * 2),
+    ].join(' ');
+    const shapes: BoardCoverShape[] = [];
+    for (const element of scene.elements) {
+      if (shapes.length >= 80 || element.isDeleted === true || element.type === 'frame' || element.type === 'magicframe') continue;
+      const stroke = typeof element.strokeColor === 'string' ? element.strokeColor : '#1e1e1e';
+      const background = typeof element.backgroundColor === 'string' ? element.backgroundColor : 'transparent';
+      const shape: BoardCoverShape = {
+        type: String(element.type),
+        x: Number(element.x ?? 0),
+        y: Number(element.y ?? 0),
+        width: Number(element.width ?? 0),
+        height: Number(element.height ?? 0),
+        stroke,
+        fill: background === 'transparent' ? 'none' : background,
+      };
+      if (element.type === 'text') shape.text = String(element.text ?? '');
+      if (element.type === 'text') shape.fontSize = Number(element.fontSize ?? 20);
+      if ((element.type === 'line' || element.type === 'arrow') && Array.isArray(element.points)) {
+        shape.points = (element.points as unknown[])
+          .filter((point): point is [number, number] => Array.isArray(point) && point.length >= 2 && typeof point[0] === 'number' && typeof point[1] === 'number')
+          .map((point) => [point[0], point[1]]);
+        if (shape.points.length < 2) continue;
+      }
+      if (shape.type === 'freedraw' || shape.type === 'image') shapes.push({ ...shape, type: 'rectangle', points: undefined });
+      else shapes.push(shape);
+    }
+    return { viewBox, shapes };
+  } catch {
+    return null;
+  }
+}
+
+/** One whiteboard cover SVG. */
+function BoardCover({ preview }: { preview: { viewBox: string; shapes: BoardCoverShape[] } }) {
+  return (
+    <span className="art-cover-board">
+      <svg className="art-cover-board-svg" viewBox={preview.viewBox} preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+        {preview.shapes.map((shape, index) => {
+          if (shape.type === 'rectangle') {
+            return <rect key={index} x={shape.x} y={shape.y} width={shape.width} height={shape.height} rx={6} fill={shape.fill} stroke={shape.stroke} strokeWidth={2} />;
+          }
+          if (shape.type === 'ellipse') {
+            return <ellipse key={index} cx={shape.x + shape.width / 2} cy={shape.y + shape.height / 2} rx={shape.width / 2} ry={shape.height / 2} fill={shape.fill} stroke={shape.stroke} strokeWidth={2} />;
+          }
+          if (shape.type === 'diamond') {
+            const points = [shape.x + shape.width / 2, shape.y, shape.x + shape.width, shape.y + shape.height / 2, shape.x + shape.width / 2, shape.y + shape.height, shape.x, shape.y + shape.height / 2].join(' ');
+            return <polygon key={index} points={points} fill={shape.fill} stroke={shape.stroke} strokeWidth={2} />;
+          }
+          if ((shape.type === 'line' || shape.type === 'arrow') && shape.points !== undefined) {
+            const points = shape.points.map(([dx, dy]) => (shape.x + dx) + ',' + (shape.y + dy)).join(' ');
+            return <polyline key={index} points={points} fill="none" stroke={shape.stroke} strokeWidth={2} />;
+          }
+          if (shape.type === 'text') {
+            return <text key={index} x={shape.x} y={shape.y} fontSize={shape.fontSize ?? 20} fill={shape.stroke} dominantBaseline="hanging">{shape.text}</text>;
+          }
+          return null;
+        })}
+      </svg>
+    </span>
+  );
+}
+
 /**
  * The first few cells of a sheet for its gallery cover. Formulas show as their
  * source, because the cover does not load the formula engine.
@@ -369,7 +458,7 @@ function ArtifactCover({ t, view }: { t: Translator; view: ArtifactView }) {
     return () => URL.revokeObjectURL(next);
   }, [data, type, title, dark]);
 
-  const icon = type === 'page' ? <IconPage /> : type === 'doc' ? <IconDoc /> : type === 'sheet' ? <IconSheet /> : <IconDesign />;
+  const icon = type === 'page' ? <IconPage /> : type === 'doc' ? <IconDoc /> : type === 'sheet' ? <IconSheet /> : type === 'board' ? <IconBoard /> : <IconDesign />;
   if (failed) return <span className="art-cover" ref={ref} aria-hidden="true"><span className="art-cover-fallback">{icon}</span></span>;
   if (type === 'design') {
     return (
@@ -382,6 +471,14 @@ function ArtifactCover({ t, view }: { t: Translator; view: ArtifactView }) {
     return (
       <span className="art-cover" ref={ref} aria-hidden="true">
         {url === null ? <span className="art-cover-fallback">{icon}</span> : <span className="art-cover-frame-wrap"><iframe className="art-cover-frame" src={url} sandbox="" title={t('gallery.coverTitle', { title })} tabIndex={-1} loading="lazy" referrerPolicy="no-referrer" /></span>}
+      </span>
+    );
+  }
+  if (type === 'board') {
+    const preview = data === null ? null : boardCover(data.content);
+    return (
+      <span className="art-cover" ref={ref} aria-hidden="true">
+        {preview === null ? <span className="art-cover-fallback">{icon}</span> : <BoardCover preview={preview} />}
       </span>
     );
   }
@@ -697,7 +794,7 @@ export function GalleryBody({ t, projects, scope, contextWorkspaceId, onScopeCha
   const onCreate = useCallback(
     async (nextType: ArtifactType, nextScope: Scope) => {
       if (nextScope === 'workspace' && contextWorkspaceId === null) return;
-      const title = t(nextType === 'page' ? 'create.untitledPage' : nextType === 'doc' ? 'create.untitledDoc' : nextType === 'sheet' ? 'create.untitledSheet' : 'create.untitledDesign');
+      const title = t(nextType === 'page' ? 'create.untitledPage' : nextType === 'doc' ? 'create.untitledDoc' : nextType === 'sheet' ? 'create.untitledSheet' : nextType === 'board' ? 'create.untitledBoard' : 'create.untitledDesign');
       try {
         const { manifest } = await api.create({ scope: nextScope, workspaceId: contextWorkspaceId }, nextType, title, starterContent(nextType, title));
         announceListChange();
@@ -777,9 +874,10 @@ export function GalleryBody({ t, projects, scope, contextWorkspaceId, onScopeCha
                 { id: 'page', label: t('gallery.newPage') + ' · ' + createTitle, icon: <IconPage size={14} /> },
                 { id: 'doc', label: t('gallery.newDoc') + ' · ' + createTitle, icon: <IconDoc size={14} /> },
                 { id: 'sheet', label: t('gallery.newSheet') + ' · ' + createTitle, icon: <IconSheet size={14} /> },
+                { id: 'board', label: t('gallery.newBoard') + ' · ' + createTitle, icon: <IconBoard size={14} /> },
                 { id: 'design', label: t('gallery.newDesign') + ' · ' + createTitle, icon: <IconDesign size={14} /> },
               ]}
-              onSelect={(entry) => { setMenu(false); void onCreate(entry === 'doc' ? 'doc' : entry === 'design' ? 'design' : entry === 'sheet' ? 'sheet' : 'page', createScope); }}
+              onSelect={(entry) => { setMenu(false); void onCreate(entry === 'doc' ? 'doc' : entry === 'design' ? 'design' : entry === 'sheet' ? 'sheet' : entry === 'board' ? 'board' : 'page', createScope); }}
               anchor={<Button size="sm" variant="outline" icon={<IconPlusOutlineRegular size={14} />} aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu((value) => !value)}>{t('gallery.create')}</Button>}
             />
           </div>
@@ -806,7 +904,7 @@ export function GalleryBody({ t, projects, scope, contextWorkspaceId, onScopeCha
                 className="art-segment"
                 label={t('filter.type')}
                 value={type ?? 'all'}
-                options={[{ value: 'all', label: t('type.all') }, { value: 'page', label: t('type.page') }, { value: 'doc', label: t('type.doc') }, { value: 'sheet', label: t('type.sheet') }, { value: 'design', label: t('type.design') }]}
+                options={[{ value: 'all', label: t('type.all') }, { value: 'page', label: t('type.page') }, { value: 'doc', label: t('type.doc') }, { value: 'sheet', label: t('type.sheet') }, { value: 'board', label: t('type.board') }, { value: 'design', label: t('type.design') }]}
                 onChange={(next) => setType(next === 'all' ? undefined : next)}
               />
             </div>

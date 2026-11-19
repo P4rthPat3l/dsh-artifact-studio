@@ -172,7 +172,7 @@ export function composeSheetBrief(layers: GuideLayers): string {
     '- 1 to 20,000 cells and 5,000 formulas per artifact; column references stop at CV.',
     '- A cell key is an A1 reference such as B4. A plain JSON string, number, or boolean is that value.',
     '- A string that starts with "=" is a formula. Use { "value": "=literal" } for text that starts with "=".',
-    '- A styled cell is an object: { "value": 1200, "style": { "bold": true, "align": "right", "background": "#fff2cc", "numberFormat": "currency" } }.',
+    '- A styled cell is an object: { "value": 1200, "style": { "bold": true, "align": "right", "background": "#fff2cc", "color": "#1f2933", "numberFormat": "currency" } }. When you set background, set color too: #1f2933 for light fills and #ffffff for dark fills. The panel and exports choose a readable default if color is omitted, and a low-contrast pair returns a warning.',
     '- numberFormat is general, number, integer, currency, percent, or date. Dates are Excel serial day numbers, which TODAY() returns.',
     '- columnWidths maps a column letter to a width from 24 to 800 pixels.',
     '',
@@ -195,3 +195,63 @@ export function composeSheetBrief(layers: GuideLayers): string {
   );
   return parts.join('\n');
 }
+/**
+ * The whiteboard brief. A board is a native Excalidraw scene with no recipe,
+ * design system, or page kit; it has an element list and a cell-level edit tool.
+ * @param layers the saved workspace and library conventions.
+ * @returns the brief text.
+ */
+export function composeBoardBrief(layers: GuideLayers): string {
+  const parts: string[] = [
+    '# Artifact brief: board',
+    '',
+    'Sandbox and storage rules are enforced by the host and cannot be overridden. Follow this brief for authoring choices. When two layers conflict, the earlier one wins: ' + PRECEDENCE.join(', then ') + '.',
+  ];
+  if (layers.workspace.instructions !== '') parts.push('', '## Project conventions', '', layers.workspace.instructions);
+  if (layers.library.instructions !== '') parts.push('', '## User preferences', '', layers.library.instructions);
+  parts.push(
+    '',
+    '## The scene',
+    '',
+    'A board artifact stores one native Excalidraw scene as JSON in board.excalidraw. The shape is:',
+    '',
+    '~~~json',
+    '{',
+    '  "type": "excalidraw",',
+    '  "version": 2,',
+    '  "source": "dsh-artifact-studio",',
+    '  "elements": [',
+    '    { "id": "box1", "type": "rectangle", "x": 80, "y": 80, "width": 220, "height": 90 }',
+    '  ],',
+    '  "appState": { "viewBackgroundColor": "#ffffff", "gridSize": null },',
+    '  "files": {}',
+    '}',
+    '~~~',
+    '',
+    'Rules:',
+    '- 1 to 3,000 elements. Each element needs a unique id, a type, and finite x, y, width, and height.',
+    '- The supported agent types are rectangle, ellipse, diamond, text, arrow, and line. The editor can also hold freedraw, image, and frame elements that the user creates.',
+    '- Embedded web pages (embeddable and iframe elements) are refused. Images must be data: URLs inside the files object; never use a remote image or a remote font.',
+    '- A scene is at most 2 MiB. A large board with many image files should be split.',
+    '',
+    '## Editing a board',
+    '',
+    'Read it first with artifact_read when the user may have edited it, then call artifact_board_update with the current baseVersion and one operations array. The operations run in order:',
+    '- add: { "op": "add", "elements": [ ... ] }. A shape input is { "type": "rectangle", "x": 80, "y": 80, "width": 220, "height": 90, "text": "Start", "backgroundColor": "#a5d8ff", "fillStyle": "solid" }. A text input is { "type": "text", "x": 80, "y": 200, "text": "Hello", "fontSize": 24 }. An arrow input is { "type": "arrow", "x": 300, "y": 120, "points": [[0, 0], [80, 0]] }; points are relative to x and y.',
+    '- update: { "op": "update", "id": "box1", "patch": { "x": 100, "backgroundColor": "#ffec99", "text": "New label" } }. Read the scene for ids. A text patch adjusts the text and its width and height.',
+    '- delete: { "op": "delete", "ids": ["box1"] }. clear: { "op": "clear" } removes every element.',
+    '- A shape with text produces the shape and a separate centered text element. Excalidraw does not treat them as a bound pair, so moving the shape later does not move its text. Prefer adding labels as part of the shape at creation time, or update both elements together.',
+    '',
+    '## Composition',
+    '',
+    'Use Excalifont, the default hand-drawn family. Keep a small palette: dark ink on white, one accent fill, and one success or warning fill when the diagram has states. Align boxes and arrows to a grid. Leave at least 64 pixels between groups. Put a short title text at the top and keep every label short enough to read at 100 percent zoom.',
+    'Do not use the board for long prose. Use a doc for that. A whiteboard is for spatial relationships, flows, and sketches.',
+    '',
+    '## Save and export',
+    '',
+    'Every write is a version the user sees. Read the scene first, make all changes in one artifact_board_update call, and check the result visually in the panel when possible.',
+    'A board exports as a .excalidraw file from artifact_export. The panel also exports the current board as PNG or SVG from its export menu. Do not claim those images exist on disk unless the panel produced them.',
+  );
+  return parts.join('\n');
+}
+

@@ -4,7 +4,7 @@
  * the advisory formula diagnostics a write returns.
  */
 
-import { SHEET_LIMITS, formatCellRef, formatRangeRef, parseRangeRef, sheetOf, usedBounds } from './model.js';
+import { SHEET_LIMITS, contrastRatio, formatCellRef, formatRangeRef, parseRangeRef, sheetOf, usedBounds } from './model.js';
 import type { SheetCell, SheetScalar, SheetStyle, SheetWorkbook } from './model.js';
 import { evaluateWorkbook } from './formula.js';
 import type { CellResult, EvaluatedWorkbook, FormulaErrorCode } from './formula.js';
@@ -167,7 +167,18 @@ export function selectionQuote(workbook: SheetWorkbook, evaluated: EvaluatedWork
  * @returns one message per problem, each starting with its code.
  */
 export function checkSheetWorkbook(workbook: SheetWorkbook): string[] {
-  return evaluateWorkbook(workbook).warnings;
+  const warnings = evaluateWorkbook(workbook).warnings;
+  for (const sheet of workbook.sheets) {
+    for (const [ref, cell] of Object.entries(sheet.cells)) {
+      const style = cell.style;
+      if (style?.background === undefined || style.color === undefined) continue;
+      const ratio = contrastRatio(style.color, style.background);
+      if (ratio < 4.5) {
+        warnings.push('low-contrast: ' + sheet.name + '!' + ref + ' text ' + style.color + ' on ' + style.background + ' has a contrast ratio of ' + ratio.toFixed(1) + ':1. Use a darker or lighter text color.');
+      }
+    }
+  }
+  return warnings;
 }
 
 /**

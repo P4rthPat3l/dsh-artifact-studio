@@ -25,7 +25,7 @@ import { resolveSystem, saveSystem, listSystems, setSystemDefault } from './desi
 import { generationHash, generationSummary } from './generation.js';
 import type { Generation } from './generation.js';
 import { declaredKit, getKit } from '../../kit.js';
-import { composeBrief, composeSheetBrief } from './brief.js';
+import { composeBoardBrief, composeBrief, composeSheetBrief } from './brief.js';
 import { ArtifactError } from './errors.js';
 import { docToHtml, sheetToPrintableHtml, writeExport } from './export.js';
 import { findRecipe, readGuide, saveGuide } from './guide.js';
@@ -36,6 +36,7 @@ import { assertPlainFile, libraryRoot, requireWorkspace, workspaceRoot, workspac
 import type { RootConfig, ScopeRoot } from './paths.js';
 import { ArtifactStore, applyEdits, hashOf } from './store.js';
 import { parseSheetWorkbook, serializeSheetWorkbook } from '../../sheet/index.js';
+import { normalizeBoardScene } from '../../board.js';
 import type { ListInput, ReadResult, TextEdit } from './store.js';
 import type { WorkspaceRegistry } from './types.js';
 
@@ -63,6 +64,21 @@ function canonicalSheet(content: string): string {
     return serializeSheetWorkbook(parseSheetWorkbook(content));
   } catch (error) {
     throw new ArtifactError('artifact/invalid-sheet', 'The sheet content is not a valid workbook.', {
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+/**
+ * Validate and canonicalise whiteboard scene content.
+ * @param content the .excalidraw JSON.
+ * @returns the canonical JSON.
+ */
+function canonicalBoard(content: string): string {
+  try {
+    return normalizeBoardScene(content);
+  } catch (error) {
+    throw new ArtifactError('artifact/invalid-board', 'The board content is not a valid whiteboard scene.', {
       message: error instanceof Error ? error.message : String(error),
     });
   }
@@ -255,11 +271,11 @@ export class ArtifactService {
    */
   async brief(target: Target, type: ArtifactType, recipeId?: string, selection: DesignSelection = {}): Promise<{ brief: string; recipe?: ResolvedRecipe }> {
     const layers = await this.guides(target);
-    if (type === 'sheet') {
+    if (type === 'sheet' || type === 'board') {
       if (recipeId !== undefined) {
-        throw new ArtifactError('artifact/unknown-recipe', 'Sheets do not use recipes.', { recipe: recipeId, type });
+        throw new ArtifactError('artifact/unknown-recipe', type === 'sheet' ? 'Sheets do not use recipes.' : 'Whiteboards do not use recipes.', { recipe: recipeId, type });
       }
-      return { brief: composeSheetBrief(layers) };
+      return { brief: type === 'sheet' ? composeSheetBrief(layers) : composeBoardBrief(layers) };
     }
     const recipe = recipeId === undefined ? undefined : findRecipe(layers, recipeId);
     if (recipeId !== undefined && (recipe === undefined || !recipe.types.includes(type))) {
@@ -296,6 +312,7 @@ export class ArtifactService {
     const current = await this.store.read(root, id);
     if (current.manifest.type === 'design') throw new ArtifactError('artifact/unsupported-type', 'Mockup source must be restyled explicitly.');
     if (current.manifest.type === 'sheet') throw new ArtifactError('artifact/unsupported-type', 'A sheet has no design or recipe to rebase.', { type: current.manifest.type });
+    if (current.manifest.type === 'board') throw new ArtifactError('artifact/unsupported-type', 'A whiteboard has no design or recipe to rebase.', { type: current.manifest.type });
     const recipe = input.recipe ?? current.manifest.recipe;
     const generation = input.recipe === undefined && input.design === undefined
       ? await this.freeze({ ...target, scope: root.scope }, current.manifest.type, current.content, recipe)
@@ -321,14 +338,16 @@ export class ArtifactService {
     target: Target,
     input: { type: ArtifactType; title: string; content: string; source: VersionSource; recipe?: string; design?: DesignSelection },
   ): Promise<Manifest> {
-    if (input.type === 'sheet' && input.recipe !== undefined) {
-      throw new ArtifactError('artifact/bad-request', 'Sheets do not use recipes.', { recipe: input.recipe, type: input.type });
+    if ((input.type === 'sheet' || input.type === 'board') && input.recipe !== undefined) {
+      throw new ArtifactError('artifact/bad-request', input.type === 'sheet' ? 'Sheets do not use recipes.' : 'Whiteboards do not use recipes.', { recipe: input.recipe, type: input.type });
     }
     if (input.recipe !== undefined) await this.recipe(target, input.recipe, input.type);
     const root = await this.root(target);
-    const content = input.type === 'sheet' ? canonicalSheet(input.content) : input.content;
+    const content = input.type === 'sheet'
+      ? canonicalSheet(input.content)
+      : input.type === 'board' ? canonicalBoard(input.content) : input.content;
     const info = input.type === 'design' ? await this.designs.inspect(content) : undefined;
-    const generation = input.type === 'design' || input.type === 'sheet'
+    const generation = input.type === 'design' || input.type === 'sheet' || input.type === 'board'
       ? undefined
       : await this.freeze({ ...target, scope: root.scope }, input.type, content, input.recipe, input.design);
     const manifest = await this.store.create(root, { ...input, content, generation });
@@ -378,14 +397,16 @@ export class ArtifactService {
     const root = await this.root(target, id);
     const current = await this.store.manifest(root, id);
     const existing = await this.store.read(root, id);
-    if (current.type === 'sheet') {
-      if (input.recipe !== undefined) throw new ArtifactError('artifact/bad-request', 'Sheets do not use recipes.', { type: current.type });
+    if (current.type === 'sheet' || current.type === 'board') {
+      if (input.recipe !== undefined) {
+        throw new ArtifactError('artifact/bad-request', current.type === 'sheet' ? 'Sheets do not use recipes.' : 'Whiteboards do not use recipes.', { type: current.type });
+      }
       if (input.content !== undefined && input.edits !== undefined) {
         throw new ArtifactError('artifact/bad-request', 'Send either content or edits, not both.');
       }
       let next = input.content;
       if (next === undefined && input.edits !== undefined) next = applyEdits(existing.content, input.edits);
-      if (next !== undefined) next = canonicalSheet(next);
+      if (next !== undefined) next = current.type === 'sheet' ? canonicalSheet(next) : canonicalBoard(next);
       return this.store.update(root, id, { ...input, content: next, edits: undefined });
     }
     if (current.type !== 'design') {
@@ -417,7 +438,7 @@ export class ArtifactService {
   async restore(target: Target, id: string, version: number, source: VersionSource, baseVersion?: number): Promise<Manifest> {
     const root = await this.root(target, id);
     const old = await this.store.read(root, id, version);
-    const generation = old.manifest.type === 'design' || old.manifest.type === 'sheet' || old.generation ? undefined
+    const generation = old.manifest.type === 'design' || old.manifest.type === 'sheet' || old.manifest.type === 'board' || old.generation ? undefined
       : await this.freeze({ ...target, scope: root.scope }, old.manifest.type, old.content, old.manifest.recipe);
     return this.store.restore(root, id, version, source, baseVersion, generation);
   }
@@ -443,8 +464,8 @@ export class ArtifactService {
   async printable(target: Target, id: string, version?: number): Promise<{ html: string }> {
     const result = await this.store.read(await this.root(target, id), id, version);
     const { manifest, content } = result;
-    if (manifest.type === 'design') {
-      throw new ArtifactError('artifact/unsupported-format', 'A design cannot be printed.', { type: manifest.type });
+    if (manifest.type === 'design' || manifest.type === 'board') {
+      throw new ArtifactError('artifact/unsupported-format', manifest.type === 'design' ? 'A design cannot be printed.' : 'A whiteboard cannot be printed.', { type: manifest.type });
     }
     const design = await this.versionDesign(target, result);
     if (manifest.type === 'sheet') {

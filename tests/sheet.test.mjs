@@ -4,6 +4,9 @@ import { unzipSync, strFromU8 } from 'fflate';
 import {
   checkSheetWorkbook,
   columnName,
+  contrastRatio,
+  effectiveTextColor,
+  readableTextColor,
   evaluateWorkbook,
   formatCellRef,
   formatScalar,
@@ -278,5 +281,42 @@ test('SHEET-UNIT-010: later formula cells and cross-sheet INDEX resolve', () => 
   assert.equal(evaluated.results.Summary.A2?.display, '1200');
   assert.equal(evaluated.results.Summary.A3?.display, '8000');
   assert.deepEqual(evaluated.warnings, []);
+});
+
+
+test('SHEET-UNIT-011: readable colors are chosen for fills and low contrast is reported', () => {
+  assert.equal(readableTextColor('#eceff4'), '#1f2933');
+  assert.equal(readableTextColor('#1e1e1e'), '#ffffff');
+  assert.ok(contrastRatio('#1f2933', '#eceff4') > 10);
+  assert.ok(contrastRatio('#ffffff', '#eceff4') < 1.5);
+  assert.equal(effectiveTextColor({ background: '#eceff4' }), '#1f2933');
+  assert.equal(effectiveTextColor({ background: '#1e1e1e' }), '#ffffff');
+  assert.equal(effectiveTextColor({ background: '#eceff4', color: '#ffffff' }), '#1f2933');
+  assert.equal(effectiveTextColor({ background: '#eceff4', color: '#1f2933' }), '#1f2933');
+
+  const parsed = parseSheetWorkbook(workbook([{
+    name: 'Readable',
+    cells: {
+      A1: { value: 'Light', style: { bold: true, background: '#eceff4' } },
+      A2: { value: 'Bad', style: { color: '#ffffff', background: '#eceff4' } },
+      A3: { value: 'Good', style: { color: '#1f2933', background: '#eceff4' } },
+    },
+  }]));
+  const warnings = checkSheetWorkbook(parsed);
+  assert.equal(warnings.filter((warning) => warning.startsWith('low-contrast:')).length, 1);
+  assert.match(warnings.find((warning) => warning.startsWith('low-contrast:')), /Readable!A2/);
+  assert.ok(!warnings.some((warning) => warning.includes('Readable!A1')), 'a missing color is resolved automatically');
+  assert.ok(!warnings.some((warning) => warning.includes('Readable!A3')), 'a readable pair must not warn');
+});
+
+test('SHEET-UNIT-012: XLSX export adds a readable font color to a filled cell', () => {
+  const parsed = parseSheetWorkbook(workbook([{
+    name: 'Export',
+    cells: { A1: { value: 'Header', style: { bold: true, background: '#eceff4' } } },
+  }]));
+  const bytes = workbookToXlsx(parsed);
+  const files = unzipSync(bytes);
+  const styles = strFromU8(files['xl/styles.xml']);
+  assert.match(styles, /rgb="FF1F2933"/);
 });
 

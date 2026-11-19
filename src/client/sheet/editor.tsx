@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ClipboardEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react';
 import { Button, Menu, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives';
 import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives';
-import { SHEET_LIMITS, columnName, formatCellRef, formatRangeRef, mergeStyle, parseCellRef, parseRangeRef, parseSheetWorkbook, rangeSize, serializeSheetWorkbook } from '../../sheet/model.js';
+import { SHEET_LIMITS, columnName, effectiveTextColor, formatCellRef, formatRangeRef, mergeStyle, parseCellRef, parseRangeRef, parseSheetWorkbook, rangeSize, serializeSheetWorkbook } from '../../sheet/model.js';
 import type { CellRange, NumberFormat, SheetCell, SheetData, SheetStyle, SheetStylePatch, SheetWorkbook } from '../../sheet/model.js';
 import { evaluateWorkbook } from '../../sheet/formula.js';
 import type { EvaluatedWorkbook } from '../../sheet/formula.js';
@@ -804,7 +804,8 @@ export function SheetEditor({ options, register }: { options: SheetEditorOptions
         width: displayWidths.widths[columnIndex] ?? DEFAULT_COLUMN_WIDTH,
         height: ROW_HEIGHT,
       };
-      if (style?.color !== undefined) cellStyle.color = style.color;
+      const textColor = effectiveTextColor(style);
+      if (textColor !== undefined) cellStyle.color = textColor;
       if (style?.background !== undefined) cellStyle.background = style.background;
       if (style?.bold === true) cellStyle.fontWeight = 600;
       if (style?.italic === true) cellStyle.fontStyle = 'italic';
@@ -973,6 +974,8 @@ export function SheetEditor({ options, register }: { options: SheetEditorOptions
                   height: ROW_HEIGHT,
                   fontWeight: editingStyle?.bold === true ? 600 : undefined,
                   fontStyle: editingStyle?.italic === true ? 'italic' : undefined,
+                  background: editingStyle?.background,
+                  color: effectiveTextColor(editingStyle),
                 }}
                 value={editing.draft}
                 spellCheck={false}

@@ -17,6 +17,9 @@ const FONTS = ['Inter-Regular.ttf', 'Inter-Medium.ttf', 'Inter-SemiBold.ttf', 'I
 const ICONS = path.join(ROOT, 'node_modules/@iconify-json/mdi/icons.json');
 const ROBOTO_SOURCE = path.join(ROOT, 'node_modules/roboto-fontface/fonts/roboto');
 const ROBOTO = ['Roboto-Regular.woff2', 'Roboto-Medium.woff2', 'Roboto-Bold.woff2'];
+const EXCALIDRAW_PROD = path.join(ROOT, 'node_modules/@excalidraw/excalidraw/dist/prod');
+const BOARD_WORKERS = ['subset-worker.chunk.js', 'subset-shared.chunk.js'];
+const MERMAID_STUB = path.join(ROOT, 'src/client/board/mermaid-stub.ts');
 
 /**
  * Bundle one entry and return its CommonJS text.
@@ -81,6 +84,28 @@ async function copyAssets() {
   for (const font of ROBOTO) await fs.copyFile(path.join(ROBOTO_SOURCE, font), path.join(assets, 'fonts', font));
 }
 
+/**
+ * Copy the Excalidraw fonts and worker files and write the route allowlist.
+ */
+async function copyBoardAssets() {
+  const root = path.join(ROOT, 'assets', 'whiteboard');
+  await fs.rm(root, { recursive: true, force: true });
+  await fs.mkdir(root, { recursive: true });
+  await fs.cp(path.join(EXCALIDRAW_PROD, 'fonts'), path.join(root, 'fonts'), { recursive: true });
+  for (const worker of BOARD_WORKERS) await fs.copyFile(path.join(EXCALIDRAW_PROD, worker), path.join(root, worker));
+  const names = [];
+  async function walk(directory, prefix) {
+    for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+      if (entry.isSymbolicLink()) continue;
+      if (entry.isDirectory()) await walk(path.join(directory, entry.name), prefix + entry.name + '/');
+      else if (entry.isFile()) names.push(prefix + entry.name);
+    }
+  }
+  await walk(root, '');
+  names.sort();
+  await fs.writeFile(path.join(root, 'manifest.json'), JSON.stringify(names, null, 2) + '\n');
+}
+
 const manifest = JSON.parse(await fs.readFile(path.join(ROOT, 'package.json'), 'utf8'));
 const defines = {
   __CANVAS_ASSET_VERSION__: JSON.stringify(manifest.version),
@@ -103,14 +128,23 @@ const loader = await bundle('src/client/canvas/loader.ts', { define: defines });
 const main = await bundle('src/client/index.tsx', { define: defines });
 const doc = await bundle('src/client/doc/entry.ts');
 const sheet = await bundle('src/client/sheet/entry.ts', { define: defines });
+const board = await bundle('src/client/board/entry.ts', {
+  alias: { '@excalidraw/mermaid-to-excalidraw': MERMAID_STUB },
+  loader: { '.css': 'text' },
+  conditions: ['production', 'browser', 'import', 'default'],
+  define: { 'process.env.NODE_ENV': '"production"', ...defines },
+});
 await copyAssets();
+await copyBoardAssets();
 await fs.writeFile(path.join(ROOT, 'assets', 'canvas.engine.js'), canvas);
 await fs.writeFile(path.join(ROOT, 'client.js'), wrap(main, { id: 'dsh-artifact-studio', bridge: true }));
 await fs.writeFile(path.join(ROOT, 'client.doc.js'), wrap(doc, { id: 'dsh-artifact-studio', chunk: 'client.doc.js' }));
 await fs.writeFile(path.join(ROOT, 'client.sheet.js'), wrap(sheet, { id: 'dsh-artifact-studio', chunk: 'client.sheet.js' }));
+await fs.writeFile(path.join(ROOT, 'client.board.js'), wrap(board, { id: 'dsh-artifact-studio', chunk: 'client.board.js' }));
 await fs.writeFile(path.join(ROOT, 'client.canvas.js'), wrap(loader, { id: 'dsh-artifact-studio', chunk: 'client.canvas.js' }));
 console.log(`client.js ${main.length} bytes`);
 console.log(`client.doc.js ${doc.length} bytes`);
 console.log(`client.sheet.js ${sheet.length} bytes`);
+console.log(`client.board.js ${board.length} bytes`);
 console.log(`client.canvas.js ${loader.length} bytes`);
 console.log(`canvas.engine.js ${canvas.length} bytes`);

@@ -22,7 +22,7 @@ import type { MarkedToken, Token, Tokens } from 'marked';
 import { FORMATS_BY_TYPE } from '../../contract.js';
 import type { DesignTokens, ExportFormat, ExportedFile, Manifest } from '../../contract.js';
 import { DOC_CSP, DOC_STYLE, PAGE_CSP, PRINT_CSP, composePage, escapeHtml } from '../../render.js';
-import { evaluateWorkbook, parseSheetWorkbook, sheetTable, sheetToCsv } from '../../sheet/index.js';
+import { effectiveTextColor, evaluateWorkbook, parseSheetWorkbook, sheetTable, sheetToCsv } from '../../sheet/index.js';
 import type { SheetTable, SheetWorkbook } from '../../sheet/index.js';
 import { workbookToXlsx } from './xlsx.js';
 import type { DesignRenderer } from './design-render.js';
@@ -39,6 +39,7 @@ const MEDIA_TYPES: Readonly<Record<ExportFormat, string>> = {
   fig: 'application/octet-stream',
   csv: 'text/csv',
   xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  excalidraw: 'application/vnd.excalidraw+json',
 };
 
 const MARKED_TYPES: ReadonlySet<string> = new Set([
@@ -371,7 +372,8 @@ function printCellStyle(cell: SheetTable['cells'][number]): string {
     const decoration = [style.underline === true ? 'underline' : '', style.strike === true ? 'line-through' : ''].filter((part) => part !== '').join(' ');
     if (decoration !== '') rules.push('text-decoration:' + decoration);
     if (style.align !== undefined) rules.push('text-align:' + style.align);
-    if (style.color !== undefined) rules.push('color:' + style.color);
+    const color = effectiveTextColor(style);
+    if (color !== undefined) rules.push('color:' + color);
     if (style.background !== undefined) rules.push('background-color:' + style.background);
   }
   if (style?.align === undefined) rules.push('text-align:' + (typeof cell.value === 'number' ? 'right' : 'left'));
@@ -466,6 +468,13 @@ export async function writeExport(
     const rendered = await designs.exportContent(content, format);
     data = rendered.bytes;
     mediaType = rendered.mediaType;
+  } else if (manifest.type === 'board') {
+    if (format !== 'excalidraw') {
+      throw new ArtifactError('artifact/unsupported-format', 'A whiteboard exports as an .excalidraw file from the host.', {
+        supported: FORMATS_BY_TYPE.board,
+      });
+    }
+    data = Buffer.from(content, 'utf8');
   } else if (manifest.type === 'sheet') {
     let workbook: SheetWorkbook;
     try {
