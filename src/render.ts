@@ -1,6 +1,7 @@
 /** Page document composition shared by the host exporter and the browser renderer. */
 
 import { THEME_ATTRIBUTE } from './contract.js';
+import { kitHead } from './kit.js';
 import type { PageTheme } from './contract.js';
 
 /**
@@ -97,8 +98,10 @@ export function stripNavigation(content: string): string {
 }
 
 /**
- * Compose a page document with the policy and the token style ahead of every
- * other byte of markup.
+ * Compose a page document with the policy, the token style, and the artifact
+ * kit the page declares ahead of every other byte of markup. The kit comes
+ * after the tokens it reads and before the page's own styles, so a page rule
+ * overrides a kit rule of the same specificity.
  *
  * The prologue is emitted first and the artifact follows as body content, so the
  * policy is parsed before any page element, comment, or script. Searching for a
@@ -122,13 +125,17 @@ export function composePage(
   extraHead = '',
   theme: PageTheme = 'auto',
 ): string {
+  // Exported copies can be pasted back as source. Replace only host-marked
+  // styles; otherwise stale tokens later in the body override this prologue.
+  const source = content.replace(/<style\b(?=[^>]*\sdata-artifact-(?:tokens|kit)(?:\s|=|>))[^>]*>[\s\S]*?<\/style\s*>/gi, '');
   const head =
     '<meta charset="utf-8">' +
     '<meta name="viewport" content="width=device-width, initial-scale=1">' +
     (csp === null ? '' : `<meta http-equiv="Content-Security-Policy" content="${escapeHtml(csp)}">`) +
     `<title>${escapeHtml(title)}</title>` +
     `<style data-artifact-tokens>${designCss}</style>` +
+    kitHead(source) +
     extraHead;
   const root = supportsDark(content) ? ` ${THEME_ATTRIBUTE}="${theme}"` : '';
-  return `<!doctype html><html${root}><head>${head}</head><body>${stripNavigation(content)}</body></html>`;
+  return `<!doctype html><html${root}><head>${head}</head><body>${stripNavigation(source)}</body></html>`;
 }

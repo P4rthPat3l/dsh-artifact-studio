@@ -1,9 +1,12 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { isDesignInfo, scopeOfId } from '../../contract.js';
+import { isDesignInfo, scopeOfId, tokensToCss } from '../../contract.js';
 import { PAGE_CSP, composePage } from '../../render.js';
 import type {
   ArtifactPayload,
+  DesignSelection,
+  DesignSaveOptions,
+  DesignCatalog,
   ArtifactType,
   DesignInfo,
   ExportFormat,
@@ -17,14 +20,23 @@ import type {
   VersionSource,
 } from '../../contract.js';
 import { DesignRenderer, PREVIEW_MAX_SIDE } from './design-render.js';
-import { clearWorkspaceDesignSystem, resolveDesignSystem, saveDesignSystem } from './design-system.js';
+import { clearWorkspaceDesignSystem, saveDesignSystem } from './design-system.js';
+import { resolveSystem, saveSystem, listSystems, setSystemDefault } from './design-catalog.js';
+import { generationHash, generationSummary } from './generation.js';
+import type { Generation } from './generation.js';
+import { declaredKit, getKit } from '../../kit.js';
+import { composeBrief, composeSheetBrief } from './brief.js';
 import { ArtifactError } from './errors.js';
-import { docToHtml, writeExport } from './export.js';
+import { docToHtml, sheetToPrintableHtml, writeExport } from './export.js';
+import { findRecipe, readGuide, saveGuide } from './guide.js';
+import type { Guide, GuideLayers, GuidePatch } from './guide.js';
+import type { ResolvedRecipe } from './recipes.js';
 import { assertWithin, withLock, writeAtomic } from './fsutil.js';
 import { assertPlainFile, libraryRoot, requireWorkspace, workspaceRoot, workspaceRootExisting } from './paths.js';
 import type { RootConfig, ScopeRoot } from './paths.js';
 import { ArtifactStore, applyEdits, hashOf } from './store.js';
-import type { ListInput, TextEdit } from './store.js';
+import { parseSheetWorkbook, serializeSheetWorkbook } from '../../sheet/index.js';
+import type { ListInput, ReadResult, TextEdit } from './store.js';
 import type { WorkspaceRegistry } from './types.js';
 
 /** The caller's scope context: an optional workspace and an optional explicit scope. */
@@ -38,6 +50,22 @@ interface PreviewPaths {
   dir: string;
   png: string;
   meta: string;
+}
+
+/**
+ * Validate and canonicalise sheet content. A malformed workbook never reaches
+ * the store, and an accepted one always has stable ordering and formatting.
+ * @param content the JSON source.
+ * @returns the canonical JSON.
+ */
+function canonicalSheet(content: string): string {
+  try {
+    return serializeSheetWorkbook(parseSheetWorkbook(content));
+  } catch (error) {
+    throw new ArtifactError('artifact/invalid-sheet', 'The sheet content is not a valid workbook.', {
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 /**
@@ -108,9 +136,8 @@ export class ArtifactService {
    * @returns the root, or undefined.
    */
   private async optionalWorkspaceRoot(target: Target): Promise<ScopeRoot | undefined> {
-    if (target.workspaceId === undefined) return undefined;
-    const workspace = this.registry.get(target.workspaceId);
-    return workspace === undefined ? undefined : workspaceRootExisting(this.config, workspace);
+    if (target.scope === 'library' || target.workspaceId === undefined) return undefined;
+    return workspaceRootExisting(this.config, requireWorkspace(this.registry, target.workspaceId));
   }
 
   /**
@@ -118,8 +145,17 @@ export class ArtifactService {
    * @param target the caller's context.
    * @returns tokens, source, and CSS.
    */
-  async designSystem(target: Target): Promise<ResolvedDesignSystem> {
-    return resolveDesignSystem(await this.optionalWorkspaceRoot(target), await libraryRoot(this.config));
+  async designSystem(target: Target, selection: DesignSelection = {}): Promise<ResolvedDesignSystem> {
+    return resolveSystem(await this.optionalWorkspaceRoot(target), await libraryRoot(this.config), selection);
+  }
+
+  async listDesignSystems(target: Target): Promise<DesignCatalog> {
+    return listSystems(await this.root(target));
+  }
+
+  async setDesignDefault(target: Target, systemId: string | null, expectedRevision: number): Promise<ResolvedDesignSystem> {
+    await setSystemDefault(await this.root(target), systemId, expectedRevision);
+    return this.designSystem(target);
   }
 
   /**
@@ -128,11 +164,16 @@ export class ArtifactService {
    * @param tokens partial or full tokens.
    * @returns the saved tokens and scope.
    */
-  async saveDesignSystem(target: Target, tokens: unknown): Promise<ResolvedDesignSystem & { scope: Scope }> {
+  async saveDesignSystem(target: Target, tokens: unknown, options?: DesignSaveOptions): Promise<ResolvedDesignSystem & { scope: Scope }> {
     const root = await this.root(target);
+    const base = await this.designSystem(target);
+    if (options !== undefined) return { ...await saveSystem(root, base.tokens, tokens, options), scope: root.scope };
+    const catalog = await listSystems(root);
+    if (catalog.defaultId !== null) {
+      throw new ArtifactError('artifact/stale-catalog', 'A named default is selected. Read the catalog and supply systemId and expectedRevision.');
+    }
     const saved = await saveDesignSystem(root, await libraryRoot(this.config), tokens);
-    const resolved = await this.designSystem(target);
-    return { ...resolved, scope: saved.scope };
+    return { ...await this.designSystem(target), scope: saved.scope };
   }
 
   /**
@@ -141,8 +182,132 @@ export class ArtifactService {
    * @returns the design system now in force.
    */
   async clearWorkspaceDesignSystem(target: Target): Promise<ResolvedDesignSystem> {
-    await clearWorkspaceDesignSystem(await this.root({ ...target, scope: 'workspace' }));
+    const root = await this.root({ ...target, scope: 'workspace' });
+    const catalog = await listSystems(root);
+    if (catalog.defaultId !== null) await setSystemDefault(root, null, catalog.revision);
+    await clearWorkspaceDesignSystem(root);
     return this.designSystem(target);
+  }
+
+  /**
+   * The guides in force for a target. Reading never creates a workspace store.
+   * @param target the caller's context.
+   * @returns the workspace and library guides.
+   */
+  async guides(target: Target): Promise<GuideLayers> {
+    return {
+      workspace: await readGuide(await this.optionalWorkspaceRoot(target)),
+      library: await readGuide(await libraryRoot(this.config)),
+    };
+  }
+
+  /**
+   * Change one scope's guide.
+   * @param target the caller's context; `scope` picks the guide.
+   * @param patch the change.
+   * @returns the saved guide and its scope.
+   */
+  async saveGuide(target: Target, patch: GuidePatch): Promise<{ scope: Scope; guide: Guide }> {
+    const root = await this.root(target);
+    return { scope: root.scope, guide: await saveGuide(root, patch) };
+  }
+
+  /**
+   * Resolve a recipe id for an artifact type, or refuse it.
+   * @param target the caller's context.
+   * @param id the recipe id.
+   * @param type the artifact type.
+   * @returns the recipe.
+   */
+  async recipe(target: Target, id: string, type: ArtifactType): Promise<ResolvedRecipe> {
+    const recipe = findRecipe(await this.guides(target), id);
+    if (recipe === undefined) {
+      throw new ArtifactError('artifact/unknown-recipe', `No recipe "${id}". Call artifact_brief without a recipe to list them.`, { recipe: id });
+    }
+    if (!recipe.types.includes(type)) {
+      throw new ArtifactError('artifact/unknown-recipe', `The ${id} recipe is for ${recipe.types.join(', ')}, not ${type}.`, { recipe: id, type });
+    }
+    return recipe;
+  }
+
+  /**
+   * The recipe a stored artifact follows, when it names one that still resolves.
+   * @param target the caller's context.
+   * @param manifest the artifact.
+   * @returns the recipe, or undefined.
+   */
+  async recipeOf(target: Target, manifest: Manifest): Promise<ResolvedRecipe | undefined> {
+    if (manifest.generation !== undefined) {
+      const pinned = (await this.store.read(await this.root(target, manifest.id), manifest.id, manifest.version)).generation?.recipe;
+      return pinned ? { ...pinned, source: manifest.scope } : undefined;
+    }
+    if (manifest.recipe === undefined) return undefined;
+    const recipe = findRecipe(await this.guides({ ...target, scope: manifest.scope }), manifest.recipe);
+    return recipe !== undefined && recipe.types.includes(manifest.type) ? recipe : undefined;
+  }
+
+  /**
+   * Assemble the brief for a new artifact.
+   * @param target the caller's context.
+   * @param type the artifact type.
+   * @param recipeId the recipe, when the caller chose one.
+   * @returns the brief and the recipe it used.
+   */
+  async brief(target: Target, type: ArtifactType, recipeId?: string, selection: DesignSelection = {}): Promise<{ brief: string; recipe?: ResolvedRecipe }> {
+    const layers = await this.guides(target);
+    if (type === 'sheet') {
+      if (recipeId !== undefined) {
+        throw new ArtifactError('artifact/unknown-recipe', 'Sheets do not use recipes.', { recipe: recipeId, type });
+      }
+      return { brief: composeSheetBrief(layers) };
+    }
+    const recipe = recipeId === undefined ? undefined : findRecipe(layers, recipeId);
+    if (recipeId !== undefined && (recipe === undefined || !recipe.types.includes(type))) {
+      throw new ArtifactError('artifact/unknown-recipe', 'No compatible recipe for this artifact type.', { recipe: recipeId, type });
+    }
+    const design = await this.designSystem(target, selection);
+    const root = target.scope === 'library' ? await libraryRoot(this.config) : await this.optionalWorkspaceRoot(target);
+    const siblings = recipe === undefined || root === undefined
+      ? []
+      : (await this.store.list(root, { type, recipe: recipe.id, limit: 3 })).items;
+    const brief = composeBrief({ type, recipe, layers, tokens: design.tokens, tokenSource: design.source, siblings });
+    return recipe === undefined ? { brief } : { brief, recipe };
+  }
+
+  private async freeze(target: Target, type: ArtifactType, content: string, recipeId?: string, selection: DesignSelection = {}): Promise<Generation> {
+    const design = await this.designSystem(target, selection);
+    const recipe = recipeId === undefined ? null : await this.recipe(target, recipeId, type);
+    const kit = type === 'page' ? declaredKit(content) ?? null : null;
+    if (kit !== null && !getKit(kit)) throw new ArtifactError('artifact/unsupported-kit', 'The selected kit release is not installed.');
+    return { schemaVersion: 1, tokens: design.tokens, system: design.system ?? null, tokenSource: design.source,
+      recipe, kit, conventionsHash: generationHash(JSON.stringify(await this.guides(target))) };
+  }
+
+  private async versionDesign(target: Target, result: ReadResult): Promise<ResolvedDesignSystem> {
+    const generation = result.generation;
+    if (!generation) return this.designSystem({ ...target, scope: result.manifest.scope });
+    if (generation.kit !== null && !getKit(generation.kit)) throw new ArtifactError('artifact/unsupported-kit', 'The saved kit release is not installed.');
+    return { tokens: generation.tokens, css: tokensToCss(generation.tokens), source: generation.tokenSource,
+      ...(generation.system ? { system: generation.system } : {}) };
+  }
+
+  async rebase(target: Target, id: string, input: { baseVersion: number; source: VersionSource; recipe?: string; design?: DesignSelection }): Promise<Manifest> {
+    const root = await this.root(target, id);
+    const current = await this.store.read(root, id);
+    if (current.manifest.type === 'design') throw new ArtifactError('artifact/unsupported-type', 'Mockup source must be restyled explicitly.');
+    if (current.manifest.type === 'sheet') throw new ArtifactError('artifact/unsupported-type', 'A sheet has no design or recipe to rebase.', { type: current.manifest.type });
+    const recipe = input.recipe ?? current.manifest.recipe;
+    const generation = input.recipe === undefined && input.design === undefined
+      ? await this.freeze({ ...target, scope: root.scope }, current.manifest.type, current.content, recipe)
+      :
+      input.design
+      ? await this.freeze({ ...target, scope: root.scope }, current.manifest.type, current.content, recipe, input.design)
+      : (current.generation ?? await this.freeze({ ...target, scope: root.scope }, current.manifest.type, current.content, recipe));
+
+    if (input.recipe !== undefined && generation.recipe?.id !== input.recipe) {
+      generation.recipe = await this.recipe({ ...target, scope: root.scope }, input.recipe, current.manifest.type);
+    }
+    return this.store.update(root, id, { baseVersion: input.baseVersion, recipe, generation, source: { ...input.source, action: 'rebase' } });
   }
 
   /**
@@ -154,12 +319,20 @@ export class ArtifactService {
    */
   async create(
     target: Target,
-    input: { type: ArtifactType; title: string; content: string; source: VersionSource },
+    input: { type: ArtifactType; title: string; content: string; source: VersionSource; recipe?: string; design?: DesignSelection },
   ): Promise<Manifest> {
+    if (input.type === 'sheet' && input.recipe !== undefined) {
+      throw new ArtifactError('artifact/bad-request', 'Sheets do not use recipes.', { recipe: input.recipe, type: input.type });
+    }
+    if (input.recipe !== undefined) await this.recipe(target, input.recipe, input.type);
     const root = await this.root(target);
-    const info = input.type === 'design' ? await this.designs.inspect(input.content) : undefined;
-    const manifest = await this.store.create(root, input);
-    if (info !== undefined) await this.writeInfo(root, manifest.id, input.content, info);
+    const content = input.type === 'sheet' ? canonicalSheet(input.content) : input.content;
+    const info = input.type === 'design' ? await this.designs.inspect(content) : undefined;
+    const generation = input.type === 'design' || input.type === 'sheet'
+      ? undefined
+      : await this.freeze({ ...target, scope: root.scope }, input.type, content, input.recipe, input.design);
+    const manifest = await this.store.create(root, { ...input, content, generation });
+    if (info !== undefined) await this.writeInfo(root, manifest.id, content, info);
     return manifest;
   }
 
@@ -174,9 +347,10 @@ export class ArtifactService {
   async read(target: Target, id: string, version?: number): Promise<ArtifactPayload> {
     const root = await this.root(target, id);
     const result = await this.store.read(root, id, version);
-    const design = await this.designSystem(target);
+    const design = await this.versionDesign(target, result);
     const payload: ArtifactPayload = {
-      ...result,
+      manifest: result.manifest, content: result.content, version: result.version,
+      ...(result.generation ? { generation: generationSummary(result.generation) } : {}),
       designCss: design.css,
       design: design.tokens,
     };
@@ -199,12 +373,29 @@ export class ArtifactService {
   async update(
     target: Target,
     id: string,
-    input: { baseVersion: number; content?: string; edits?: readonly TextEdit[]; title?: string; source: VersionSource },
+    input: { baseVersion: number; content?: string; edits?: readonly TextEdit[]; title?: string; recipe?: string; source: VersionSource },
   ): Promise<Manifest> {
     const root = await this.root(target, id);
     const current = await this.store.manifest(root, id);
-    if (current.type !== 'design') return this.store.update(root, id, input);
     const existing = await this.store.read(root, id);
+    if (current.type === 'sheet') {
+      if (input.recipe !== undefined) throw new ArtifactError('artifact/bad-request', 'Sheets do not use recipes.', { type: current.type });
+      if (input.content !== undefined && input.edits !== undefined) {
+        throw new ArtifactError('artifact/bad-request', 'Send either content or edits, not both.');
+      }
+      let next = input.content;
+      if (next === undefined && input.edits !== undefined) next = applyEdits(existing.content, input.edits);
+      if (next !== undefined) next = canonicalSheet(next);
+      return this.store.update(root, id, { ...input, content: next, edits: undefined });
+    }
+    if (current.type !== 'design') {
+      let generation = existing.generation ?? await this.freeze({ ...target, scope: root.scope }, current.type, existing.content, input.recipe ?? current.recipe);
+      if (input.recipe !== undefined && input.recipe !== generation.recipe?.id) {
+        generation = { ...generation, recipe: await this.recipe({ ...target, scope: root.scope }, input.recipe, current.type) };
+      }
+      return this.store.update(root, id, { ...input, generation });
+    }
+    if (input.recipe !== undefined) await this.recipe({ ...target, scope: root.scope }, input.recipe, current.type);
     let next = input.content;
     if (next === undefined && input.edits !== undefined) next = applyEdits(existing.content, input.edits);
     if (next === undefined) return this.store.update(root, id, input);
@@ -224,7 +415,11 @@ export class ArtifactService {
    * @returns the new manifest.
    */
   async restore(target: Target, id: string, version: number, source: VersionSource, baseVersion?: number): Promise<Manifest> {
-    return this.store.restore(await this.root(target, id), id, version, source, baseVersion);
+    const root = await this.root(target, id);
+    const old = await this.store.read(root, id, version);
+    const generation = old.manifest.type === 'design' || old.manifest.type === 'sheet' || old.generation ? undefined
+      : await this.freeze({ ...target, scope: root.scope }, old.manifest.type, old.content, old.manifest.recipe);
+    return this.store.restore(root, id, version, source, baseVersion, generation);
   }
 
   async history(target: Target, id: string): Promise<VersionEntry[]> {
@@ -246,11 +441,21 @@ export class ArtifactService {
    * @returns printable HTML.
    */
   async printable(target: Target, id: string, version?: number): Promise<{ html: string }> {
-    const { manifest, content } = await this.store.read(await this.root(target, id), id, version);
+    const result = await this.store.read(await this.root(target, id), id, version);
+    const { manifest, content } = result;
     if (manifest.type === 'design') {
       throw new ArtifactError('artifact/unsupported-format', 'A design cannot be printed.', { type: manifest.type });
     }
-    const design = await this.designSystem(target);
+    const design = await this.versionDesign(target, result);
+    if (manifest.type === 'sheet') {
+      let workbook;
+      try {
+        workbook = parseSheetWorkbook(content);
+      } catch {
+        throw new ArtifactError('artifact/corrupt', 'The saved sheet content cannot be read.', { id: manifest.id });
+      }
+      return { html: sheetToPrintableHtml(workbook, design.css, manifest.title) };
+    }
     return { html: manifest.type === 'page'
       ? composePage(content, design.css, PAGE_CSP, manifest.title)
       : docToHtml(manifest.title, content, design.css, true) };
@@ -267,8 +472,9 @@ export class ArtifactService {
    */
   async export(target: Target, id: string, format: ExportFormat, version?: number): Promise<ExportedFile> {
     const root = await this.root(target, id);
-    const { manifest, content, version: readVersion } = await this.store.read(root, id, version);
-    const design = await this.designSystem(target);
+    const result = await this.store.read(root, id, version);
+    const { manifest, content, version: readVersion } = result;
+    const design = await this.versionDesign(target, result);
     return writeExport(root, { ...manifest, version: readVersion }, content, format, design, this.now(), this.designs);
   }
 

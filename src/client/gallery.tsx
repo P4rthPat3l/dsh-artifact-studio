@@ -18,7 +18,8 @@ import type { Where } from './api.js';
 import { DesignEditor } from './design-editor.jsx';
 import { pageDocument } from './frames.js';
 import type { Translator } from './harness.js';
-import { IconDesign, IconDoc, IconPage, IconPalette } from './icons.jsx';
+import { formatCellRef, parseSheetWorkbook, usedBounds } from '../sheet/model.js';
+import { IconDesign, IconDoc, IconPage, IconPalette, IconSheet } from './icons.jsx';
 import { relativeTime } from './locale.js';
 import { useHarnessDark } from './theme.js';
 import { togglePin, usePins } from './preferences.js';
@@ -216,7 +217,7 @@ function coverHtml(html: string): string {
       if (name.startsWith('on') || name === 'srcdoc') element.removeAttribute(attribute.name);
     }
   }
-  return parsed.documentElement.outerHTML;
+  return '<!doctype html>' + parsed.documentElement.outerHTML;
 }
 
 /**
@@ -234,6 +235,38 @@ function excerpt(markdown: string): string {
     .replace(/\s+/g, ' ')
     .trim();
   return plain.length > 220 ? plain.slice(0, 220).trimEnd() + '...' : plain;
+}
+
+/**
+ * The first few cells of a sheet for its gallery cover. Formulas show as their
+ * source, because the cover does not load the formula engine.
+ * @param content the stored workbook JSON.
+ * @returns a small grid, or null when the content cannot be read.
+ */
+function sheetCover(content: string): { name: string; rows: string[][] } | null {
+  try {
+    const workbook = parseSheetWorkbook(content);
+    const sheet = workbook.sheets[0];
+    if (sheet === undefined) return null;
+    const bounds = usedBounds(sheet);
+    const rows = Math.min(5, Math.max(1, bounds.rows));
+    const columns = Math.min(4, Math.max(1, bounds.columns));
+    const grid: string[][] = [];
+    for (let row = 1; row <= rows; row += 1) {
+      const values: string[] = [];
+      for (let column = 0; column < columns; column += 1) {
+        const cell = sheet.cells[formatCellRef(row, column)];
+        if (cell === undefined) values.push('');
+        else if (cell.formula !== undefined) values.push(cell.formula);
+        else if (cell.value === undefined) values.push('');
+        else values.push(String(cell.value));
+      }
+      grid.push(values);
+    }
+    return { name: sheet.name, rows: grid };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -331,12 +364,12 @@ function ArtifactCover({ t, view }: { t: Translator; view: ArtifactView }) {
       setUrl(null);
       return undefined;
     }
-    const next = URL.createObjectURL(new Blob([pageDocument(coverHtml(data.content), data.designCss, title, dark ? 'dark' : 'light')], { type: 'text/html' }));
+    const next = URL.createObjectURL(new Blob([coverHtml(pageDocument(data.content, data.designCss, title, dark ? 'dark' : 'light'))], { type: 'text/html' }));
     setUrl(next);
     return () => URL.revokeObjectURL(next);
   }, [data, type, title, dark]);
 
-  const icon = type === 'page' ? <IconPage /> : type === 'doc' ? <IconDoc /> : <IconDesign />;
+  const icon = type === 'page' ? <IconPage /> : type === 'doc' ? <IconDoc /> : type === 'sheet' ? <IconSheet /> : <IconDesign />;
   if (failed) return <span className="art-cover" ref={ref} aria-hidden="true"><span className="art-cover-fallback">{icon}</span></span>;
   if (type === 'design') {
     return (
@@ -349,6 +382,26 @@ function ArtifactCover({ t, view }: { t: Translator; view: ArtifactView }) {
     return (
       <span className="art-cover" ref={ref} aria-hidden="true">
         {url === null ? <span className="art-cover-fallback">{icon}</span> : <span className="art-cover-frame-wrap"><iframe className="art-cover-frame" src={url} sandbox="" title={t('gallery.coverTitle', { title })} tabIndex={-1} loading="lazy" referrerPolicy="no-referrer" /></span>}
+      </span>
+    );
+  }
+  if (type === 'sheet') {
+    const preview = data === null ? null : sheetCover(data.content);
+    return (
+      <span className="art-cover" ref={ref} aria-hidden="true">
+        {preview === null
+          ? <span className="art-cover-fallback">{icon}</span>
+          : <span className="art-cover-sheet">
+            <span className="art-cover-sheet-name">{preview.name}</span>
+            <span className="art-cover-sheet-table">
+              {preview.rows.map((row, rowIndex) => (
+                <span className="art-cover-sheet-row" key={rowIndex}>
+                  <span className="art-cover-sheet-index">{rowIndex + 1}</span>
+                  {row.map((value, cellIndex) => <span className="art-cover-sheet-cell" key={cellIndex}>{value}</span>)}
+                </span>
+              ))}
+            </span>
+          </span>}
       </span>
     );
   }
@@ -644,7 +697,7 @@ export function GalleryBody({ t, projects, scope, contextWorkspaceId, onScopeCha
   const onCreate = useCallback(
     async (nextType: ArtifactType, nextScope: Scope) => {
       if (nextScope === 'workspace' && contextWorkspaceId === null) return;
-      const title = t(nextType === 'page' ? 'create.untitledPage' : nextType === 'doc' ? 'create.untitledDoc' : 'create.untitledDesign');
+      const title = t(nextType === 'page' ? 'create.untitledPage' : nextType === 'doc' ? 'create.untitledDoc' : nextType === 'sheet' ? 'create.untitledSheet' : 'create.untitledDesign');
       try {
         const { manifest } = await api.create({ scope: nextScope, workspaceId: contextWorkspaceId }, nextType, title, starterContent(nextType, title));
         announceListChange();
@@ -723,9 +776,10 @@ export function GalleryBody({ t, projects, scope, contextWorkspaceId, onScopeCha
               items={[
                 { id: 'page', label: t('gallery.newPage') + ' · ' + createTitle, icon: <IconPage size={14} /> },
                 { id: 'doc', label: t('gallery.newDoc') + ' · ' + createTitle, icon: <IconDoc size={14} /> },
+                { id: 'sheet', label: t('gallery.newSheet') + ' · ' + createTitle, icon: <IconSheet size={14} /> },
                 { id: 'design', label: t('gallery.newDesign') + ' · ' + createTitle, icon: <IconDesign size={14} /> },
               ]}
-              onSelect={(entry) => { setMenu(false); void onCreate(entry === 'doc' ? 'doc' : entry === 'design' ? 'design' : 'page', createScope); }}
+              onSelect={(entry) => { setMenu(false); void onCreate(entry === 'doc' ? 'doc' : entry === 'design' ? 'design' : entry === 'sheet' ? 'sheet' : 'page', createScope); }}
               anchor={<Button size="sm" variant="outline" icon={<IconPlusOutlineRegular size={14} />} aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu((value) => !value)}>{t('gallery.create')}</Button>}
             />
           </div>
@@ -752,7 +806,7 @@ export function GalleryBody({ t, projects, scope, contextWorkspaceId, onScopeCha
                 className="art-segment"
                 label={t('filter.type')}
                 value={type ?? 'all'}
-                options={[{ value: 'all', label: t('type.all') }, { value: 'page', label: t('type.page') }, { value: 'doc', label: t('type.doc') }, { value: 'design', label: t('type.design') }]}
+                options={[{ value: 'all', label: t('type.all') }, { value: 'page', label: t('type.page') }, { value: 'doc', label: t('type.doc') }, { value: 'sheet', label: t('type.sheet') }, { value: 'design', label: t('type.design') }]}
                 onChange={(next) => setType(next === 'all' ? undefined : next)}
               />
             </div>

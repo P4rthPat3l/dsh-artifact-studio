@@ -1,6 +1,9 @@
-import { isDesignInfo, isManifest, isVersionSource } from '../contract.js';
+import { isDesignInfo, isManifest, isVersionSource, isGenerationSummary, isDesignSystemRef } from '../contract.js';
 import type {
   ArtifactPayload,
+  DesignSelection,
+  DesignSaveOptions,
+  DesignCatalog,
   ArtifactType,
   DesignTokens,
   ExportFormat,
@@ -90,6 +93,7 @@ function isPayload(value: unknown): value is ArtifactPayload {
     typeof value.version === 'number' &&
     typeof value.designCss === 'string' &&
     isTokens(value.design) &&
+    (value.generation === undefined || isGenerationSummary(value.generation)) &&
     (value.designInfo === undefined || isDesignInfo(value.designInfo))
   );
 }
@@ -105,7 +109,8 @@ function isVersionEntry(value: unknown): value is VersionEntry {
     typeof value.createdAt === 'string' &&
     typeof value.contentHash === 'string' &&
     typeof value.contentBytes === 'number' &&
-    isVersionSource(value.source)
+    isVersionSource(value.source) &&
+    (value.generation === undefined || isGenerationSummary(value.generation))
   );
 }
 
@@ -161,8 +166,16 @@ function isDesign(value: unknown): value is ResolvedDesignSystem {
     isObject(value) &&
     isTokens(value.tokens) &&
     (value.source === 'workspace' || value.source === 'library' || value.source === 'default') &&
-    typeof value.css === 'string'
+    typeof value.css === 'string' &&
+    (value.system === undefined || isDesignSystemRef(value.system))
   );
+}
+
+function isCatalog(value: unknown): value is DesignCatalog {
+  return isObject(value) && (value.scope === 'workspace' || value.scope === 'library')
+    && typeof value.revision === 'number' && Number.isSafeInteger(value.revision) && value.revision >= 0
+    && (value.defaultId === null || typeof value.defaultId === 'string')
+    && Array.isArray(value.systems) && value.systems.every(isDesignSystemRef);
 }
 
 /** Where a request goes: a scope, plus the workspace for design-system resolution. */
@@ -202,8 +215,15 @@ export const api = {
     call('preview', { ...fields(where), id, ...(version === undefined ? {} : { version }) }, isPreview, signal),
   designSystem: (workspaceId: string | null, signal?: AbortSignal) =>
     call('designSystem', workspaceId === null ? {} : { workspaceId }, isDesign, signal),
-  saveDesignSystem: (where: Where, tokens: DesignTokens) =>
-    call('saveDesignSystem', { ...fields(where), tokens }, isDesign),
+  selectedDesign: (where: Where, selection: DesignSelection = {}, signal?: AbortSignal) =>
+    call('designSystem', { ...fields(where), systemId: selection.systemId, systemScope: selection.systemScope, systemRevision: selection.revision }, isDesign, signal),
+  designSystems: (where: Where, signal?: AbortSignal) => call('designSystems', fields(where), isCatalog, signal),
+  saveDesignSystem: (where: Where, tokens: DesignTokens, options?: DesignSaveOptions) =>
+    call('saveDesignSystem', { ...fields(where), tokens, ...options }, isDesign),
+  setDesignDefault: (where: Where, systemId: string | null, expectedRevision: number) =>
+    call('setDesignDefault', { ...fields(where), systemId, expectedRevision }, isDesign),
+  rebase: (where: Where, id: string, baseVersion: number, selection: DesignSelection = {}) =>
+    call('rebase', { ...fields(where), id, baseVersion, systemId: selection.systemId, systemScope: selection.systemScope, systemRevision: selection.revision }, hasManifest),
   clearDesignSystem: (workspaceId: string) => call('clearDesignSystem', { workspaceId, scope: 'workspace' }, isDesign),
 };
 
@@ -225,6 +245,12 @@ export function errorKey(code: string | undefined): string {
   switch (code) {
     case 'artifact/not-found':
       return 'error.notFound';
+    case 'artifact/stale-catalog':
+      return 'error.staleCatalog';
+    case 'artifact/writer-busy':
+      return 'error.writerBusy';
+    case 'artifact/unsupported-kit':
+      return 'error.unsupportedKit';
     case 'artifact/stale-version':
       return 'error.stale';
     case 'artifact/too-large':
@@ -253,6 +279,8 @@ export function errorKey(code: string | undefined): string {
       return 'error.designUnavailable';
     case 'artifact/unsupported-type':
       return 'error.unsupportedType';
+    case 'artifact/invalid-sheet':
+      return 'error.sheetInvalid';
     default:
       return 'error.generic';
   }

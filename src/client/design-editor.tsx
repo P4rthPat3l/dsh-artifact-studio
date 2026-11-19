@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives';
 import { COLOR_ROLES, tokensToCss } from '../contract.js';
-import type { DesignTokens, ResolvedDesignSystem, Scope, TokenColors } from '../contract.js';
+import type { DesignCatalog, DesignTokens, ResolvedDesignSystem, Scope, TokenColors } from '../contract.js';
+import type { Where } from './api.js';
 import { api, codeOf, errorKey } from './api.js';
 import { PageFrame } from './page-view.jsx';
 import type { Translator } from './harness.js';
@@ -49,14 +50,20 @@ export function DesignEditor({ t, workspaceId, workspaceTitle }: DesignEditorPro
   const [failed, setFailed] = useState(false);
   const [busy, setBusy] = useState(false);
   const dark = useHarnessDark();
+  const where: Where = { workspaceId, scope: workspaceId === null ? 'library' : 'workspace' };
+  const [catalog, setCatalog] = useState<DesignCatalog | null>(null);
+  const [selected, setSelected] = useState('');
+  const [message, setMessage] = useState<string | null>(null);
+  const sequence = useRef(0);
+  const dirty = resolved !== null && tokens !== null && JSON.stringify(tokens) !== JSON.stringify(resolved.tokens);
 
   useEffect(() => {
     const controller = new AbortController();
-    api
-      .designSystem(workspaceId, controller.signal)
-      .then((value) => {
-        setResolved(value);
-        setTokens(value.tokens);
+    setResolved(null); setTokens(null); setCatalog(null); setFailed(false);
+    Promise.all([api.designSystem(workspaceId, controller.signal), api.designSystems(where, controller.signal)])
+      .then(([value, list]) => {
+        if (controller.signal.aborted) return;
+        setResolved(value); setTokens(value.tokens); setCatalog(list);
       })
       .catch(() => {
         if (!controller.signal.aborted) setFailed(true);
@@ -69,15 +76,23 @@ export function DesignEditor({ t, workspaceId, workspaceTitle }: DesignEditorPro
   if (failed) return <p className="art-note">{t('error.generic')}</p>;
   if (resolved === null || tokens === null) return <p className="art-note">{t('empty.loading')}</p>;
 
-  const saveTo = async (scope: Scope) => {
+  const saveTo = async (scope: Scope, copy = false) => {
     setBusy(true);
     try {
-      const value = await api.saveDesignSystem({ scope, workspaceId }, tokens);
-      setResolved(value);
-      setTokens(value.tokens);
+      const target = { scope, workspaceId: scope === 'library' ? null : workspaceId };
+      const list = scope === where.scope ? catalog : await api.designSystems(target);
+      if (list === null) return;
+      const systemId = !copy && resolved.system?.scope === scope ? resolved.system.id : undefined;
+      const options = copy || systemId ? { systemId, createNew: systemId === undefined, expectedRevision: list.revision } : undefined;
+      const value = await api.saveDesignSystem(target, tokens, options);
+      if (scope === where.scope) {
+        setResolved(value); setTokens(value.tokens); setSelected(value.system?.id ?? '');
+        setCatalog(await api.designSystems(where));
+      }
+      setMessage(null);
       notify(t('design.saved'));
     } catch (error) {
-      notify(t(errorKey(codeOf(error))));
+      setMessage(t(errorKey(codeOf(error))));
     } finally {
       setBusy(false);
     }
@@ -91,14 +106,53 @@ export function DesignEditor({ t, workspaceId, workspaceTitle }: DesignEditorPro
       setResolved(value);
       setTokens(value.tokens);
     } catch (error) {
-      notify(t(errorKey(codeOf(error))));
+      setMessage(t(errorKey(codeOf(error))));
     } finally {
       setBusy(false);
     }
   };
 
+  const select = async (id: string) => {
+    if (dirty) {
+      setMessage(t('design.unsavedSelection'));
+      return;
+    }
+    const request = ++sequence.current;
+    setBusy(true);
+    try {
+      const value = await api.selectedDesign(where, id === '' ? {} : { systemId: id, systemScope: where.scope });
+      if (request === sequence.current) { setSelected(id); setResolved(value); setTokens(value.tokens); setMessage(null); }
+    } catch (error) { setMessage(t(errorKey(codeOf(error)))); }
+    finally { if (request === sequence.current) setBusy(false); }
+  };
+  const reloadCatalog = async () => {
+    try { setCatalog(await api.designSystems(where)); setMessage(null); }
+    catch (error) { setMessage(t(errorKey(codeOf(error)))); }
+  };
+  const makeDefault = async () => {
+    if (!catalog || !resolved.system || resolved.system.scope !== where.scope) return;
+    setBusy(true);
+    try { await api.setDesignDefault(where, resolved.system.id, catalog.revision); await reloadCatalog(); notify(t('design.saved')); }
+    catch (error) { setMessage(t(errorKey(codeOf(error)))); }
+    finally { setBusy(false); }
+  };
   return (
     <div className="art-design">
+      <label className="art-field">{t('design.system')}
+        <select value={selected} disabled={busy} onChange={event => void select(event.target.value)}>
+          <option value="">{t('design.defaultChoice')}</option>
+          {catalog?.systems.map(system => <option key={system.id} value={system.id}>{t('design.revision', { name: system.name, revision: system.revision })}</option>)}
+        </select>
+      </label>
+      <p className="art-note">{t('design.pinHint')}</p>
+      {resolved.system ? <p className="art-note">{t('design.revision', { name: resolved.system.name, revision: resolved.system.revision })}</p> : null}
+      {message ? <p role="alert" className="art-note">{message}</p> : null}
+      <div className="art-design-actions">
+        <Button size="sm" disabled={busy || !catalog} onClick={() => void saveTo(where.scope, true)}>{t('design.copy')}</Button>
+        {resolved.system?.scope === where.scope ? <Button size="sm" disabled={busy || dirty || catalog?.defaultId === resolved.system.id} onClick={() => void makeDefault()}>{t('design.useDefault')}</Button> : null}
+        <Button size="sm" disabled={busy} onClick={() => void reloadCatalog()}>{t('design.catalogReload')}</Button>
+        {dirty ? <Button size="sm" disabled={busy} onClick={() => { setTokens(resolved.tokens); setMessage(null); }}>{t('design.discardEdits')}</Button> : null}
+      </div>
       <p className="art-design-source">
         {t('design.hint')} {t(`design.source.${resolved.source}`)}
       </p>
@@ -108,6 +162,7 @@ export function DesignEditor({ t, workspaceId, workspaceTitle }: DesignEditorPro
           <PageFrame content={PREVIEW(t)} designCss={css} title={tokens.name} frameTitle={t('design.preview')} dark={dark} />
         </div>
       </div>
+      <fieldset disabled={busy} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
       <label className="art-field">
         {t('design.name')}
         <input type="text" value={tokens.name} maxLength={80} onChange={(event) => setTokens({ ...tokens, name: event.target.value })} />
@@ -195,6 +250,7 @@ export function DesignEditor({ t, workspaceId, workspaceTitle }: DesignEditorPro
         <textarea value={tokens.notes} maxLength={4000} onChange={(event) => setTokens({ ...tokens, notes: event.target.value })} />
         <span className="art-field-hint">{t('design.notesHint')}</span>
       </label>
+      </fieldset>
       <div className="art-design-actions">
         {workspaceId === null ? null : (
           <Button size="sm" variant="primary" disabled={busy} onClick={() => void saveTo('workspace')}>

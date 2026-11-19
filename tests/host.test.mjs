@@ -15,6 +15,8 @@ import { apply as applyTools } from '../dist/host/tools-plugin.js';
 import { parseArtifactAddress, formatArtifactAddress, tokensToCss, DEFAULT_TOKENS } from '../dist/contract.js';
 import { composePage, PAGE_CSP } from '../dist/render.js';
 import { mergeTokens } from '../dist/host/lib/design-system.js';
+import { parseSheetWorkbook, serializeSheetWorkbook } from '../dist/sheet/index.js';
+import { unzipSync, strFromU8 } from 'fflate';
 
 let base;
 let wsA;
@@ -109,7 +111,7 @@ test('AC-002: invalid create input is refused and leaves no directory', async ()
   const svc = service({ maxContentBytes: 64 });
   const root = storeHome('ws-a');
   const before = (await fs.readdir(root)).length;
-  await rejects(svc.create(A, { type: 'sheet', title: 'x', content: '', source: agent }), 'artifact/bad-request');
+  await rejects(svc.create(A, { type: 'deck', title: 'x', content: '', source: agent }), 'artifact/bad-request');
   await rejects(svc.create(A, { type: 'page', title: 'x'.repeat(121), content: '', source: agent }), 'artifact/bad-request');
   await rejects(svc.create(A, { type: 'page', title: 'big', content: 'x'.repeat(65), source: agent }), 'artifact/too-large');
   assert.equal((await fs.readdir(root)).length, before);
@@ -299,7 +301,9 @@ test('AC-017: design tokens reach the page', async () => {
   assert.match(before.designCss, /--artifact-color-primary: #8c3e25;/);
   await svc.saveDesignSystem({ ...A, scope: 'workspace' }, { colors: { primary: '#ff0055' } });
   const after = await svc.read(A, page.id);
-  assert.match(after.designCss, /--artifact-color-primary: #ff0055;/);
+  assert.match(after.designCss, /--artifact-color-primary: #8c3e25;/);
+  const next = await svc.create(A, { type: 'page', title: 'New tokens', content: PAGE, source: agent });
+  assert.match((await svc.read(A, next.id)).designCss, /--artifact-color-primary: #ff0055;/);
   await rejects(
     svc.saveDesignSystem({ ...A, scope: 'workspace' }, { colors: { primary: 'red;} body{display:none' } }),
     'artifact/invalid-tokens',
@@ -659,7 +663,8 @@ test('AC-070: the artifact-design skill registers and the tools load without the
     workspaceRegistry: registry,
     workingDirectory: { ensure: async () => wsA },
   });
-  assert.equal(registered.length, 8);
+  assert.equal(registered.length, 13);
+  assert.ok(registered.includes('artifact_brief') && registered.includes('artifact_guide_update'));
 });
 
 test('AC-071: write tool descriptions name the skill and the precedence rule', () => {
@@ -667,7 +672,7 @@ test('AC-071: write tool descriptions name the skill and the precedence rule', (
   for (const name of ['artifact_create', 'artifact_update']) {
     const description = byName[name].description;
     assert.match(description, /artifact-design skill/);
-    assert.match(description, /the user's request, then the design system, then your own choices/);
+    assert.match(description, /the user's request, then saved conventions, then the recipe, then the design system, then your own choices/);
     assert.ok(description.length < 1200, `${name} is ${description.length} characters`);
   }
 });
@@ -767,5 +772,165 @@ test('AC-084: artifact_create description tells the model to use an artifact whe
   const description = byName.artifact_create.description;
   assert.match(description, /If the user asks for an artifact, an artifact page, or an artifact doc/);
   assert.match(description, /create it here with the matching type and never write a project file instead/);
+});
+
+
+/** A small sheet workbook that exercises literals, formulas, and styles. */
+function sheetFixture(extra = {}) {
+  return JSON.stringify({
+    schemaVersion: 1,
+    sheets: [
+      {
+        name: 'Budget',
+        cells: {
+          A1: 'Item',
+          B1: 'Cost',
+          C1: 'With tax',
+          A2: 'Hosting',
+          B2: 1200,
+          C2: '=B2*1.2',
+          B3: 800,
+          B4: '=SUM(B2:B3)',
+          ...extra,
+        },
+        columnWidths: { A: 160 },
+      },
+    ],
+  });
+}
+
+test('SHEET-AC-001: artifact_create stores a canonical sheet workbook at version 1', async () => {
+  const svc = service();
+  const { run } = toolsFor('ses-a', wsA, svc);
+  const content = JSON.stringify({ sheets: [{ cells: { C2: '=B2*1.2', B2: 1200, A1: 'Item' }, name: 'Budget' }] });
+  const value = await run('artifact_create', { type: 'sheet', title: 'Budget sheet', content });
+  assert.equal(value.type, 'sheet');
+  assert.equal(value.version, 1);
+  assert.equal(value.generation, null);
+  const read = await svc.read(A, value.id);
+  assert.equal(read.manifest.contentFile, 'sheet.json');
+  const workbook = parseSheetWorkbook(read.content);
+  assert.deepEqual(Object.keys(workbook.sheets[0].cells), ['A1', 'B2', 'C2']);
+  assert.equal(read.content, serializeSheetWorkbook(workbook));
+  assert.ok(await exists(path.join(storeHome('ws-a'), value.id, 'content', 'sheet.json')));
+  await fs.rm(storeHome('ws-a'), { recursive: true, force: true });
+});
+
+test('SHEET-AC-002: invalid sheet content is refused and leaves no directory', async () => {
+  const svc = service();
+  const { run } = toolsFor('ses-a', wsA, svc);
+  await fs.mkdir(storeHome('ws-a'), { recursive: true });
+  const before = (await fs.readdir(storeHome('ws-a'), { withFileTypes: true })).filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+  await rejects(run('artifact_create', { type: 'sheet', title: 'Broken', content: '{not json' }), 'artifact/invalid-sheet');
+  await rejects(run('artifact_create', { type: 'sheet', title: 'Bad cell', content: JSON.stringify({ sheets: [{ name: 'S', cells: { A1: { value: 1, formula: '=A1' } } }] }) }), 'artifact/invalid-sheet');
+  const after = (await fs.readdir(storeHome('ws-a'), { withFileTypes: true })).filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+  assert.deepEqual(after, before);
+  await fs.rm(storeHome('ws-a'), { recursive: true, force: true });
+});
+
+test('SHEET-AC-003: artifact_sheet_update edits cells and structure in one version', async () => {
+  const svc = service();
+  const { run } = toolsFor('ses-a', wsA, svc);
+  const created = await run('artifact_create', { type: 'sheet', title: 'Editable', content: sheetFixture() });
+  const updated = await run('artifact_sheet_update', {
+    id: created.id,
+    baseVersion: 1,
+    operations: [
+      { op: 'set', sheet: 'Budget', ref: 'A3', value: 'Support' },
+      { op: 'write', sheet: 'Budget', ref: 'D2', values: [['Tax', 0.2], ['=B2*E2', null]] },
+      { op: 'format', sheet: 'Budget', range: 'A1:C1', style: { bold: true, background: '#fff2cc' } },
+      { op: 'add-sheet', name: 'Summary' },
+      { op: 'write', sheet: 'Summary', ref: 'A1', values: [['Total', '=Budget!B4']] },
+      { op: 'set-column-width', sheet: 'Budget', column: 'B', width: 140 },
+    ],
+  });
+  assert.equal(updated.version, 2);
+  assert.equal(updated.warnings.length, 0);
+  assert.ok(updated.notes.length >= 6);
+  assert.deepEqual(updated.sheets.map((sheet) => sheet.name), ['Budget', 'Summary']);
+  const read = await svc.read(A, created.id);
+  const workbook = parseSheetWorkbook(read.content);
+  assert.equal(workbook.sheets[0].cells.A3?.value, 'Support');
+  assert.equal(workbook.sheets[0].cells.D3?.formula, '=B2*E2');
+  assert.equal(workbook.sheets[0].cells.A1?.style?.bold, true);
+  assert.equal(workbook.sheets[0].columnWidths?.B, 140);
+  assert.equal(workbook.sheets[1]?.cells.B1?.formula, '=Budget!B4');
+  await fs.rm(storeHome('ws-a'), { recursive: true, force: true });
+});
+
+test('SHEET-AC-004: a stale sheet update is refused and the content stays intact', async () => {
+  const svc = service();
+  const { run } = toolsFor('ses-a', wsA, svc);
+  const created = await run('artifact_create', { type: 'sheet', title: 'Stale', content: sheetFixture() });
+  await run('artifact_sheet_update', { id: created.id, baseVersion: 1, operations: [{ op: 'set', ref: 'A1', value: 'Changed' }] });
+  const before = (await svc.read(A, created.id)).content;
+  await rejects(run('artifact_sheet_update', { id: created.id, baseVersion: 1, operations: [{ op: 'set', ref: 'A1', value: 'Clobbered' }] }), 'artifact/stale-version');
+  assert.equal((await svc.read(A, created.id)).content, before);
+  await fs.rm(storeHome('ws-a'), { recursive: true, force: true });
+});
+
+test('SHEET-AC-005: formula problems return as warnings without blocking the save', async () => {
+  const svc = service();
+  const { run } = toolsFor('ses-a', wsA, svc);
+  const created = await run('artifact_create', { type: 'sheet', title: 'Formulas', content: sheetFixture({ D2: '=NOSUCH(1)', D3: '=1/0' }) });
+  assert.ok(created.warnings.some((warning) => warning.includes('#NAME?')));
+  const updated = await run('artifact_sheet_update', {
+    id: created.id,
+    baseVersion: 1,
+    operations: [{ op: 'set', ref: 'D4', formula: '=D3+1' }],
+  });
+  assert.equal(updated.version, 2);
+  assert.ok(updated.warnings.some((warning) => warning.includes('#DIV/0!')), JSON.stringify(updated.warnings));
+  await fs.rm(storeHome('ws-a'), { recursive: true, force: true });
+});
+
+test('SHEET-AC-006: the read tool returns a content-free sheet overview', async () => {
+  const svc = service();
+  const { run } = toolsFor('ses-a', wsA, svc);
+  const created = await run('artifact_create', { type: 'sheet', title: 'Overview', content: sheetFixture() });
+  const read = await run('artifact_read', { id: created.id });
+  assert.equal(read.sheetInfo.length, 1);
+  assert.equal(read.sheetInfo[0].name, 'Budget');
+  assert.equal(read.sheetInfo[0].cells, 8);
+  assert.equal(read.sheetInfo[0].formulas, 2);
+  assert.doesNotMatch(JSON.stringify(read.sheetInfo), /Hosting/);
+  await fs.rm(storeHome('ws-a'), { recursive: true, force: true });
+});
+
+test('SHEET-AC-007: sheet csv, xlsx, and printable output carry computed values', async () => {
+  const svc = service();
+  const { run } = toolsFor('ses-a', wsA, svc);
+  const created = await run('artifact_create', { type: 'sheet', title: 'Export', content: sheetFixture() });
+  const csv = await svc.export(A, created.id, 'csv');
+  const csvText = await fs.readFile(csv.path, 'utf8');
+  assert.match(csvText, /Hosting,1200,1440/);
+  assert.match(csvText, /,2000,/);
+  const xlsx = await svc.export(A, created.id, 'xlsx');
+  const bytes = await fs.readFile(xlsx.path);
+  assert.equal(bytes.subarray(0, 2).toString(), 'PK');
+  const parts = unzipSync(new Uint8Array(bytes));
+  assert.ok(parts['xl/workbook.xml'] !== undefined);
+  const sheetXml = strFromU8(parts['xl/worksheets/sheet1.xml']);
+  assert.match(sheetXml, /<sheetData>/);
+  assert.match(sheetXml, /<f>B2\*1\.2<\/f><v>1440<\/v>/);
+  assert.match(sheetXml, /<f>SUM\(B2:B3\)<\/f><v>2000<\/v>/);
+  assert.match(strFromU8(parts['xl/workbook.xml']), /name="Budget"/);
+  const printable = await svc.printable(A, created.id);
+  assert.match(printable.html, /<table>/);
+  assert.match(printable.html, /1440/);
+  assert.match(printable.html, /2000/);
+  await fs.rm(storeHome('ws-a'), { recursive: true, force: true });
+});
+
+test('SHEET-AC-008: a sheet cannot be rebased and list filters by its type', async () => {
+  const svc = service();
+  const { run } = toolsFor('ses-a', wsA, svc);
+  const created = await run('artifact_create', { type: 'sheet', title: 'No rebase', content: sheetFixture() });
+  await rejects(svc.rebase(A, created.id, { baseVersion: 1, source: { origin: 'user', action: 'rebase' } }), 'artifact/unsupported-type');
+  const listed = await svc.list(A, { type: 'sheet' });
+  assert.ok(listed.items.some((item) => item.id === created.id));
+  const pages = await svc.list(A, { type: 'page' });
+  assert.ok(pages.items.every((item) => item.type === 'page'));
+  await fs.rm(storeHome('ws-a'), { recursive: true, force: true });
 });
 

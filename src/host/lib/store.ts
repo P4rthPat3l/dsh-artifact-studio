@@ -1,10 +1,13 @@
 import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { CONTENT_FILE, ID_PATTERN, MAX_LIST_LIMIT, MAX_TITLE, isArtifactType, isManifest, isVersionSource } from '../../contract.js';
+import { CONTENT_FILE, ID_PATTERN, MAX_LIST_LIMIT, MAX_TITLE, isArtifactType, isManifest, isVersionSource, isGenerationSummary } from '../../contract.js';
 import type { ArtifactType, ListResult, Manifest, Scope, VersionEntry, VersionSource } from '../../contract.js';
 import { ArtifactError, errnoCode } from './errors.js';
-import { assertWithin, withLock, writeAtomic } from './fsutil.js';
+import { assertWithin, assertPlainPath, withWriteLock, writeAtomic } from './fsutil.js';
+import { generationText, generationHash, generationSummary, parseGeneration } from './generation.js';
+import type { Generation } from './generation.js';
+import { declaredKit, getKit } from '../../kit.js';
 import { artifactDir, assertPlainFile } from './paths.js';
 import type { ScopeRoot } from './paths.js';
 
@@ -41,6 +44,8 @@ export interface CreateInput {
   readonly title: string;
   readonly content: string;
   readonly source: VersionSource;
+  readonly recipe?: string;
+  readonly generation?: Generation;
 }
 
 /** Input for an update; either `content` or `edits`, and an optional new title. */
@@ -49,13 +54,16 @@ export interface UpdateInput {
   readonly content?: string;
   readonly edits?: readonly TextEdit[];
   readonly title?: string;
+  readonly recipe?: string;
   readonly source: VersionSource;
+  readonly generation?: Generation;
 }
 
 /** Filters for `list`. */
 export interface ListInput {
   readonly query?: string;
   readonly type?: ArtifactType;
+  readonly recipe?: string;
   readonly offset?: number;
   readonly limit?: number;
 }
@@ -65,6 +73,7 @@ export interface ReadResult {
   readonly manifest: Manifest;
   readonly content: string;
   readonly version: number;
+  readonly generation?: Generation;
 }
 
 /**
@@ -117,7 +126,8 @@ function isVersionEntry(value: unknown): value is VersionEntry {
     typeof record.createdAt === 'string' &&
     typeof record.contentHash === 'string' &&
     typeof record.contentBytes === 'number' &&
-    isVersionSource(record.source)
+    isVersionSource(record.source) &&
+    (record.generation === undefined || isGenerationSummary(record.generation))
   );
 }
 
@@ -250,10 +260,13 @@ export class ArtifactStore {
    * @param manifest the manifest of that version.
    * @param content its content.
    */
-  private async snapshot(root: string, dir: string, manifest: Manifest, content: string): Promise<void> {
+  private async snapshot(root: string, dir: string, manifest: Manifest, content: string, generation?: Generation): Promise<void> {
     const versionDir = path.join(dir, 'versions', String(manifest.version));
-    await assertWithin(root, versionDir);
+    await assertPlainPath(root, path.join(versionDir, 'content', manifest.contentFile));
+    await assertPlainPath(root, path.join(versionDir, 'meta.json'));
+    await assertPlainPath(root, path.join(versionDir, 'generation.json'));
     await fs.mkdir(path.join(versionDir, 'content'), { recursive: true });
+    if (generation !== undefined) await writeAtomic(path.join(versionDir, 'generation.json'), generationText(generation));
     await writeAtomic(path.join(versionDir, 'content', manifest.contentFile), content);
     const entry: VersionEntry = {
       version: manifest.version,
@@ -261,6 +274,7 @@ export class ArtifactStore {
       contentHash: manifest.contentHash,
       contentBytes: manifest.contentBytes,
       source: manifest.source,
+      ...(manifest.generation === undefined ? {} : { generation: manifest.generation }),
     };
     await writeAtomic(path.join(versionDir, 'meta.json'), `${JSON.stringify(entry, null, 2)}\n`);
   }
@@ -272,19 +286,19 @@ export class ArtifactStore {
    * @param manifest the next manifest.
    * @param content the next content.
    */
-  private async commit(dir: string, manifest: Manifest, content: string, root: string): Promise<void> {
+  private async commit(dir: string, manifest: Manifest, content: string, root: string, generation?: Generation): Promise<void> {
     await assertWithin(root, dir);
     await assertPlainFile(path.join(dir, 'content', manifest.contentFile));
     await assertPlainFile(path.join(dir, MANIFEST));
-    await this.snapshot(root, dir, manifest, content);
+    await this.snapshot(root, dir, manifest, content, generation);
     const contentFile = path.join(dir, 'content', manifest.contentFile);
     const manifestFile = path.join(dir, MANIFEST);
-    await assertWithin(root, contentFile);
-    await assertWithin(root, manifestFile);
+    await assertPlainPath(root, contentFile);
+    await assertPlainPath(root, manifestFile);
     await writeAtomic(contentFile, content);
     await writeAtomic(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`);
     try {
-      await this.prune(dir, manifest.version);
+      await this.prune(root, dir, manifest.version);
     } catch (error) {
       // The version is saved; a prune failure must not make the caller retry a write that succeeded.
       console.warn('[dsh-artifact-studio] prune failed', manifest.id, error instanceof Error ? error.message : error);
@@ -297,13 +311,13 @@ export class ArtifactStore {
    * @param dir the artifact directory.
    * @param current the current version.
    */
-  private async prune(dir: string, current: number): Promise<void> {
-    const entries = await this.versionEntries(dir);
+  private async prune(root: string, dir: string, current: number): Promise<void> {
+    const entries = await this.versionEntries(root, dir);
     const newestFirst = [...entries].sort((a, b) => b.version - a.version);
     let total = 0;
     const drop: number[] = [];
     newestFirst.forEach((entry, index) => {
-      total += entry.contentBytes;
+      total += entry.contentBytes + (entry.generation?.bytes ?? 0);
       if (entry.version === current) return;
       // A snapshot newer than the manifest is a crash leftover, not history.
       if (entry.version > current || index >= this.limits.maxVersions || total > this.limits.maxVersionsBytes) {
@@ -322,7 +336,7 @@ export class ArtifactStore {
    * @param dir the artifact directory.
    * @returns the entries, oldest first.
    */
-  private async versionEntries(dir: string): Promise<VersionEntry[]> {
+  private async versionEntries(root: string, dir: string): Promise<VersionEntry[]> {
     let names: string[];
     try {
       names = await fs.readdir(path.join(dir, 'versions'));
@@ -334,6 +348,7 @@ export class ArtifactStore {
     for (const name of names) {
       if (!/^[1-9][0-9]*$/.test(name)) continue;
       const file = path.join(dir, 'versions', name, 'meta.json');
+      await assertPlainPath(root, file);
       try {
         if (!(await assertPlainFile(file))) continue;
         const parsed: unknown = JSON.parse(await fs.readFile(file, 'utf8'));
@@ -377,11 +392,13 @@ export class ArtifactStore {
       contentBytes: bytes,
       contentHash: hashOf(input.content),
       source: input.source,
+      ...(input.recipe === undefined ? {} : { recipe: input.recipe }),
+      ...(input.generation === undefined ? {} : { generation: generationSummary(input.generation) }),
     };
     try {
       await assertWithin(root.root, dir);
       await fs.mkdir(path.join(dir, 'content'), { recursive: true });
-      await this.commit(dir, manifest, input.content, root.root);
+      await this.commit(dir, manifest, input.content, root.root, input.generation);
     } catch (error) {
       await fs.rm(dir, { recursive: true, force: true });
       if (error instanceof ArtifactError) throw error;
@@ -402,6 +419,36 @@ export class ArtifactStore {
     return this.readManifest(await artifactDir(root, id));
   }
 
+  private async versionMeta(root: ScopeRoot, dir: string, version: number): Promise<VersionEntry> {
+    const file = path.join(dir, 'versions', String(version), 'meta.json');
+    await assertPlainPath(root.root, file);
+    if (!(await assertPlainFile(file))) throw new ArtifactError('artifact/version-not-found', 'The saved version metadata is missing.', { version });
+    if ((await fs.stat(file)).size > MAX_MANIFEST_BYTES) throw new ArtifactError('artifact/corrupt', 'Version metadata exceeds its size bound.');
+    const text = await fs.readFile(file, 'utf8');
+    let value: unknown;
+    try { value = JSON.parse(text); } catch { throw new ArtifactError('artifact/corrupt', 'Invalid version metadata JSON.'); }
+    if (!isVersionEntry(value) || value.version !== version) throw new ArtifactError('artifact/corrupt', 'Invalid version metadata.');
+    return value;
+  }
+
+  private async savedGeneration(root: ScopeRoot, dir: string, meta: VersionEntry | Manifest): Promise<Generation | undefined> {
+    if (meta.generation === undefined) return undefined;
+    const file = path.join(dir, 'versions', String(meta.version), 'generation.json');
+    await assertPlainPath(root.root, file);
+    if (!(await assertPlainFile(file))) throw new ArtifactError('artifact/corrupt', 'The pinned generation snapshot is missing.');
+    if ((await fs.stat(file)).size !== meta.generation.bytes) throw new ArtifactError('artifact/corrupt', 'Generation snapshot size mismatch.');
+    const text = await fs.readFile(file, 'utf8');
+    if (generationHash(text) !== meta.generation.hash) throw new ArtifactError('artifact/corrupt', 'Generation snapshot hash mismatch.');
+    try {
+      const generation = parseGeneration(JSON.parse(text));
+      if (JSON.stringify(generationSummary(generation)) !== JSON.stringify(meta.generation)) throw new ArtifactError('artifact/corrupt', 'Generation summary mismatch.');
+      return generation;
+    } catch (error) {
+      if (error instanceof SyntaxError || error instanceof ArtifactError) throw new ArtifactError('artifact/corrupt', 'The pinned generation snapshot is invalid.');
+      throw error;
+    }
+  }
+
   /**
    * Read the manifest and content of the current or an earlier version.
    * @param root the scope root.
@@ -418,8 +465,14 @@ export class ArtifactStore {
         current: manifest.version,
       });
     }
+    const selected = version ?? manifest.version;
+    const meta = selected === manifest.version ? manifest : await this.versionMeta(root, dir, selected);
+    await assertPlainPath(root.root, path.join(dir, 'versions', String(selected), 'content', manifest.contentFile));
+    await assertPlainPath(root.root, path.join(dir, 'content', manifest.contentFile));
     const content = await this.readContent(dir, manifest, version);
-    return { manifest, content, version: version ?? manifest.version };
+    if (hashOf(content) !== meta.contentHash) throw new ArtifactError('artifact/corrupt', 'The saved content does not match its hash.');
+    const generation = await this.savedGeneration(root, dir, meta);
+    return { manifest, content, version: selected, ...(generation === undefined ? {} : { generation }) };
   }
 
   /**
@@ -431,7 +484,7 @@ export class ArtifactStore {
    */
   async update(root: ScopeRoot, id: string, input: UpdateInput): Promise<Manifest> {
     const dir = await artifactDir(root, id);
-    return withLock(dir, async () => {
+    return withWriteLock(root.root, dir, async () => {
       const current = await this.readManifest(dir);
       if (input.baseVersion !== current.version) {
         throw new ArtifactError(
@@ -450,7 +503,9 @@ export class ArtifactStore {
         const existing = await this.readContent(dir, current);
         content = input.edits === undefined ? existing : applyEdits(existing, input.edits);
       }
-      return this.write(root.root, dir, current, content, title, input.source);
+      const base = input.recipe === undefined ? current : { ...current, recipe: input.recipe };
+      const generation = input.generation ?? await this.savedGeneration(root, dir, current);
+      return this.write(root.root, dir, base, content, title, input.source, generation);
     });
   }
 
@@ -469,9 +524,10 @@ export class ArtifactStore {
     version: number,
     source: VersionSource,
     baseVersion?: number,
+    legacyGeneration?: Generation,
   ): Promise<Manifest> {
     const dir = await artifactDir(root, id);
-    return withLock(dir, async () => {
+    return withWriteLock(root.root, dir, async () => {
       const current = await this.readManifest(dir);
       if (baseVersion !== undefined && baseVersion !== current.version) {
         throw new ArtifactError(
@@ -483,8 +539,16 @@ export class ArtifactStore {
       if (version < 1 || version >= current.version) {
         throw new ArtifactError('artifact/version-not-found', `Version ${version} cannot be restored.`, { version });
       }
+      const meta = await this.versionMeta(root, dir, version);
       const content = await this.readContent(dir, current, version);
-      return this.write(root.root, dir, current, content, current.title, { ...source, action: 'restore', restoredFrom: version });
+      if (hashOf(content) !== meta.contentHash) throw new ArtifactError('artifact/corrupt', 'The restored content does not match its hash.');
+      const generation = await this.savedGeneration(root, dir, meta) ?? legacyGeneration;
+      const base = { ...current };
+      if (generation) {
+        if (generation.recipe) base.recipe = generation.recipe.id;
+        else delete base.recipe;
+      }
+      return this.write(root.root, dir, base, content, current.title, { ...source, action: 'restore', restoredFrom: version }, generation);
     });
   }
 
@@ -504,8 +568,13 @@ export class ArtifactStore {
     content: string,
     title: string,
     source: VersionSource,
+    generation?: Generation,
   ): Promise<Manifest> {
     const bytes = this.checkSize(content);
+    const pinned = generation === undefined ? undefined : { ...generation, kit: current.type === 'page' ? declaredKit(content) ?? null : null };
+    if (pinned !== undefined && pinned.kit !== null && getKit(pinned.kit) === undefined) {
+      throw new ArtifactError('artifact/unsupported-kit', 'The page declares an installed-artifact kit release that is not available. Install it before saving.', { kit: pinned.kit });
+    }
     const next: Manifest = {
       ...current,
       title,
@@ -514,9 +583,11 @@ export class ArtifactStore {
       contentBytes: bytes,
       contentHash: hashOf(content),
       source,
+      ...(pinned === undefined ? {} : { generation: generationSummary(pinned) }),
     };
+    if (!pinned) delete next.generation;
     try {
-      await this.commit(dir, next, content, root);
+      await this.commit(dir, next, content, root, pinned);
     } catch (error) {
       if (error instanceof ArtifactError) throw error;
       throw new ArtifactError('artifact/storage-failure', 'The artifact could not be written.', {
@@ -535,7 +606,7 @@ export class ArtifactStore {
   async history(root: ScopeRoot, id: string): Promise<VersionEntry[]> {
     const dir = await artifactDir(root, id);
     const manifest = await this.readManifest(dir);
-    return (await this.versionEntries(dir))
+    return (await this.versionEntries(root.root, dir))
       .filter((entry) => entry.version <= manifest.version)
       .reverse();
   }
@@ -565,6 +636,7 @@ export class ArtifactStore {
     const query = input.query?.trim().toLowerCase() ?? '';
     const filtered = manifests
       .filter((item) => input.type === undefined || item.type === input.type)
+      .filter((item) => input.recipe === undefined || item.recipe === input.recipe)
       .filter((item) => query === '' || item.title.toLowerCase().includes(query))
       .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
     const offset = Math.max(0, Math.floor(input.offset ?? 0));
@@ -581,7 +653,7 @@ export class ArtifactStore {
    */
   async remove(root: ScopeRoot, id: string): Promise<{ trashed: true; trashPath: string }> {
     const dir = await artifactDir(root, id);
-    return withLock(dir, async () => {
+    return withWriteLock(root.root, dir, async () => {
       await this.readManifest(dir);
       const trashRoot = path.join(root.root, TRASH);
       await assertWithin(root.root, trashRoot);

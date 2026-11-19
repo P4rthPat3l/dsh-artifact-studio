@@ -158,8 +158,9 @@ export async function workspaceRootExisting(
 ): Promise<ScopeRoot | undefined> {
   const wanted = path.resolve(path.join(config.home, config.workspaceBase, workspaceKey(workspace.id)));
   try {
+    await assertNoLinkChain(wanted);
     const canonical = await fs.realpath(wanted);
-    if (canonical !== wanted) return undefined;
+    if (canonical !== wanted) throw new ArtifactError('artifact/forbidden-path', 'The workspace artifact root resolves through a link.');
     return { scope: 'workspace', workspaceId: workspace.id, root: canonical };
   } catch (error) {
     if (errnoCode(error) === 'ENOENT') return undefined;

@@ -16,6 +16,7 @@ let act;
 let createRoot;
 let plugin;
 let chunk;
+let sheetChunk;
 let canvasFake;
 let blobs;
 
@@ -59,6 +60,7 @@ async function loadArtifact(name) {
   };
   requireModule.async = async (file) => {
     if (file === './client.doc.js') return chunk;
+    if (file === './client.sheet.js') return sheetChunk;
     if (file === './client.canvas.js' && canvasFake !== undefined) return canvasFake;
     throw new Error(`Unexpected chunk ${file}`);
   };
@@ -158,6 +160,9 @@ before(async () => {
   const docArtifact = await loadArtifact('client.doc.js');
   assert.equal(docArtifact.definition.chunk, 'client.doc.js');
   chunk = docArtifact.definition.factory(docArtifact.requireModule);
+  const sheetArtifact = await loadArtifact('client.sheet.js');
+  assert.equal(sheetArtifact.definition.chunk, 'client.sheet.js');
+  sheetChunk = sheetArtifact.definition.factory(sheetArtifact.requireModule);
   const main = await loadArtifact('client.js');
   assert.equal(main.definition.id, 'dsh-artifact-studio');
   plugin = main.definition.factory(main.requireModule);
@@ -280,6 +285,15 @@ function fakeHost() {
             ok: true,
             value: { mediaType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB', width: 320, height: 120, info: item.designInfo ?? DESIGN_INFO },
           };
+        case 'designSystems':
+          return { ok: true, value: { scope: payload.scope, revision: 0, defaultId: null, systems: [] } };
+        case 'rebase': {
+          if (payload.baseVersion !== item.manifest.version) return { ok: false, error: { code: 'artifact/stale-version', message: 'stale', details: {} } };
+          item.manifest = { ...item.manifest, version: item.manifest.version + 1 };
+          return { ok: true, value: { manifest: { ...item.manifest } } };
+        }
+        case 'setDesignDefault':
+        case 'saveDesignSystem':
         case 'designSystem':
           return {
             ok: true,
@@ -1021,8 +1035,9 @@ test('AC-089: creating from all projects targets the named project', async () =>
 
     await click(findButton(view, 'gallery.create'));
     const items = [...view.container.querySelectorAll('[role="menuitem"]')];
-    assert.equal(items.length, 3);
-    assert.ok(items[2].textContent.includes('type.design') || items[2].textContent.includes('gallery.newDesign'), 'the create menu has no design entry');
+    assert.equal(items.length, 4);
+    assert.ok(items.some((item) => item.textContent.includes('type.design') || item.textContent.includes('gallery.newDesign')), 'the create menu has no design entry');
+    assert.ok(items.some((item) => item.textContent.includes('gallery.newSheet')), 'the create menu has no sheet entry');
     assert.ok(items.every((item) => item.textContent.includes('Work A')), 'the create menu did not name the target project');
     await click(items[0]);
     const create = host.calls.find((call) => call.endpoint === 'create');
@@ -1161,7 +1176,7 @@ test('AC-096: the right panel opens an artifact in place and creates in the work
 
     await click(findButton(view, 'gallery.create'));
     const items = [...view.container.querySelectorAll('[role="menuitem"]')];
-    assert.equal(items.length, 3);
+    assert.equal(items.length, 4);
     assert.ok(items.every((item) => item.textContent.includes('Work A')), 'the create menu did not name the workspace');
     await click(items[1]);
     await act(async () => settle(120));
@@ -1295,14 +1310,15 @@ test('AC-023: locale dictionaries cover every used key', async () => {
     for (const match of text.matchAll(/\bt\(\s*'([a-zA-Z0-9.]+)'/g)) used.add(match[1]);
   }
   const dynamic = [
-    'scope.workspace', 'scope.library', 'type.page', 'type.doc', 'type.design',
-    'export.html', 'export.md', 'export.docx', 'export.png', 'export.svg', 'export.fig',
-    'create.untitledDesign', 'tab.manualSaveDesign',
+    'scope.workspace', 'scope.library', 'type.page', 'type.doc', 'type.design', 'type.sheet',
+    'export.html', 'export.md', 'export.docx', 'export.png', 'export.svg', 'export.fig', 'export.csv', 'export.xlsx',
+    'create.untitledDesign', 'create.untitledSheet', 'tab.manualSaveDesign',
+    'prompt.sheet', 'prompt.sheetText', 'gallery.newSheet',
     'design.source.workspace', 'design.source.library', 'design.source.default',
     'design.color.primary', 'design.color.accent', 'design.color.surface', 'design.color.text', 'design.color.muted',
     'design.radius.sm', 'design.radius.md', 'design.radius.lg',
     'format.heading', 'format.bold', 'format.italic', 'format.bulletList', 'format.orderedList', 'format.codeBlock',
-    'prompt.dashboard', 'prompt.dashboardText', 'prompt.explainer', 'prompt.explainerText', 'prompt.report', 'prompt.reportText', 'prompt.brief', 'prompt.briefText',
+    'prompt.dashboard', 'prompt.dashboardText', 'prompt.explainer', 'prompt.explainerText', 'prompt.report', 'prompt.reportText', 'prompt.brief', 'prompt.briefText', 'prompt.sheet', 'prompt.sheetText',
     'agent.reference', 'agent.referenceOld', 'agent.referenceProject', 'agent.referenceOldProject', 'agent.added', 'agent.addedTruncated', 'agent.insertFailed', 'agent.copied',
     'card.creating', 'card.updating', 'card.updatingUntitled', 'card.working', 'card.created', 'card.updated',
   ];
@@ -1599,7 +1615,7 @@ test('AC-061: a clean tab acknowledges an agent update while a dirty tab keeps i
 
 test('AC-065: gallery covers render pages in an empty-script sandbox and documents as excerpts', async () => {
   const host = fakeHost();
-  host.state.artifacts.set('art_ws_cover06501', { manifest: host.manifest('art_ws_cover06501', 'page', 'Cover page', 1), content: '<h1 onclick="window.x = 1">Cover page</h1><script>window.y = 1</script>' });
+  host.state.artifacts.set('art_ws_cover06501', { manifest: host.manifest('art_ws_cover06501', 'page', 'Cover page', 1), content: '<meta name="artifact-kit" content="1"><h1 onclick="window.x = 1">Cover page</h1><script>window.y = 1</script>' });
   host.state.artifacts.set('art_lib_cover06501', { manifest: host.manifest('art_lib_cover06501', 'doc', 'Cover doc', 1, 'library'), content: '# Cover doc\n\nReadable opening words.' });
   const { ctx, records } = stubContext(host);
   plugin.apply(ctx);
@@ -1613,6 +1629,8 @@ test('AC-065: gallery covers render pages in an empty-script sandbox and documen
     const source = await blobs.get(frame.getAttribute('src')).text();
     assert.doesNotMatch(source, /<script/i, 'the cover kept a script element');
     assert.doesNotMatch(source, /onclick/i, 'the cover kept an inline handler');
+    assert.match(source, /data-artifact-kit="1"/, 'the cover lost the kit CSS');
+    assert.match(source, /^<!doctype html>/i, 'the cover entered quirks mode');
     assert.match(view.container.querySelector('.art-cover-doc-text').textContent, /Readable opening words/);
     assert.ok(host.calls.every(call => call.endpoint === 'get' || call.endpoint === 'list'), 'a cover wrote data');
   } finally { await view.unmount(); }
@@ -2576,5 +2594,159 @@ test('FEAT-007 AC-065: Every new inspector and dock string is localized', async 
     assert.ok(ZH[key], 'zh is missing ' + key);
   }
   assert.deepEqual(Object.keys(EN).sort(), Object.keys(ZH).sort());
+});
+
+
+const SHEET_CONTENT = JSON.stringify({
+  schemaVersion: 1,
+  sheets: [{
+    name: 'Budget',
+    cells: {
+      A1: 'Item', B1: 'Cost', A2: 'Hosting', B2: 1200, B3: 800,
+      B4: '=SUM(B2:B3)', C2: '=B2*1.2',
+    },
+  }],
+});
+
+/** Mount the sheet editor chunk directly with recording callbacks. */
+async function mountSheet(content = SHEET_CONTENT, editable = true) {
+  const element = document.createElement('div');
+  document.body.appendChild(element);
+  const changes = [];
+  const selections = [];
+  let saves = 0;
+  const live = {
+    current: {
+      onChange: (json) => changes.push(json),
+      onSave: () => { saves += 1; },
+      onSelectionText: (text) => selections.push(text),
+      t,
+    },
+  };
+  const handle = sheetChunk.mountSheetEditor({ element, content, editable, label: 'Budget', dark: false, live });
+  await act(async () => settle(80));
+  return { element, handle, changes, selections, savesRef: () => saves };
+}
+
+/** Click one cell of the mounted grid. */
+async function clickSheetCell(element, column, row) {
+  const scroll = element.querySelector('.art-sheet-scroll');
+  assert.ok(scroll, 'the sheet grid did not render');
+  const x = column * 96 + 40;
+  const y = (row - 1) * 28 + 14;
+  await act(async () => {
+    scroll.dispatchEvent(new window.MouseEvent('pointerdown', { bubbles: true, clientX: x, clientY: y }));
+    await settle(30);
+  });
+  return scroll;
+}
+
+test('SHEET-AC-101: the sheet editor renders values and commits a formula-bar edit', async () => {
+  const { element, handle, changes, selections } = await mountSheet();
+  try {
+    assert.match(element.textContent, /Hosting/);
+    assert.match(element.textContent, /1440/);
+    assert.match(element.textContent, /2000/);
+    await clickSheetCell(element, 1, 2);
+    const bar = element.querySelector('[aria-label="sheet.formulaBar"]');
+    assert.equal(bar.value, '1200');
+    await changeValue(bar, '1500');
+    await act(async () => {
+      bar.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await settle(60);
+    });
+    assert.ok(changes.length > 0);
+    const last = JSON.parse(changes[changes.length - 1]);
+    assert.equal(last.sheets[0].cells.B2, 1500);
+    assert.match(element.textContent, /1800/);
+    assert.ok(selections.some((text) => text.includes('Budget!')), JSON.stringify(selections));
+  } finally {
+    handle.destroy();
+    element.remove();
+  }
+});
+
+test('SHEET-AC-102: formatting changes the draft and undo restores it', async () => {
+  const { element, handle, changes } = await mountSheet();
+  try {
+    await clickSheetCell(element, 0, 1);
+    await click([...element.querySelectorAll('button')].find((button) => button.getAttribute('aria-label') === 'sheet.bold'));
+    const bolded = JSON.parse(changes[changes.length - 1]);
+    assert.equal(bolded.sheets[0].cells.A1.style.bold, true);
+    await click([...element.querySelectorAll('button')].find((button) => button.getAttribute('aria-label') === 'sheet.undo'));
+    const undone = JSON.parse(changes[changes.length - 1]);
+    assert.equal(undone.sheets[0].cells.A1.style, undefined);
+  } finally {
+    handle.destroy();
+    element.remove();
+  }
+});
+
+test('SHEET-AC-103: a read-only sheet does not accept edits', async () => {
+  const { element, handle, changes } = await mountSheet(SHEET_CONTENT, false);
+  try {
+    const scroll = await clickSheetCell(element, 0, 1);
+    await act(async () => {
+      scroll.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'x', bubbles: true }));
+      await settle(30);
+    });
+    assert.equal(element.querySelector('.art-sheet-cell-input'), null);
+    assert.equal(changes.length, 0);
+  } finally {
+    handle.destroy();
+    element.remove();
+  }
+});
+
+test('SHEET-AC-104: the gallery shows a sheet cover and the sheet type filter', async () => {
+  const host = fakeHost();
+  host.state.artifacts.set('art_ws_sheetcover01', { manifest: host.manifest('art_ws_sheetcover01', 'sheet', 'Budget', 2), content: SHEET_CONTENT });
+  const { ctx, records } = stubContext(host);
+  plugin.apply(ctx);
+  const view = await galleryView(records);
+  await act(async () => settle(150));
+  assert.ok(view.container.querySelector('.art-cover-sheet'), 'a sheet cover should render');
+  assert.match(view.container.textContent, /Budget/);
+  assert.match(view.container.textContent, /Hosting/);
+  assert.match(view.container.textContent, /type.sheet/);
+  assert.match(view.container.textContent, /type.all/);
+  await view.unmount();
+});
+
+test('SHEET-AC-105: a sheet card names its type and opens the tab', async () => {
+  const host = fakeHost();
+  const { ctx, records } = stubContext(host);
+  plugin.apply(ctx);
+  const card = slot(records, 'tool.call.toolview', 'artifact_create');
+  const meta = { kind: 'artifact', v: 1, id: 'art_ws_sheetcard01', scope: 'workspace', type: 'sheet', title: 'Budget', version: 1, workspaceId: 'ws-a' };
+  const view = await render(card.component, { t, phase: 'result', toolName: 'artifact_create', block: { isError: false, meta, content: [] } });
+  assert.match(view.container.textContent, /Budget/);
+  assert.match(view.container.textContent, /type.sheet/);
+  await click(view.container.querySelector('button'));
+  assert.deepEqual(records.opened, ['dsh-resource://artifact/workspace/ws-a/art_ws_sheetcard01']);
+  await view.unmount();
+});
+
+test('SHEET-AC-106: the artifact tab mounts the sheet editor and autosaves a cell edit', async () => {
+  const host = fakeHost();
+  const id = 'art_ws_sheettab001';
+  host.state.artifacts.set(id, { manifest: host.manifest(id, 'sheet', 'Budget tab', 1), content: SHEET_CONTENT });
+  const { ctx, records } = stubContext(host);
+  plugin.apply(ctx);
+  const tab = slot(records, 'sidebar.right.pane.tab', 'dsh-artifact-studio/artifact');
+  const view = await render(tab.component, tabProps('dsh-resource://artifact/workspace/ws-a/' + id));
+  await act(async () => settle(200));
+  const bar = view.container.querySelector('.art-sheet-formula-input');
+  assert.ok(bar, 'sheet editor did not mount: ' + view.container.textContent.slice(0, 200));
+  await changeValue(bar, '42');
+  await act(async () => settle(60));
+  await act(async () => {
+    bar.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await settle(60);
+  });
+  await act(async () => settle(1400));
+  assert.equal(host.state.artifacts.get(id).manifest.version, 2);
+  assert.match(host.state.artifacts.get(id).content, /"A1": 42/);
+  await view.unmount();
 });
 

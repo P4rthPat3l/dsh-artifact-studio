@@ -1,11 +1,17 @@
 import type { Manifest, Scope } from '../../contract.js';
 import { checkPage } from './checks.js';
+import { SheetError, applySheetOperations, checkSheetWorkbook, parseSheetWorkbook, serializeSheetWorkbook, sheetOverview } from '../../sheet/index.js';
+import { MAX_INSTRUCTIONS } from './guide.js';
+import type { GuidePatch } from './guide.js';
+import type { ResolvedRecipe } from './recipes.js';
 import { ArtifactError } from './errors.js';
 import { requireWorkspace, workspaceForSession } from './paths.js';
 import type { ArtifactService, Target } from './service.js';
 import type { WorkspaceRegistry } from './types.js';
 import {
   fieldsOf,
+  designSelection,
+  designSaveOptions,
   optionalEdits,
   optionalInteger,
   optionalScope,
@@ -75,38 +81,80 @@ const WORKSPACE_PARAM = {
     "Another registered project's workspace id, from an artifact reference. Omit for this session's project.",
 };
 
+const DESIGN_SELECTION = {
+  systemId: { type: 'string', description: 'Named design system ID from design_system_list. Omit for the scope default.' },
+  systemScope: { type: 'string', enum: ['workspace', 'library'], description: 'Scope of the selected named system.' },
+  systemRevision: { type: 'integer', minimum: 1, description: 'Exact named system revision. Omit for its latest revision.' },
+};
+const DESIGN_IDENTITY = {
+  system: { oneOf: [{ type: 'object' }, { type: 'null' }] },
+  catalogRevision: { oneOf: [{ type: 'integer' }, { type: 'null' }] },
+};
+
 const PAGE_GUIDE = [
-  'Load the artifact-design skill first if not loaded yet. Precedence: the user\'s request, then the design system, then your own choices.',
+  'Load the artifact-design skill, then call artifact_brief and follow it. Precedence: the user\'s request, then saved conventions, then the recipe, then the design system, then your own choices.',
   'A page is one self-contained HTML document in a sandbox with no network or browser storage: inline all CSS and JavaScript, draw charts with inline SVG or canvas, and use data: URIs for images. Keep the layout fluid for a 380 to 700 px panel.',
-  'Use injected --artifact-* color, font, size, space, and radius variables. The skill covers semantic roles and the packaged page reference.',
+  'Pages build on the artifact kit and the injected --artifact-* variables that the brief lists.',
   'A doc is Markdown: headings, lists, task lists, tables, quotes, and fenced code.',
   'Each save is a version the user sees. Check before saving and batch fixes into one update.',
 ].join('\n');
 
+const RECIPE_PARAM = {
+  type: 'string',
+  description: 'The recipe id from artifact_brief: the content structure for this intent, such as client-scope or feature-spec. It is stored with the artifact and drives the structure checks.',
+};
+
 /**
  * Warnings for the version an update wrote. Full content is checked directly.
  * Edits are checked against that exact saved version; the version already
- * landed, so a failed read reports no warnings instead of failing the write.
+ * landed, so a failed read reports that validation is incomplete.
  */
 async function writtenWarnings(
   type: string,
   content: string | undefined,
   readEdited: (() => Promise<{ content: string }>) | undefined,
+  recipe: ResolvedRecipe | undefined,
 ): Promise<string[]> {
+  if (type === 'sheet') {
+    const check = (text: string): string[] => {
+      try {
+        return checkSheetWorkbook(parseSheetWorkbook(text));
+      } catch {
+        return [];
+      }
+    };
+    if (content !== undefined) return check(content);
+    if (readEdited === undefined) return [];
+    try {
+      return check((await readEdited()).content);
+    } catch (error) {
+      if (error instanceof ArtifactError) return ['checks-unavailable: the version was saved, but its content could not be read for checks. Do not retry the write; read the saved version.'];
+      throw error;
+    }
+  }
   if (type !== 'page') return [];
-  if (content !== undefined) return checkPage(content);
+  const options = recipe === undefined ? {} : { recipe };
+  if (content !== undefined) return checkPage(content, options);
   if (readEdited === undefined) return [];
   try {
-    return checkPage((await readEdited()).content);
+    return checkPage((await readEdited()).content, options);
   } catch (error) {
-    if (error instanceof ArtifactError) return [];
+    if (error instanceof ArtifactError) return ['checks-unavailable: the version was saved, but its content could not be read for checks. Do not retry the write; read the saved version.'];
     throw error;
   }
 }
 
 /** Static page warnings for a written version; documents have none. */
-function warningsFor(type: string, content: string | undefined): string[] {
-  return type === 'page' && content !== undefined ? checkPage(content) : [];
+function warningsFor(type: string, content: string | undefined, recipe: ResolvedRecipe | undefined): string[] {
+  if (type === 'page' && content !== undefined) return checkPage(content, recipe === undefined ? {} : { recipe });
+  if (type === 'sheet' && content !== undefined) {
+    try {
+      return checkSheetWorkbook(parseSheetWorkbook(content));
+    } catch {
+      return [];
+    }
+  }
+  return [];
 }
 
 /**
@@ -186,6 +234,8 @@ function summary(manifest: Manifest, target: Target): { [key: string]: JsonValue
     updatedAt: manifest.updatedAt,
     contentBytes: manifest.contentBytes,
     workspaceId: manifest.scope === 'workspace' ? (target.workspaceId ?? null) : null,
+    recipe: manifest.recipe ?? null,
+    generation: manifest.generation ? { ...manifest.generation, system: manifest.generation.system ? { ...manifest.generation.system } : null } : null,
   };
 }
 
@@ -200,16 +250,18 @@ function writeText(value: JsonValue, verb: string): string {
 const SUMMARY_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['id', 'scope', 'type', 'title', 'version', 'updatedAt', 'contentBytes', 'workspaceId'],
+  required: ['id', 'scope', 'type', 'title', 'version', 'updatedAt', 'contentBytes', 'workspaceId', 'recipe'],
   properties: {
     id: { type: 'string' },
     scope: { type: 'string', enum: ['workspace', 'library'] },
-    type: { type: 'string', enum: ['page', 'doc', 'design'] },
+    type: { type: 'string', enum: ['page', 'doc', 'design', 'sheet'] },
     title: { type: 'string' },
     version: { type: 'integer' },
     updatedAt: { type: 'string' },
     contentBytes: { type: 'integer' },
     workspaceId: { oneOf: [{ type: 'string' }, { type: 'null' }] },
+    recipe: { oneOf: [{ type: 'string' }, { type: 'null' }] },
+    generation: { oneOf: [{ type: 'object' }, { type: 'null' }] },
   },
 };
 
@@ -221,7 +273,8 @@ const SUMMARY_SCHEMA = {
  */
 function line(value: JsonValue, verb: string): string {
   const fields = record(value);
-  return `${verb} ${String(fields.type)} "${String(fields.title)}" id=${String(fields.id)} scope=${String(fields.scope)} version=${String(fields.version)}.`;
+  const recipe = typeof fields.recipe === 'string' ? ` recipe=${fields.recipe}` : '';
+  return `${verb} ${String(fields.type)} "${String(fields.title)}" id=${String(fields.id)} scope=${String(fields.scope)} version=${String(fields.version)}${recipe}.`;
 }
 
 const WRITE_SCHEMA = {
@@ -250,9 +303,11 @@ export function createTools(host: ToolHost): ToolDefinition[] {
       additionalProperties: false,
       required: ['type', 'title', 'content'],
       properties: {
-        type: { type: 'string', enum: ['page', 'doc', 'design'], description: 'page for HTML, doc for Markdown, design for OpenPencil Design JSX. A mockup or wireframe is always design. For a design, load the artifact-design skill first: no imports, no HTML. If a design fails for a reason other than its source, report the error; never redo it as a page.' },
+        type: { type: 'string', enum: ['page', 'doc', 'design', 'sheet'], description: 'page for HTML, doc for Markdown, design for OpenPencil Design JSX, sheet for a JSON workbook. A mockup or wireframe is always design. For a design, load the artifact-design skill first: no imports, no HTML. If a design fails for a reason other than its source, report the error; never redo it as a page.' },
         title: { type: 'string', description: 'Short title, 1 to 120 characters.' },
-        content: { type: 'string', description: 'The full HTML document, Markdown text, or Design JSX source, up to 2 MiB.' },
+        content: { type: 'string', description: 'The full HTML document, Markdown text, Design JSX source, or sheet workbook JSON, up to 2 MiB.' },
+        recipe: RECIPE_PARAM,
+        ...DESIGN_SELECTION,
         scope: SCOPE_PARAM,
         workspaceId: WORKSPACE_PARAM,
       },
@@ -267,15 +322,19 @@ export function createTools(host: ToolHost): ToolDefinition[] {
       const target = await targetFor(host, exec, optionalScope(fields), optionalString(fields, 'workspaceId'));
       const type = requiredType(fields);
       const content = optionalString(fields, 'content') ?? '';
+      const recipeId = optionalString(fields, 'recipe');
+      const recipe = recipeId === undefined ? undefined : await service.recipe(target, recipeId, type);
       const manifest = await service.create(target, {
         type,
         title: requiredString(fields, 'title'),
         content,
+        ...(recipeId === undefined ? {} : { recipe: recipeId }),
+        design: designSelection(fields),
         source: { origin: 'agent', action: 'create', ...(exec.agent === undefined ? {} : { sessionId: exec.agent.id }) },
       });
       const warnings = type === 'design'
         ? (await service.read(target, manifest.id)).designInfo?.warnings ?? []
-        : warningsFor(type, content);
+        : warningsFor(type, content, recipe);
       return { ...summary(manifest, target), warnings };
     },
   };
@@ -307,12 +366,21 @@ export function createTools(host: ToolHost): ToolDefinition[] {
             type: 'object',
             description: 'The compiled summary of a design: pages, nodes, type counts, fonts, and warnings.',
           },
+          sheetInfo: {
+            type: 'array',
+            description: 'Per-sheet size and counts for a sheet artifact.',
+            items: { type: 'object' },
+          },
         },
       },
       render: (_args, value) => {
         const fields = record(value);
         const artifact = record(fields.artifact ?? null);
         const info = record(fields.designInfo ?? null);
+        const sheetRows = Array.isArray(fields.sheetInfo) ? fields.sheetInfo.map(record) : [];
+        const sheetLine = sheetRows.length === 0
+          ? ''
+          : '\n\nSheets: ' + sheetRows.map((row) => String(row.name) + ' (' + String(row.rows) + ' x ' + String(row.columns) + ', ' + String(row.cells) + ' cells)').join('; ') + '.';
         const summaryLine = info.nodes === undefined
           ? ''
           : `\n\nDesign: ${String(info.nodes)} nodes, ${String(info.pages)} page(s), fonts ${Array.isArray(info.fonts) && info.fonts.length > 0 ? info.fonts.map(String).join(', ') : 'none'}.`
@@ -320,7 +388,7 @@ export function createTools(host: ToolHost): ToolDefinition[] {
         return [
           {
             type: 'text',
-            text: `${line(artifact, 'Artifact')} Showing version ${String(fields.readVersion)}.${summaryLine}\n\n${String(fields.content)}`,
+            text: `${line(artifact, 'Artifact')} Showing version ${String(fields.readVersion)}.${summaryLine}${sheetLine}\n\n${String(fields.content)}`,
           },
         ];
       },
@@ -338,6 +406,9 @@ export function createTools(host: ToolHost): ToolDefinition[] {
         ...(info === undefined
           ? {}
           : { designInfo: { pages: info.pages, nodes: info.nodes, types: info.types, fonts: info.fonts, warnings: info.warnings } }),
+        ...(result.manifest.type === 'sheet'
+          ? { sheetInfo: sheetOverview(parseSheetWorkbook(result.content)).map((item) => ({ name: item.name, rows: item.rows, columns: item.columns, cells: item.cells, formulas: item.formulas })) }
+          : {}),
       };
     },
   };
@@ -347,8 +418,9 @@ export function createTools(host: ToolHost): ToolDefinition[] {
     description: [
       'Save a new version of an artifact. For a few local changes send edits; send complete content only when you rewrite most of it. Each edit oldText must occur exactly once.',
       'The update is refused when baseVersion is not the current version, for example after the user edited it; read it again and reapply your change. Never discard the user\'s edits.',
-      'A layout or styling change follows the artifact-design skill and the same precedence: the user\'s request, then the design system, then your own choices.',
+      'A layout or styling change follows the artifact-design skill and the same precedence: the user\'s request, then saved conventions, then the recipe, then the design system, then your own choices. Send recipe to set or change it.',
       'For a design, send the complete Design JSX source as content and read it first if you did not write it; edits are applied and validated too, but a design rewrite is usually smaller as one content value.',
+      'For a sheet, prefer artifact_sheet_update with cell operations; send the complete workbook JSON as content only when you rewrite most of it.',
       'Each call writes a version the user sees. Put every fix for one request, including all returned warnings, into one update; never send one update per finding.',
     ].join('\n'),
     parameters: {
@@ -358,7 +430,7 @@ export function createTools(host: ToolHost): ToolDefinition[] {
       properties: {
         id: { type: 'string' },
         baseVersion: { type: 'integer', description: 'The version your change is based on.' },
-        content: { type: 'string', description: 'Complete replacement content. Use this or edits. For a design, send the complete Design JSX source.' },
+        content: { type: 'string', description: 'Complete replacement content. Use this or edits. For a design, send the complete Design JSX source; for a sheet, prefer artifact_sheet_update.' },
         edits: {
           type: 'array',
           description: 'Replace-once edits applied in order. Each oldText must occur exactly once.',
@@ -370,6 +442,7 @@ export function createTools(host: ToolHost): ToolDefinition[] {
           },
         },
         title: { type: 'string', description: 'A new title.' },
+        recipe: { ...RECIPE_PARAM, description: 'Set or change the recipe, for example on an artifact made before recipes existed.' },
         workspaceId: WORKSPACE_PARAM,
       },
     },
@@ -385,20 +458,100 @@ export function createTools(host: ToolHost): ToolDefinition[] {
       const content = optionalString(fields, 'content');
       const edits = optionalEdits(fields);
       const title = optionalString(fields, 'title');
-      if (content === undefined && edits === undefined && title === undefined) {
-        throw new ArtifactError('artifact/bad-request', 'Send content, edits, or a title.');
+      const recipeId = optionalString(fields, 'recipe');
+      if (content === undefined && edits === undefined && title === undefined && recipeId === undefined) {
+        throw new ArtifactError('artifact/bad-request', 'Send content, edits, a title, or a recipe.');
       }
+      const current = await service.store.manifest(await service.root(target, id), id);
+      const recipe = recipeId === undefined
+        ? await service.recipeOf(target, current)
+        : await service.recipe({ ...target, scope: current.scope }, recipeId, current.type);
       const manifest = await service.update(target, id, {
         baseVersion: requiredInteger(fields, 'baseVersion'),
         content,
         edits,
         title,
+        ...(recipeId === undefined ? {} : { recipe: recipeId }),
         source: { origin: 'agent', action: 'update', ...(exec.agent === undefined ? {} : { sessionId: exec.agent.id }) },
       });
       const warnings = manifest.type === 'design'
         ? (await service.read(target, id, manifest.version)).designInfo?.warnings ?? []
-        : await writtenWarnings(manifest.type, content, edits === undefined ? undefined : () => service.read(target, id, manifest.version));
+        : await writtenWarnings(manifest.type, content, edits === undefined && recipeId === undefined ? undefined : () => service.read(target, id, manifest.version), recipe);
       return { ...summary(manifest, target), warnings };
+    },
+  };
+
+  const sheetUpdate: ToolDefinition = {
+    name: 'artifact_sheet_update',
+    description: [
+      'Edit a sheet artifact\'s cells and structure without rewriting the whole workbook JSON. Read the artifact first when the user may have edited it, then send one operations array with the current baseVersion.',
+      'Operations run in order: set one cell, write a block, clear a range, format a range, add, rename, or delete a sheet, or set a column width. A string that starts with "=" is a formula in a written block. The whole workbook is validated before it is saved, and formula warnings come back with the result.',
+      'Use artifact_read for the current workbook and artifact_update when you rewrite most of it, change its title, or change the sheet structure in one batch.',
+    ].join('\n'),
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['id', 'baseVersion', 'operations'],
+      properties: {
+        id: { type: 'string', description: 'Sheet artifact id.' },
+        baseVersion: { type: 'integer', description: 'The version you read; a stale value is refused.' },
+        operations: {
+          type: 'array',
+          description: 'Ordered edits. set {op,sheet?,ref,value?|formula?,style?}; write {op,sheet?,ref,values}; clear {op,sheet?,range}; format {op,sheet?,range,style}; add-sheet {op,name}; rename-sheet {op,from,to}; delete-sheet {op,name}; set-column-width {op,sheet?,column,width}.',
+          items: { type: 'object' },
+        },
+        workspaceId: WORKSPACE_PARAM,
+      },
+    },
+    output: {
+      schema: {
+        ...WRITE_SCHEMA,
+        properties: {
+          ...WRITE_SCHEMA.properties,
+          notes: { type: 'array', items: { type: 'string' } },
+          sheets: { type: 'array', items: { type: 'object' } },
+        },
+        required: [...WRITE_SCHEMA.required, 'notes', 'sheets'],
+      },
+      render: (_args, value) => {
+        const fields = record(value);
+        const notes = Array.isArray(fields.notes) ? fields.notes.map(String) : [];
+        const sheetRows = Array.isArray(fields.sheets) ? fields.sheets.map(record) : [];
+        const sheetLine = sheetRows.length === 0
+          ? ''
+          : '\nSheets: ' + sheetRows.map((row) => String(row.name) + ' (' + String(row.cells) + ' cells)').join('; ') + '.';
+        const noteLines = notes.length === 0 ? '' : '\n' + notes.map((note) => '- ' + note).join('\n');
+        return [{ type: 'text', text: writeText(value, 'Updated') + sheetLine + noteLines }];
+      },
+      presentationMeta: (_args, value) => cardMeta(value),
+    },
+    async execute(args, exec) {
+      const fields = fieldsOf(args);
+      const id = requiredString(fields, 'id');
+      const target = await targetFor(host, exec, id.startsWith('art_lib_') ? 'library' : undefined, optionalString(fields, 'workspaceId'));
+      const current = await service.read(target, id);
+      if (current.manifest.type !== 'sheet') {
+        throw new ArtifactError('artifact/unsupported-type', 'artifact_sheet_update works only on sheet artifacts.', { type: current.manifest.type });
+      }
+      let applied;
+      try {
+        applied = applySheetOperations(current.content, fields.operations);
+      } catch (error) {
+        if (error instanceof SheetError) throw new ArtifactError('artifact/invalid-sheet', error.message, { message: error.message });
+        throw error;
+      }
+      const content = serializeSheetWorkbook(applied.workbook);
+      const manifest = await service.update(target, id, {
+        baseVersion: requiredInteger(fields, 'baseVersion'),
+        content,
+        source: { origin: 'agent', action: 'update', ...(exec.agent === undefined ? {} : { sessionId: exec.agent.id }) },
+      });
+      return {
+        ...summary(manifest, target),
+        warnings: checkSheetWorkbook(applied.workbook),
+        notes: applied.notes,
+        sheets: sheetOverview(applied.workbook).map((item) => ({ name: item.name, rows: item.rows, columns: item.columns, cells: item.cells, formulas: item.formulas })),
+      };
     },
   };
 
@@ -411,8 +564,9 @@ export function createTools(host: ToolHost): ToolDefinition[] {
       properties: {
         scope: { type: 'string', enum: ['workspace', 'library'], description: 'Defaults to workspace.' },
         workspaceId: WORKSPACE_PARAM,
-        type: { type: 'string', enum: ['page', 'doc', 'design'] },
+        type: { type: 'string', enum: ['page', 'doc', 'design', 'sheet'] },
         query: { type: 'string', description: 'Title substring, case-insensitive.' },
+        recipe: { type: 'string', description: 'Only artifacts that follow this recipe.' },
         offset: { type: 'integer' },
       },
     },
@@ -428,7 +582,8 @@ export function createTools(host: ToolHost): ToolDefinition[] {
         const items = Array.isArray(fields.items) ? fields.items : [];
         const lines = items.map((item) => {
           const row = record(item);
-          return `- ${String(row.id)} ${String(row.type)} v${String(row.version)} "${String(row.title)}" (updated ${String(row.updatedAt)})`;
+          const recipe = typeof row.recipe === 'string' ? ` [${row.recipe}]` : '';
+          return `- ${String(row.id)} ${String(row.type)}${recipe} v${String(row.version)} "${String(row.title)}" (updated ${String(row.updatedAt)})`;
         });
         const head = `${items.length} of ${String(fields.total)} artifacts${fields.hasMore === true ? '; more with a higher offset' : ''}.`;
         return [{ type: 'text', text: [head, ...lines].join('\n') }];
@@ -440,6 +595,7 @@ export function createTools(host: ToolHost): ToolDefinition[] {
       const page = await service.list(target, {
         query: optionalString(fields, 'query'),
         type: optionalType(fields),
+        recipe: optionalString(fields, 'recipe'),
         offset: optionalInteger(fields, 'offset'),
       });
       return { items: page.items.map((item) => summary(item, target)), total: page.total, hasMore: page.hasMore };
@@ -471,12 +627,12 @@ export function createTools(host: ToolHost): ToolDefinition[] {
   const exportTool: ToolDefinition = {
     name: 'artifact_export',
     description:
-      'Write an artifact to a standalone file and return its path. A page exports as html; a doc exports as md, docx, or printable html; a design exports as png, svg, or .fig.',
+      'Write an artifact to a standalone file and return its path. A page exports as html; a doc exports as md, docx, or printable html; a design exports as png, svg, or .fig; a sheet exports as csv (first sheet) or xlsx (every sheet).',
     parameters: {
       type: 'object',
       additionalProperties: false,
       required: ['id', 'format'],
-      properties: { id: { type: 'string' }, format: { type: 'string', enum: ['html', 'md', 'docx', 'png', 'svg', 'fig'] },
+      properties: { id: { type: 'string' }, format: { type: 'string', enum: ['html', 'md', 'docx', 'png', 'svg', 'fig', 'csv', 'xlsx'] },
         version: { type: 'integer', minimum: 1, description: 'Saved version to export. Omit for the current version.' },
         workspaceId: WORKSPACE_PARAM },
     },
@@ -497,22 +653,22 @@ export function createTools(host: ToolHost): ToolDefinition[] {
     name: 'design_system_read',
     description:
       'Read the design tokens that pages and docs in this project inherit, and whether they come from the project, the profile library, or the built-in default.',
-    parameters: { type: 'object', additionalProperties: false, properties: { workspaceId: WORKSPACE_PARAM } },
+    parameters: { type: 'object', additionalProperties: false, properties: { workspaceId: WORKSPACE_PARAM, scope: SCOPE_PARAM, ...DESIGN_SELECTION } },
     output: {
-      schema: { type: 'object', additionalProperties: false, required: ['source', 'tokens'], properties: { source: { type: 'string' }, tokens: { type: 'string' } } },
+      schema: { type: 'object', additionalProperties: false, required: ['source', 'tokens'], properties: { source: { type: 'string' }, tokens: { type: 'string' }, ...DESIGN_IDENTITY } },
       render: (_args, value) => [{ type: 'text', text: `Design system from ${String(record(value).source)}:\n${String(record(value).tokens)}` }],
     },
     async execute(args, exec) {
       const fields = fieldsOf(args);
       const workspaceId = optionalString(fields, 'workspaceId');
-      const target = await targetFor(host, exec, undefined, workspaceId).catch((error: unknown) => {
+      const target = await targetFor(host, exec, optionalScope(fields), workspaceId).catch((error: unknown) => {
         // A session outside every workspace can still read the library. A named
         // workspace that does not resolve is a real failure.
         if (workspaceId === undefined && error instanceof ArtifactError && error.code === 'artifact/no-workspace') return {};
         throw error;
       });
-      const resolved = await service.designSystem(target);
-      return { source: resolved.source, tokens: JSON.stringify(resolved.tokens, null, 2) };
+      const resolved = await service.designSystem(target, designSelection(fields));
+      return { source: resolved.source, tokens: JSON.stringify(resolved.tokens, null, 2), system: resolved.system ? { ...resolved.system } : null, catalogRevision: resolved.catalogRevision ?? null };
     },
   };
 
@@ -525,6 +681,10 @@ export function createTools(host: ToolHost): ToolDefinition[] {
       additionalProperties: false,
       required: ['tokens'],
       properties: {
+        systemId: DESIGN_SELECTION.systemId,
+        expectedRevision: { type: 'integer', minimum: 0, description: 'Catalog revision from design_system_list, required for named saves.' },
+        createNew: { type: 'boolean', description: 'Save a new named system, leaving existing systems unchanged.' },
+        makeDefault: { type: 'boolean', description: 'Select this system for future artifacts. Existing pinned artifacts do not change.' },
         tokens: {
           type: 'object',
           description:
@@ -539,16 +699,135 @@ export function createTools(host: ToolHost): ToolDefinition[] {
       },
     },
     output: {
-      schema: { type: 'object', additionalProperties: false, required: ['scope', 'tokens'], properties: { scope: { type: 'string' }, tokens: { type: 'string' } } },
+      schema: { type: 'object', additionalProperties: false, required: ['scope', 'tokens'], properties: { scope: { type: 'string' }, tokens: { type: 'string' }, ...DESIGN_IDENTITY } },
       render: (_args, value) => [{ type: 'text', text: `Saved ${String(record(value).scope)} design system:\n${String(record(value).tokens)}` }],
     },
     async execute(args, exec) {
       const fields = fieldsOf(args);
       const target = await targetFor(host, exec, optionalScope(fields), optionalString(fields, 'workspaceId'));
-      const saved = await service.saveDesignSystem(target, fields.tokens);
-      return { scope: saved.scope, tokens: JSON.stringify(saved.tokens, null, 2) };
+      const saved = await service.saveDesignSystem(target, fields.tokens, designSaveOptions(fields));
+      return { scope: saved.scope, tokens: JSON.stringify(saved.tokens, null, 2), system: saved.system ? { ...saved.system } : null, catalogRevision: saved.catalogRevision ?? null };
     },
   };
 
-  return [create, read, update, list, remove, exportTool, designRead, designUpdate];
+  const brief: ToolDefinition = {
+    name: 'artifact_brief',
+    description: [
+      'Get the brief for a new artifact before artifact_create: the project conventions, the user\'s preferences, the recipe sections and rules, earlier artifacts to match, the design system, and for a page the component kit. Follow it, then pass the same recipe to artifact_create.',
+      'Call it without recipe to list the recipes for the type, choose the one that fits the reader and purpose, and call it again with that id. Also call it before restyling an artifact that has a recipe.',
+    ].join('\n'),
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['type'],
+      properties: {
+        type: { type: 'string', enum: ['page', 'doc', 'design', 'sheet'] },
+        recipe: { type: 'string', description: 'A recipe id. Omit to list the recipes for this type.' },
+        ...DESIGN_SELECTION,
+        scope: SCOPE_PARAM,
+        workspaceId: WORKSPACE_PARAM,
+      },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['brief', 'recipe'],
+        properties: { brief: { type: 'string' }, recipe: { oneOf: [{ type: 'string' }, { type: 'null' }] } },
+      },
+      render: (_args, value) => [{ type: 'text', text: String(record(value).brief) }],
+    },
+    async execute(args, exec) {
+      const fields = fieldsOf(args);
+      const workspaceId = optionalString(fields, 'workspaceId');
+      const scope = optionalScope(fields);
+      const target = await targetFor(host, exec, scope, workspaceId).catch((error: unknown) => {
+        // Outside every workspace the library guide and recipes still apply.
+        if (workspaceId === undefined && scope !== 'workspace' && error instanceof ArtifactError && error.code === 'artifact/no-workspace') return { scope: 'library' as const };
+        throw error;
+      });
+      const result = await service.brief(target, requiredType(fields), optionalString(fields, 'recipe'), designSelection(fields));
+      return { brief: result.brief, recipe: result.recipe?.id ?? null };
+    },
+  };
+
+  const guideUpdate: ToolDefinition = {
+    name: 'artifact_guide_update',
+    description: [
+      'Save conventions the user wants every future artifact to follow, or a reusable recipe. Call it only when the user asks to remember a preference, a convention, or a structure; never for a one-off request.',
+      'scope workspace (default) is this project\'s conventions. scope library is the user\'s preferences in every project. instructions replaces that scope\'s whole text, so read the current text in artifact_brief and send the full result.',
+      'A recipe with the id of a built-in or wider recipe replaces it in this scope.',
+    ].join('\n'),
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        instructions: { type: 'string', description: `The complete conventions text for this scope, up to ${MAX_INSTRUCTIONS} characters. Short, concrete, checkable rules.` },
+        recipe: {
+          type: 'object',
+          description: 'A recipe to add or replace: { id, name, types: ["page"|"doc"|"design"], audience, purpose, sections: [{ key, title, purpose, required }], rules: [string] }.',
+        },
+        removeRecipe: { type: 'string', description: 'The id of a recipe in this scope to remove.' },
+        scope: SCOPE_PARAM,
+        workspaceId: WORKSPACE_PARAM,
+      },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['scope', 'instructions', 'recipes'],
+        properties: { scope: { type: 'string' }, instructions: { type: 'string' }, recipes: { type: 'array', items: { type: 'string' } } },
+      },
+      render: (_args, value) => {
+        const fields = record(value);
+        const recipes = Array.isArray(fields.recipes) && fields.recipes.length > 0 ? fields.recipes.map(String).join(', ') : 'none';
+        return [{ type: 'text', text: `Saved the ${String(fields.scope)} guide. Recipes in this scope: ${recipes}.` }];
+      },
+    },
+    async execute(args, exec) {
+      const fields = fieldsOf(args);
+      const instructions = optionalString(fields, 'instructions');
+      const removeRecipe = optionalString(fields, 'removeRecipe');
+      const recipe = fields.recipe ?? undefined;
+      if (instructions === undefined && removeRecipe === undefined && recipe === undefined) {
+        throw new ArtifactError('artifact/bad-request', 'Send instructions, a recipe, or removeRecipe.');
+      }
+      const target = await targetFor(host, exec, optionalScope(fields), optionalString(fields, 'workspaceId'));
+      const patch: GuidePatch = {
+        ...(instructions === undefined ? {} : { instructions }),
+        ...(recipe === undefined ? {} : { recipe }),
+        ...(removeRecipe === undefined ? {} : { removeRecipe }),
+      };
+      const saved = await service.saveGuide(target, patch);
+      return { scope: saved.scope, instructions: saved.guide.instructions, recipes: saved.guide.recipes.map((item) => item.id) };
+    },
+  };
+
+  const designList: ToolDefinition = {
+    name: 'design_system_list',
+    description: 'List named design systems in one scope, its default ID, and catalog revision. Read before creating or updating a named system. Library and workspace catalogs are separate.',
+    parameters: { type: 'object', additionalProperties: false, properties: { scope: SCOPE_PARAM, workspaceId: WORKSPACE_PARAM } },
+    output: { schema: { type: 'object', properties: { scope: { type: 'string' }, revision: { type: 'integer' }, defaultId: { oneOf: [{ type: 'string' }, { type: 'null' }] }, systems: { type: 'array', items: { type: 'object' } } } }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
+    async execute(args, exec) {
+      const fields = fieldsOf(args);
+      const target = await targetFor(host, exec, optionalScope(fields), optionalString(fields, 'workspaceId'));
+      const catalog = await service.listDesignSystems(target);
+      return { ...catalog, systems: catalog.systems.map(system => ({ ...system })) };
+    },
+  };
+  const rebase: ToolDefinition = {
+    name: 'artifact_rebase',
+    description: 'Explicitly adopt current or selected design-system and recipe settings for a Page or Document, appending one version without changing content. Ordinary edits preserve pinned settings. Call only when the user requests a design/recipe refresh. Read first and pass baseVersion.',
+    parameters: { type: 'object', additionalProperties: false, required: ['id','baseVersion'], properties: { id: { type: 'string' }, baseVersion: { type: 'integer' }, recipe: RECIPE_PARAM, ...DESIGN_SELECTION, workspaceId: WORKSPACE_PARAM } },
+    output: { schema: WRITE_SCHEMA, render: (_args, value) => [{ type: 'text', text: writeText(value, 'Rebased') }], presentationMeta: (_args, value) => cardMeta(value) },
+    async execute(args, exec) {
+      const fields = fieldsOf(args);
+      const id = requiredString(fields, 'id');
+      const target = await targetFor(host, exec, id.startsWith('art_lib_') ? 'library' : undefined, optionalString(fields, 'workspaceId'));
+      const manifest = await service.rebase(target, id, { baseVersion: requiredInteger(fields, 'baseVersion'), recipe: optionalString(fields, 'recipe'), design: designSelection(fields), source: { origin: 'agent', action: 'rebase', ...(exec.agent ? { sessionId: exec.agent.id } : {}) } });
+      return { ...summary(manifest, target), warnings: [] };
+    },
+  };
+  return [create, read, update, sheetUpdate, list, remove, exportTool, designRead, designUpdate, brief, guideUpdate, designList, rebase];
 }

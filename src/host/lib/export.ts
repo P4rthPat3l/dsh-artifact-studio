@@ -22,6 +22,9 @@ import type { MarkedToken, Token, Tokens } from 'marked';
 import { FORMATS_BY_TYPE } from '../../contract.js';
 import type { DesignTokens, ExportFormat, ExportedFile, Manifest } from '../../contract.js';
 import { DOC_CSP, DOC_STYLE, PAGE_CSP, PRINT_CSP, composePage, escapeHtml } from '../../render.js';
+import { evaluateWorkbook, parseSheetWorkbook, sheetTable, sheetToCsv } from '../../sheet/index.js';
+import type { SheetTable, SheetWorkbook } from '../../sheet/index.js';
+import { workbookToXlsx } from './xlsx.js';
 import type { DesignRenderer } from './design-render.js';
 import { ArtifactError } from './errors.js';
 import { assertWithin, withLock } from './fsutil.js';
@@ -34,6 +37,8 @@ const MEDIA_TYPES: Readonly<Record<ExportFormat, string>> = {
   png: 'image/png',
   svg: 'image/svg+xml',
   fig: 'application/octet-stream',
+  csv: 'text/csv',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
 };
 
 const MARKED_TYPES: ReadonlySet<string> = new Set([
@@ -347,6 +352,81 @@ export async function docToDocx(title: string, markdown: string, design: DesignT
   return Packer.toBuffer(document);
 }
 
+/** The most cells one printable sheet may cover before the copy refuses. */
+const MAX_PRINT_CELLS = 20000;
+
+/**
+ * A cell's inline style for a print table. The printed copy uses the artifact
+ * tokens for its defaults and the stored cell style for overrides, so it looks
+ * like the panel without depending on the panel's CSS.
+ * @param cell the table cell.
+ * @returns a style attribute value, or an empty string.
+ */
+function printCellStyle(cell: SheetTable['cells'][number]): string {
+  const rules: string[] = [];
+  const style = cell.style;
+  if (style !== undefined) {
+    if (style.bold === true) rules.push('font-weight:600');
+    if (style.italic === true) rules.push('font-style:italic');
+    const decoration = [style.underline === true ? 'underline' : '', style.strike === true ? 'line-through' : ''].filter((part) => part !== '').join(' ');
+    if (decoration !== '') rules.push('text-decoration:' + decoration);
+    if (style.align !== undefined) rules.push('text-align:' + style.align);
+    if (style.color !== undefined) rules.push('color:' + style.color);
+    if (style.background !== undefined) rules.push('background-color:' + style.background);
+  }
+  if (style?.align === undefined) rules.push('text-align:' + (typeof cell.value === 'number' ? 'right' : 'left'));
+  return rules.join(';');
+}
+
+/**
+ * A print copy of one sheet workbook: one table per sheet under the workbook
+ * title. Formula cells print their computed value.
+ * @param workbook the workbook.
+ * @param designCss the resolved token CSS.
+ * @param title the artifact title.
+ * @returns a full HTML document for the print frame.
+ */
+export function sheetToPrintableHtml(workbook: SheetWorkbook, designCss: string, title: string): string {
+  const evaluated = evaluateWorkbook(workbook);
+  const sections: string[] = [];
+  for (const sheet of workbook.sheets) {
+    const table = sheetTable(workbook, evaluated, sheet.name);
+    if (table.rows * table.columns > MAX_PRINT_CELLS) {
+      throw new ArtifactError('artifact/too-large', 'The sheet "' + sheet.name + '" covers ' + String(table.rows) + ' by ' + String(table.columns) + ' cells; a print copy supports up to ' + String(MAX_PRINT_CELLS) + '. Export XLSX instead.', {
+        sheet: sheet.name,
+        rows: table.rows,
+        columns: table.columns,
+        limit: MAX_PRINT_CELLS,
+      });
+    }
+    const byPosition = new Map<string, SheetTable['cells'][number]>();
+    for (const cell of table.cells) byPosition.set(String(cell.row) + ',' + String(cell.column), cell);
+    const rows: string[] = [];
+    for (let row = 1; row <= table.rows; row += 1) {
+      const cells: string[] = [];
+      for (let column = 0; column < table.columns; column += 1) {
+        const cell = byPosition.get(String(row) + ',' + String(column));
+        const style = cell === undefined ? '' : printCellStyle(cell);
+        cells.push('<td' + (style === '' ? '' : ' style="' + escapeHtml(style) + '"') + '>' + escapeHtml(cell?.display ?? '') + '</td>');
+      }
+      rows.push('<tr>' + cells.join('') + '</tr>');
+    }
+    sections.push(
+      (workbook.sheets.length > 1 ? '<h2>' + escapeHtml(sheet.name) + '</h2>' : '') +
+      '<table><tbody>' + rows.join('') + '</tbody></table>',
+    );
+  }
+  const style = `
+body { margin: 0; background: var(--artifact-color-surface); color: var(--artifact-color-text); font-family: var(--artifact-font-family); font-size: 12px; line-height: 1.45; }
+main { padding: 28px 24px 40px; }
+h1 { margin: 0 0 16px; font-family: var(--artifact-font-display); font-size: 22px; line-height: 1.2; }
+h2 { margin: 22px 0 8px; font-size: 13px; font-weight: 600; }
+table { border-collapse: collapse; margin: 0 0 24px; }
+td { padding: 4px 8px; border: .5px solid color-mix(in srgb, var(--artifact-color-text) 22%, transparent); vertical-align: top; white-space: pre-wrap; }
+@media print { main { padding: 0; } tr { break-inside: avoid; } }`;
+  return composePage('<style>' + style + '</style><main><h1>' + escapeHtml(title) + '</h1>' + sections.join('') + '</main>', designCss, PRINT_CSP, title);
+}
+
 /**
  * Write one export into the scope's `exports/` folder.
  * @param root the scope root.
@@ -386,6 +466,20 @@ export async function writeExport(
     const rendered = await designs.exportContent(content, format);
     data = rendered.bytes;
     mediaType = rendered.mediaType;
+  } else if (manifest.type === 'sheet') {
+    let workbook: SheetWorkbook;
+    try {
+      workbook = parseSheetWorkbook(content);
+    } catch {
+      throw new ArtifactError('artifact/corrupt', 'The saved sheet content cannot be read.', { id: manifest.id });
+    }
+    if (format === 'csv') data = Buffer.from(sheetToCsv(workbook, evaluateWorkbook(workbook)), 'utf8');
+    else if (format === 'xlsx') data = workbookToXlsx(workbook);
+    else {
+      throw new ArtifactError('artifact/unsupported-format', 'A sheet exports as csv or xlsx.', {
+        supported: FORMATS_BY_TYPE.sheet,
+      });
+    }
   } else if (format === 'docx') data = await docToDocx(manifest.title, content, design.tokens);
   else if (format === 'md') data = Buffer.from(content, 'utf8');
   else if (manifest.type === 'page') data = Buffer.from(composePage(content, design.css, PAGE_CSP, manifest.title), 'utf8');

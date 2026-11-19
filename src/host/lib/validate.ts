@@ -1,5 +1,5 @@
 import { ARTIFACT_TYPES, EXPORT_FORMATS, SCOPES } from '../../contract.js';
-import type { ArtifactType, ExportFormat, Scope } from '../../contract.js';
+import type { ArtifactType, ExportFormat, Scope, DesignSelection, DesignSaveOptions } from '../../contract.js';
 import { ArtifactError } from './errors.js';
 import type { TextEdit } from './store.js';
 
@@ -134,4 +134,25 @@ export function optionalEdits(fields: Fields): TextEdit[] | undefined {
     }
     return { oldText, newText };
   });
+}
+
+export function optionalBoolean(fields: Fields, key: string): boolean | undefined {
+  const value = fields[key];
+  if (value === undefined) return undefined;
+  if (typeof value !== 'boolean') throw new ArtifactError('artifact/bad-request', key + ' must be a boolean.');
+  return value;
+}
+export function designSelection(fields: Fields): DesignSelection {
+  return { systemId: optionalString(fields, 'systemId'),
+    systemScope: optionalEnum(fields, 'systemScope', SCOPES, 'artifact/unknown-scope'),
+    revision: optionalInteger(fields, 'systemRevision') };
+}
+export function designSaveOptions(fields: Fields): DesignSaveOptions | undefined {
+  const systemId = optionalString(fields, 'systemId');
+  const expectedRevision = optionalInteger(fields, 'expectedRevision');
+  const createNew = optionalBoolean(fields, 'createNew');
+  const makeDefault = optionalBoolean(fields, 'makeDefault');
+  if (systemId === undefined && expectedRevision === undefined && createNew === undefined && makeDefault === undefined) return undefined;
+  if (expectedRevision === undefined) throw new ArtifactError('artifact/bad-request', 'Named system saves require expectedRevision from design_system_list.');
+  return { systemId, expectedRevision, createNew, makeDefault };
 }

@@ -102,12 +102,15 @@ const canvas = await bundle('src/client/canvas/entry.ts', {
 const loader = await bundle('src/client/canvas/loader.ts', { define: defines });
 const main = await bundle('src/client/index.tsx', { define: defines });
 const doc = await bundle('src/client/doc/entry.ts');
+const sheet = await bundle('src/client/sheet/entry.ts', { define: defines });
 await copyAssets();
 await fs.writeFile(path.join(ROOT, 'assets', 'canvas.engine.js'), canvas);
 await fs.writeFile(path.join(ROOT, 'client.js'), wrap(main, { id: 'dsh-artifact-studio', bridge: true }));
 await fs.writeFile(path.join(ROOT, 'client.doc.js'), wrap(doc, { id: 'dsh-artifact-studio', chunk: 'client.doc.js' }));
+await fs.writeFile(path.join(ROOT, 'client.sheet.js'), wrap(sheet, { id: 'dsh-artifact-studio', chunk: 'client.sheet.js' }));
 await fs.writeFile(path.join(ROOT, 'client.canvas.js'), wrap(loader, { id: 'dsh-artifact-studio', chunk: 'client.canvas.js' }));
 console.log(`client.js ${main.length} bytes`);
 console.log(`client.doc.js ${doc.length} bytes`);
+console.log(`client.sheet.js ${sheet.length} bytes`);
 console.log(`client.canvas.js ${loader.length} bytes`);
 console.log(`canvas.engine.js ${canvas.length} bytes`);

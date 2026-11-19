@@ -129,7 +129,7 @@ export function mergeTokens(base: DesignTokens, patch: unknown): DesignTokens {
  * @param root the scope root.
  * @returns the tokens, or undefined when the scope has none or the file is invalid.
  */
-async function readScopeTokens(root: ScopeRoot): Promise<DesignTokens | undefined> {
+export async function readScopeTokens(root: ScopeRoot): Promise<DesignTokens | undefined> {
   const file = path.join(root.root, FILE);
   if (!(await assertPlainFile(file))) return undefined;
   try {

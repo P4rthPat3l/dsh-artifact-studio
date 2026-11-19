@@ -85,3 +85,35 @@ export async function assertWithin(root: string, target: string): Promise<void> 
     }
   }
 }
+
+/** Reject symbolic links at every new storage boundary, including in-root links. */
+export async function assertPlainPath(root: string, target: string): Promise<void> {
+  await assertWithin(root, target);
+  const relative = path.relative(root, target);
+  let current = root;
+  for (const part of ['', ...relative.split(path.sep).filter(Boolean)]) {
+    current = path.join(current, part);
+    try {
+      if ((await fs.lstat(current)).isSymbolicLink()) throw new ArtifactError('artifact/forbidden-path', 'Storage paths must not contain symbolic links.');
+    } catch (error) {
+      if (errnoCode(error) === 'ENOENT') return;
+      throw error;
+    }
+  }
+}
+
+/** Fail closed on another process's writer; stale locks need explicit manual recovery. */
+export async function withWriteLock<T>(root: string, key: string, task: () => Promise<T>): Promise<T> {
+  return withLock(key, async () => {
+    const file = key + '.write-lock';
+    await assertPlainPath(root, file);
+    let handle;
+    try { handle = await fs.open(file, 'wx', 0o600); }
+    catch (error) {
+      if (errnoCode(error) === 'EEXIST') throw new ArtifactError('artifact/writer-busy', 'Another writer or a stale lock owns this store. Finish that writer before retrying; after a crash, recover the lock manually.', { file });
+      throw error;
+    }
+    try { return await task(); }
+    finally { await handle.close(); await fs.unlink(file); }
+  });
+}

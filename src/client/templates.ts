@@ -34,6 +34,29 @@ const DOC = `# {{title}}
 Start writing, or select text and choose Edit with agent.
 `;
 
+/** Starter workbook; the title is inserted as a JSON string, never as code. */
+function sheetTemplate(title: string): string {
+  const workbook = {
+    schemaVersion: 1,
+    sheets: [
+      {
+        name: 'Sheet1',
+        cells: {
+          A1: { value: title, style: { bold: true } },
+          A3: 'Item',
+          B3: 'Amount',
+          A4: 'Example',
+          B4: 100,
+          B5: 'Total',
+          B6: '=SUM(B4:B5)',
+        },
+        columnWidths: { A: 180 },
+      },
+    ],
+  };
+  return JSON.stringify(workbook, null, 2) + '\n';
+}
+
 /** Starter Design JSX; the title is inserted as text, never as code. */
 const DESIGN = `<Frame w={720} p={40} bg="#ffffff" flex="col" gap={12}>
   <Text size={13} weight={600} color="#2856c7">DESIGN</Text>
@@ -71,5 +94,6 @@ function escapeJsx(value: string): string {
 export function starterContent(type: ArtifactType, title: string): string {
   if (type === 'doc') return DOC.replace('{{title}}', escapeMarkdown(title));
   if (type === 'design') return DESIGN.replace('{{title}}', escapeJsx(title));
+  if (type === 'sheet') return sheetTemplate(title);
   return PAGE.replace('{{title}}', escapeHtml(title));
 }

@@ -1,6 +1,6 @@
 /** Wire shapes shared by the host route, the tools, and the browser client. */
 
-export const ARTIFACT_TYPES = ['page', 'doc', 'design'] as const;
+export const ARTIFACT_TYPES = ['page', 'doc', 'design', 'sheet'] as const;
 export type ArtifactType = (typeof ARTIFACT_TYPES)[number];
 
 /**
@@ -15,7 +15,7 @@ export function isArtifactType(value: unknown): value is ArtifactType {
 export const SCOPES = ['workspace', 'library'] as const;
 export type Scope = (typeof SCOPES)[number];
 
-export const EXPORT_FORMATS = ['html', 'md', 'docx', 'png', 'svg', 'fig'] as const;
+export const EXPORT_FORMATS = ['html', 'md', 'docx', 'png', 'svg', 'fig', 'csv', 'xlsx'] as const;
 export type ExportFormat = (typeof EXPORT_FORMATS)[number];
 
 /** Which exporters each type supports. */
@@ -23,6 +23,7 @@ export const FORMATS_BY_TYPE: Readonly<Record<ArtifactType, readonly ExportForma
   page: ['html'],
   doc: ['md', 'docx', 'html'],
   design: ['png', 'svg', 'fig'],
+  sheet: ['csv', 'xlsx'],
 };
 
 /** Content file name inside `content/`, by type. */
@@ -30,16 +31,19 @@ export const CONTENT_FILE: Readonly<Record<ArtifactType, string>> = {
   page: 'index.html',
   doc: 'document.md',
   design: 'design.jsx',
+  sheet: 'sheet.json',
 };
 
 export const ID_PATTERN = /^art_(ws|lib)_[a-z0-9]{10,32}$/;
+/** A recipe id: lowercase words joined by hyphens. */
+export const RECIPE_PATTERN = /^[a-z][a-z0-9-]{1,39}$/;
 export const MAX_TITLE = 120;
 export const MAX_LIST_LIMIT = 50;
 
 /** Who produced a version. */
 export interface VersionSource {
   origin: 'agent' | 'user';
-  action: 'create' | 'update' | 'restore';
+  action: 'create' | 'update' | 'restore' | 'rebase';
   sessionId?: string;
   restoredFrom?: number;
 }
@@ -58,6 +62,9 @@ export interface Manifest {
   contentBytes: number;
   contentHash: string;
   source: VersionSource;
+  /** The recipe the artifact follows: its content structure for one intent. Absent on artifacts made before recipes. */
+  recipe?: string;
+  generation?: GenerationSummary;
 }
 
 /** One immutable snapshot as `history` lists it. */
@@ -67,6 +74,7 @@ export interface VersionEntry {
   contentHash: string;
   contentBytes: number;
   source: VersionSource;
+  generation?: GenerationSummary;
 }
 
 /** One gallery row. */
@@ -121,6 +129,8 @@ export interface ResolvedDesignSystem {
   tokens: DesignTokens;
   source: TokenSource;
   css: string;
+  system?: DesignSystemRef;
+  catalogRevision?: number;
 }
 
 /** What a rendered design reports about its own scene graph. */
@@ -169,6 +179,7 @@ export interface ArtifactPayload {
   designCss: string;
   /** The resolved tokens, so the document editor can match the export. */
   design: DesignTokens;
+  generation?: GenerationSummary;
   /** The compiled summary of a design, when the read could produce one. */
   designInfo?: DesignInfo;
 }
@@ -193,7 +204,7 @@ export function isVersionSource(value: unknown): value is VersionSource {
   const action = 'action' in value ? value.action : undefined;
   return (
     (origin === 'agent' || origin === 'user') &&
-    (action === 'create' || action === 'update' || action === 'restore')
+    (action === 'create' || action === 'update' || action === 'restore' || action === 'rebase')
   );
 }
 
@@ -221,7 +232,9 @@ export function isManifest(value: unknown): value is Manifest {
     typeof record.contentFile === 'string' &&
     typeof record.contentBytes === 'number' &&
     typeof record.contentHash === 'string' &&
-    isVersionSource(record.source)
+    isVersionSource(record.source) &&
+    (record.recipe === undefined || (typeof record.recipe === 'string' && RECIPE_PATTERN.test(record.recipe))) &&
+    (record.generation === undefined || isGenerationSummary(record.generation))
   );
 }
 
@@ -359,4 +372,57 @@ export function tokenVariables(tokens: DesignTokens, dark: boolean): Record<stri
   tokens.spacing.scale.forEach((size, index) => { vars[`--artifact-space-${index}`] = `${size}px`; });
   for (const [key, value] of Object.entries(tokens.radius)) vars[`--artifact-radius-${key}`] = `${value}px`;
   return vars;
+}
+
+export const SYSTEM_ID_PATTERN = /^ds_[a-z0-9]{16}$/;
+export const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
+
+export interface DesignSystemRef {
+  id: string;
+  revision: number;
+  scope: Scope;
+  name: string;
+}
+export interface DesignSelection {
+  systemId?: string;
+  systemScope?: Scope;
+  revision?: number;
+}
+export interface DesignSaveOptions {
+  systemId?: string;
+  expectedRevision?: number;
+  createNew?: boolean;
+  makeDefault?: boolean;
+}
+export interface DesignCatalog {
+  scope: Scope;
+  revision: number;
+  defaultId: string | null;
+  systems: DesignSystemRef[];
+}
+export interface GenerationSummary {
+  hash: string;
+  bytes: number;
+  system: DesignSystemRef | null;
+  recipe: string | null;
+  kit: string | null;
+}
+
+export function isDesignSystemRef(value: unknown): value is DesignSystemRef {
+  if (value === null || typeof value !== 'object') return false;
+  const row: Record<string, unknown> = { ...value };
+  return typeof row.id === 'string' && SYSTEM_ID_PATTERN.test(row.id)
+    && typeof row.revision === 'number' && Number.isSafeInteger(row.revision) && row.revision > 0
+    && (row.scope === 'workspace' || row.scope === 'library')
+    && typeof row.name === 'string' && row.name.length > 0 && row.name.length <= 80;
+}
+
+export function isGenerationSummary(value: unknown): value is GenerationSummary {
+  if (value === null || typeof value !== 'object') return false;
+  const row: Record<string, unknown> = { ...value };
+  return typeof row.hash === 'string' && DIGEST_PATTERN.test(row.hash)
+    && typeof row.bytes === 'number' && Number.isSafeInteger(row.bytes) && row.bytes > 0 && row.bytes <= 65536
+    && (row.system === null || isDesignSystemRef(row.system))
+    && (row.recipe === null || typeof row.recipe === 'string' && RECIPE_PATTERN.test(row.recipe))
+    && (row.kit === null || typeof row.kit === 'string' && row.kit.length <= 20);
 }

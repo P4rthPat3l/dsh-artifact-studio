@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="artifact-kit" content="1">
+<title>Reviewing a delivery window</title>
+<style>
+.ak-demo { --demo-bg: #121826; --demo-text: #f0f4fc; --demo-font: system-ui, sans-serif; --demo-font-size: 14px; --demo-line-height: 1.5; padding: 20px; }
+.ak-demo h3 { font-size: 18px; font-weight: 600; }
+.ak-demo p { margin-block: 10px; }
+.ak-demo a { color: inherit; }
+</style>
+</head><body><main class="ak-page">
+<header class="ak-header"><h1>Reviewing a delivery window</h1><p class="ak-lede">A feature review pairs an explanation with a product demonstration. This fixture uses illustrative data and makes no real account changes.</p><ul class="ak-meta"><li>Internal review</li><li><span class="ak-badge ak-badge--warning">Proposed</span></li></ul></header>
+<section class="ak-section" data-section="summary"><h2>Summary</h2><p>Customers can choose a delivery window before confirming their order.</p></section>
+<section class="ak-section" data-section="current"><h2>Current behavior</h2><p>The order form offers a delivery date but no time window.</p></section>
+<section class="ak-section" data-section="proposed"><h2>Proposed behavior</h2>
+<div class="ak-switch" data-ak-switch id="comparison"><div class="ak-switch__bar" role="group" aria-label="Delivery form state"><button type="button" data-ak-option="before" aria-pressed="true" aria-controls="before-panel">Before</button><button type="button" data-ak-option="after" aria-pressed="false" aria-controls="after-panel">After</button></div>
+<section data-ak-panel="before" id="before-panel"><h3>Before</h3><figure class="ak-frame"><div class="ak-frame__bar">orders.example.test/checkout</div><div class="ak-frame__body ak-demo"><h3>Delivery date</h3><p>Choose a date. The delivery time is not specified.</p><a href="#rules">Read the delivery rules</a></div><figcaption class="ak-frame__caption">Current form, illustrative content.</figcaption></figure></section>
+<section data-ak-panel="after" id="after-panel" hidden><h3>After</h3><figure class="ak-frame"><div class="ak-frame__bar">orders.example.test/checkout</div><div class="ak-frame__body ak-demo"><h3>Delivery window</h3><p>Choose a date and an available window.</p><label class="ak-field">Window<select class="ak-input" name="deliveryWindow"><option>09:00 to 12:00</option><option>12:00 to 15:00</option></select></label></div><figcaption class="ak-frame__caption">Proposed form, local selection only.</figcaption></figure></section></div>
+</section>
+<section class="ak-section" data-section="rules" id="rules"><h2>Rules and edge cases</h2><div class="ak-table ak-table--stack" tabindex="0" role="region" aria-label="Delivery rules"><table><caption>These rules apply to new orders only. Illustrative specification.</caption><thead><tr><th scope="col">Condition</th><th scope="col">Behavior</th><th scope="col">Status</th></tr></thead><tbody><tr><th scope="row">Window is available</th><td data-label="Behavior">Customer can confirm the order.</td><td data-label="Status"><span class="ak-badge ak-badge--success">Allowed</span></td></tr><tr><th scope="row">No windows remain</th><td data-label="Behavior">Ask the customer to choose another date.</td><td data-label="Status"><span class="ak-badge ak-badge--warning">Needs a choice</span></td></tr></tbody></table></div></section>
+<section class="ak-section" data-section="acceptance"><h2>Acceptance checks</h2><ol class="ak-steps"><li><strong>Change the view</strong><p>Switch between Before and After with the keyboard.</p></li><li><strong>Inspect the narrow layout</strong><p>The table stacks without shrinking its caption to a single letter.</p></li></ol></section>
+<footer class="ak-footer">Browser regression fixture. No saved user data.</footer>
+</main></body></html>

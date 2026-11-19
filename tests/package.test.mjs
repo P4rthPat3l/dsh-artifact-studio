@@ -36,6 +36,17 @@ test('the canvas build dependencies stay out of runtime dependencies and ship a 
   assert.match(notices, /Roboto/);
   assert.match(notices, /Apache/);
 });
+test('the sheet chunk and its formula and zip dependencies ship with notices', async () => {
+  const manifest = JSON.parse(await fs.readFile(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.ok(manifest.files.includes('client.sheet.js'), 'the sheet chunk is not shipped');
+  assert.ok(manifest.dependencies['fast-formula-parser'], 'fast-formula-parser is not a runtime dependency');
+  assert.ok(manifest.dependencies.fflate, 'fflate is not a runtime dependency');
+  const notices = await fs.readFile(new URL('../THIRD_PARTY_NOTICES.md', import.meta.url), 'utf8');
+  assert.match(notices, /fast-formula-parser/);
+  assert.match(notices, /chevrotain/);
+  assert.match(notices, /Apache-2\.0/);
+  assert.match(notices, /fflate/);
+});
 
 /**
  * Collect the bare package names a source tree imports.

@@ -43,6 +43,14 @@ export const IconDoc = ({ size }: { size?: number }) => (
   </Glyph>
 );
 
+/** A grid with a header row and column: a spreadsheet. */
+export const IconSheet = ({ size }: { size?: number }) => (
+  <Glyph size={size}>
+    <rect x="3.5" y="4.5" width="17" height="15" rx="2" />
+    <path d="M3.5 9.5h17M9.5 9.5v10M15 9.5v10M3.5 14.5h17" />
+  </Glyph>
+);
+
 export const IconDesign = ({ size }: { size?: number }) => (
   <Glyph size={size}>
     <rect x="3.5" y="4.5" width="17" height="15" rx="2" />

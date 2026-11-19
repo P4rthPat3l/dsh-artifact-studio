@@ -3,6 +3,8 @@ import type { ArtifactService, Target } from './service.js';
 import type { EndpointHandler, EndpointResult } from './types.js';
 import {
   fieldsOf,
+  designSelection,
+  designSaveOptions,
   optionalEdits,
   optionalInteger,
   optionalScope,
@@ -30,13 +32,16 @@ export const ENDPOINTS = [
   'saveDesignSystem',
   'clearDesignSystem',
   'preview',
+  'designSystems',
+  'setDesignDefault',
+  'rebase',
 ] as const;
 
 type Endpoint = (typeof ENDPOINTS)[number];
 
 /**
- * The scope context of a request. A library request may carry a workspace id;
- * it is kept so the design system still resolves the workspace override.
+ * The scope context of a request. A library request may carry a workspace id
+ * from an older client; library reads ignore that id when resolving styles.
  * @param fields the request.
  * @returns the target.
  */
@@ -64,6 +69,7 @@ async function dispatch(service: ArtifactService, endpoint: Endpoint, fields: Fi
       return service.list(target, {
         query: optionalString(fields, 'query'),
         type: optionalType(fields),
+        recipe: optionalString(fields, 'recipe'),
         offset: optionalInteger(fields, 'offset'),
         limit: optionalInteger(fields, 'limit'),
       });
@@ -75,6 +81,8 @@ async function dispatch(service: ArtifactService, endpoint: Endpoint, fields: Fi
           type: requiredType(fields),
           title: requiredString(fields, 'title'),
           content: optionalString(fields, 'content') ?? '',
+          recipe: optionalString(fields, 'recipe'),
+          design: designSelection(fields),
           source: { ...user, action: 'create' },
         }),
       };
@@ -85,6 +93,7 @@ async function dispatch(service: ArtifactService, endpoint: Endpoint, fields: Fi
           content: optionalString(fields, 'content'),
           edits: optionalEdits(fields),
           title: optionalString(fields, 'title'),
+          recipe: optionalString(fields, 'recipe'),
           source: { ...user, action: 'update' },
         }),
       };
@@ -107,11 +116,19 @@ async function dispatch(service: ArtifactService, endpoint: Endpoint, fields: Fi
     case 'printable':
       return service.printable(target, requiredString(fields, 'id'), optionalInteger(fields, 'version'));
     case 'designSystem':
-      return service.designSystem(target);
+      return service.designSystem(target, designSelection(fields));
     case 'saveDesignSystem':
-      return service.saveDesignSystem(target, fields.tokens);
+      return service.saveDesignSystem(target, fields.tokens, designSaveOptions(fields));
     case 'clearDesignSystem':
       return service.clearWorkspaceDesignSystem(target);
+    case 'designSystems':
+      return service.listDesignSystems(target);
+    case 'setDesignDefault':
+      return service.setDesignDefault(target, fields.systemId === null ? null : requiredString(fields, 'systemId'), requiredInteger(fields, 'expectedRevision'));
+    case 'rebase':
+      return { manifest: await service.rebase(target, requiredString(fields, 'id'), {
+        baseVersion: requiredInteger(fields, 'baseVersion'), design: designSelection(fields), recipe: optionalString(fields, 'recipe'), source: { ...user, action: 'rebase' },
+      }) };
     case 'preview':
       return service.preview(target, requiredString(fields, 'id'), optionalInteger(fields, 'version'));
     default: {

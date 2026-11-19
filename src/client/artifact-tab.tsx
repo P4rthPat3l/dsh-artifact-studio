@@ -21,7 +21,7 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives';
 import { FORMATS_BY_TYPE, formatArtifactAddress, parseArtifactAddress } from '../contract.js';
-import type { ArtifactAddress, ArtifactPayload, ExportFormat, VersionEntry } from '../contract.js';
+import type { ArtifactAddress, ArtifactPayload, DesignSelection, ExportFormat, VersionEntry } from '../contract.js';
 import { api, codeOf, download, errorKey } from './api.js';
 import type { CanvasSnapshot, DesignCanvasHandle, SelectedLayer } from './canvas/entry.js';
 import { DesignCanvasView } from './design-canvas-view.jsx';
@@ -35,8 +35,10 @@ import type { InputActions, TabInfo, TabProps, Translator, UseTabInfo } from './
 import { HistoryPanel } from './history.jsx';
 import { announceListChange, announceVersion, notify, useAnnouncedVersion } from './store.js';
 import { PageFrame, SourceEditor } from './page-view.jsx';
+import { SheetView } from './sheet-view.jsx';
 import { buildDesignQuote, buildReference, plainRequest, quoteText } from './review.js';
 import type { Quote } from './review.js';
+import { RebaseDialog } from './rebase-dialog.jsx';
 import { useHarnessDark } from './theme.js';
 
 /** A small icon-only control with the shared tooltip. */
@@ -230,6 +232,7 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
   const [viewing, setViewing] = useState<ArtifactPayload | null>(null);
   const [menu, setMenu] = useState<'export' | 'more' | 'version' | null>(null);
   const [renaming, setRenaming] = useState(false);
+  const [rebasing, setRebasing] = useState(false);
   const [renameText, setRenameText] = useState('');
   const [leave, setLeave] = useState<{ run: LeaveAction } | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -321,7 +324,7 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
   useEffect(() => info?.tab.actions?.bindCommands({ refresh: () => guarded(reload) }), [info?.tab.actions, guarded, reload]);
 
   useEffect(() => {
-    if (payload?.manifest.type !== 'doc' || draft === null || conflict || saving) return;
+    if ((payload?.manifest.type !== 'doc' && payload?.manifest.type !== 'sheet') || draft === null || conflict || saving) return;
     const timer = setTimeout(() => void model.save(), 1200);
     return () => clearTimeout(timer);
   }, [draft, conflict, saving, model, payload?.manifest.type]);
@@ -418,6 +421,21 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
     finally { setBusy(false); }
   };
 
+  const rebase = async (selection: DesignSelection) => {
+    if (viewing !== null || conflict || busy) return;
+    setBusy(true);
+    try {
+      if (!await model.save()) throw new Error(t('error.stale'));
+      const current = model.getSnapshot();
+      if (current.draft !== null || current.conflict || current.payload === null) throw new Error(t('error.stale'));
+      const result = await api.rebase(where, id, current.payload.version, selection);
+      announceVersion(id, result.manifest.version); announceListChange();
+      resetView();
+      await model.load();
+      notify(t('generation.done'));
+    } finally { setBusy(false); }
+  };
+
   const rename = async () => {
     if (renameText.trim() === '' || saving) return;
     if (await model.save(renameText.trim())) setRenaming(false);
@@ -507,6 +525,7 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
   );
 
   const type = payload.manifest.type;
+  const selectedPayload = viewing ?? payload;
   const text = viewing?.content ?? draft ?? payload.content;
   const readOnly = viewing !== null;
   const version = viewing?.version ?? payload.version;
@@ -524,6 +543,7 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
   const tone = conflict || (failure !== undefined && !saving) ? 'error' : saving ? 'warn' : undefined;
   const identity = address.scope === 'workspace' ? workspaceName ?? address.workspaceId : t('scope.library');
   const showEditor = mode === 'source' && !readOnly && (editing || draft !== null);
+  const unpanelled = type === 'doc' || type === 'sheet';
 
   const exportEntries: MenuEntry[] = [
     ...FORMATS_BY_TYPE[type].map(format => ({ id: format, label: t(`export.${format}`) })),
@@ -539,6 +559,7 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
   };
   const moreEntries: MenuEntry[] = [
     ...(overlay ? [...exportEntries, { type: 'separator' as const, id: 'more-gap' }] : []),
+    ...(type === 'design' || type === 'sheet' || readOnly ? [] : [{ id: 'rebase', label: t('generation.rebase'), disabled: busy || saving || conflict }]),
     { id: 'rename', label: t('tab.rename') },
     { id: 'reload', label: t('tab.reload') },
     { type: 'separator', id: 'danger-gap' },
@@ -547,6 +568,7 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
   const runMore = (entry: string) => {
     setMenu(null);
     if (entry === 'rename') { setRenameText(payload.manifest.title); setRenaming(true); }
+    else if (entry === 'rebase') setRebasing(true);
     else if (entry === 'reload') guarded(reload);
     else if (entry === 'delete') setDeleting(true);
     else runExport(entry);
@@ -616,7 +638,7 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
           </div>
         </div>
         <div className="art-actions art-editor-actions">
-          {type === 'doc' ? null : (
+          {type === 'doc' || type === 'sheet' ? null : (
             <SegmentedControl<Mode>
               id={'art-mode-' + id}
               className="art-segment"
@@ -666,6 +688,8 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
           />
         </div>
       </header>
+      {type === 'design' || type === 'sheet' ? null : <div className="art-bar"><span>{t(selectedPayload.generation ? 'generation.pinned' : 'generation.legacy')}{selectedPayload.generation?.system ? ': ' + t('design.revision', { name: selectedPayload.generation.system.name, revision: selectedPayload.generation.system.revision }) : ''}</span></div>}
+      {rebasing ? <RebaseDialog t={t} where={where} onClose={() => setRebasing(false)} onApply={rebase} /> : null}
       {renaming ? <form className="art-inline-form" onSubmit={event => { event.preventDefault(); void rename(); }}>
         <input aria-label={t('tab.rename')} value={renameText} maxLength={120} autoFocus onChange={event => setRenameText(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') setRenaming(false); }} />
         <Button type="submit" size="sm" variant="primary" disabled={saving || conflict}>{t('tab.save')}</Button>
@@ -684,11 +708,11 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
       <div className="art-body">
         <div
           className="art-stage"
-          role={type === 'doc' ? undefined : 'tabpanel'}
-          id={type === 'doc' ? undefined : 'art-mode-' + id + '-' + mode + '-panel'}
-          aria-labelledby={type === 'doc' ? undefined : 'art-mode-' + id + '-' + mode}
+          role={unpanelled ? undefined : 'tabpanel'}
+          id={unpanelled ? undefined : 'art-mode-' + id + '-' + mode + '-panel'}
+          aria-labelledby={unpanelled ? undefined : 'art-mode-' + id + '-' + mode}
         >
-          {type === 'page' && selection !== null && !historyOpen ? <SelectionBar quote={selection.text} askLabel={t('agent.ask')} dismissLabel={t('tab.dismiss')} onAsk={() => void askAgent(selection)} onDismiss={() => setSelection(null)} /> : null}
+          {(type === 'page' || type === 'sheet') && selection !== null && !historyOpen ? <SelectionBar quote={selection.text} askLabel={t('agent.ask')} dismissLabel={t('tab.dismiss')} onAsk={() => void askAgent(selection)} onDismiss={() => setSelection(null)} /> : null}
           {type === 'design' && mode !== 'source' && !readOnly && canvasSelection[0] !== undefined ? (
             <LayerBar
               t={t}
@@ -702,8 +726,10 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
               onDismiss={() => canvasHandle?.clearSelection()}
             />
           ) : null}
-          {type === 'doc' ? (
-            <DocView markdown={text} revision={(viewing?.version ?? 0) + ':' + state.revision} editable={!readOnly && !conflict} label={payload.manifest.title} loadingLabel={t('empty.loading')} failedLabel={t('error.generic')} design={payload.design} dark={dark} t={t} onChange={value => model.edit(value)} onSave={() => void model.save()} onSelectionText={reportSelection} selectionAction={selection === null ? null : <Button size="sm" variant="primary" icon={<IconSparkleRegular size={14} />} onMouseDown={event => event.preventDefault()} onClick={() => void askAgent(selection)}>{t('agent.ask')}</Button>} />
+          {type === 'sheet' ? (
+            <SheetView content={text} revision={(viewing?.version ?? 0) + ':' + state.revision} editable={!readOnly && !conflict} label={payload.manifest.title} loadingLabel={t('empty.loading')} failedLabel={t('error.generic')} design={selectedPayload.design} dark={dark} t={t} onChange={value => model.edit(value)} onSave={() => void model.save()} onSelectionText={reportSelection} />
+          ) : type === 'doc' ? (
+            <DocView markdown={text} revision={(viewing?.version ?? 0) + ':' + state.revision} editable={!readOnly && !conflict} label={payload.manifest.title} loadingLabel={t('empty.loading')} failedLabel={t('error.generic')} design={selectedPayload.design} dark={dark} t={t} onChange={value => model.edit(value)} onSave={() => void model.save()} onSelectionText={reportSelection} selectionAction={selection === null ? null : <Button size="sm" variant="primary" icon={<IconSparkleRegular size={14} />} onMouseDown={event => event.preventDefault()} onClick={() => void askAgent(selection)}>{t('agent.ask')}</Button>} />
           ) : mode !== 'source' ? (
             type === 'design'
               ? readOnly
@@ -722,7 +748,7 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
                     attempt={canvasAttempt}
                     fallback={<DesignView t={t} where={where} id={id} version={version} title={payload.manifest.title} />}
                   />
-              : <PageFrame content={text} designCss={payload.designCss} title={payload.manifest.title} frameTitle={t('tab.frameTitle', { title: payload.manifest.title })} dark={dark} onSelectionText={reportSelection} />
+              : <PageFrame content={text} designCss={selectedPayload.designCss} title={payload.manifest.title} frameTitle={t('tab.frameTitle', { title: payload.manifest.title })} dark={dark} onSelectionText={reportSelection} />
           ) : showEditor ? (
             <SourceEditor value={text} readOnly={false} label={t('tab.source')} hint={type === 'design' ? t('tab.manualSaveDesign') : t('tab.manualSave')} onChange={value => model.edit(value)} onSave={() => void model.save()} onSelectionText={reportSelection} />
           ) : (
