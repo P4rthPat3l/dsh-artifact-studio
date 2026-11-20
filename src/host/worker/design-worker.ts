@@ -9,6 +9,7 @@ import { renderNodesToSVG } from '@open-pencil/core/io/formats/svg';
 import { exportFigFile } from '@open-pencil/core/io/formats/fig';
 import type { DesignInfo } from '../../contract.js';
 import { bundledIconProvider } from '../../icon-set.js';
+import { buildPageModel } from './page-model.js';
 import type { WorkerRequest, WorkerResponse } from './protocol.js';
 
 /** Fonts that ship with the package; any other family is substituted. */
@@ -183,6 +184,10 @@ async function handle(source: string, request: WorkerRequest): Promise<WorkerRes
       if (svg === null) return { ok: false, code: 'artifact/design-render-failed', message: 'The design produced no SVG.' };
       return { ok: true, info, mediaType: 'image/svg+xml', data: Buffer.from(svg, 'utf8').toString('base64') };
     }
+    if (request.format === 'html-svg') {
+      const model = await buildPageModel(compiled.graph, compiled.page);
+      return { ok: true, info, mediaType: 'application/json', data: Buffer.from(JSON.stringify(model), 'utf8').toString('base64') };
+    }
     const png = await renderPng(compiled, 0);
     if (png === null) return { ok: false, code: 'artifact/design-render-failed', message: 'The design produced no image.' };
     const size = pngSize(png);
@@ -212,7 +217,7 @@ async function readRequest(): Promise<WorkerRequest> {
     action: fields.action,
     source: fields.source,
     ...(typeof fields.maxSide === 'number' ? { maxSide: fields.maxSide } : {}),
-    ...(fields.format === 'png' || fields.format === 'svg' || fields.format === 'fig' ? { format: fields.format } : {}),
+    ...(fields.format === 'png' || fields.format === 'svg' || fields.format === 'fig' || fields.format === 'html-svg' ? { format: fields.format } : {}),
   };
 }
 

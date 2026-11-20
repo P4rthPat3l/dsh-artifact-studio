@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url';
 import type { DesignInfo } from '../../contract.js';
 import type { WorkerFormat, WorkerRequest, WorkerResponse, WorkerSuccess } from '../worker/protocol.js';
 import { ArtifactError } from './errors.js';
+import { isSvgPageModel } from './svg-model.js';
+import type { SvgPageModel } from './svg-model.js';
 
 /** How long one render may take before the child is killed. */
 const TIMEOUT_MS = 20_000;
@@ -175,6 +177,29 @@ export class DesignRenderer {
       throw new ArtifactError('artifact/design-render-failed', 'The design renderer returned no file.');
     }
     return { bytes: Buffer.from(response.data, 'base64'), mediaType: response.mediaType };
+  }
+
+  /**
+   * Compile a design into the page model the SVG viewer needs: the shapes SVG and one
+   * record per text node, after the layout the panel shows.
+   * @param source the Design JSX source.
+   * @returns the page model.
+   */
+  async pageModel(source: string): Promise<SvgPageModel> {
+    const response = await this.request(source, { action: 'export', format: 'html-svg' });
+    if (typeof response.data !== 'string') {
+      throw new ArtifactError('artifact/design-render-failed', 'The design renderer returned no page model.');
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(Buffer.from(response.data, 'base64').toString('utf8'));
+    } catch {
+      throw new ArtifactError('artifact/design-render-failed', 'The design renderer returned an unreadable page model.');
+    }
+    if (!isSvgPageModel(parsed)) {
+      throw new ArtifactError('artifact/design-render-failed', 'The design renderer returned an unexpected page model.');
+    }
+    return parsed;
   }
 
   /**

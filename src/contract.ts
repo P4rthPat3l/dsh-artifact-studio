@@ -15,14 +15,14 @@ export function isArtifactType(value: unknown): value is ArtifactType {
 export const SCOPES = ['workspace', 'library'] as const;
 export type Scope = (typeof SCOPES)[number];
 
-export const EXPORT_FORMATS = ['html', 'md', 'docx', 'png', 'svg', 'fig', 'csv', 'xlsx', 'excalidraw'] as const;
+export const EXPORT_FORMATS = ['html', 'md', 'docx', 'png', 'svg', 'fig', 'html-svg', 'csv', 'xlsx', 'excalidraw'] as const;
 export type ExportFormat = (typeof EXPORT_FORMATS)[number];
 
 /** Which exporters each type supports. */
 export const FORMATS_BY_TYPE: Readonly<Record<ArtifactType, readonly ExportFormat[]>> = {
   page: ['html'],
   doc: ['md', 'docx', 'html'],
-  design: ['png', 'svg', 'fig'],
+  design: ['png', 'svg', 'fig', 'html', 'html-svg'],
   sheet: ['csv', 'xlsx'],
   board: ['excalidraw'],
 };

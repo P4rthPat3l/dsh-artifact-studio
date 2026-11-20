@@ -577,8 +577,13 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
   const showEditor = mode === 'source' && !readOnly && (editing || draft !== null);
   const unpanelled = type === 'doc' || type === 'sheet' || type === 'board';
 
+  const exportLabel = (format: ExportFormat): string => {
+    if (type === 'design' && format === 'html') return t('export.mockupHtml');
+    if (type === 'design' && format === 'html-svg') return t('export.mockupSvgHtml');
+    return t(`export.${format}`);
+  };
   const exportEntries: MenuEntry[] = [
-    ...FORMATS_BY_TYPE[type].map(format => ({ id: format, label: t(`export.${format}`) })),
+    ...FORMATS_BY_TYPE[type].map(format => ({ id: format, label: exportLabel(format) })),
     ...(type === 'board' ? [
       { id: 'png', label: t('export.png') },
       { id: 'svg', label: t('export.svg') },

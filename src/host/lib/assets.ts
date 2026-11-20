@@ -23,6 +23,19 @@ export const ASSET_FILES: ReadonlyMap<string, string> = new Map([
   ['fonts/Roboto-Bold.woff2', 'font/woff2'],
 ]);
 
+/** The bundled faces, with the family and style the font manager knows them by. */
+export const BUNDLED_FACES: ReadonlyArray<{ readonly file: string; readonly family: string; readonly style: string }> = [
+  { file: 'fonts/Inter-Regular.ttf', family: 'Inter', style: 'Regular' },
+  { file: 'fonts/Inter-Medium.ttf', family: 'Inter', style: 'Medium' },
+  { file: 'fonts/Inter-SemiBold.ttf', family: 'Inter', style: 'SemiBold' },
+  { file: 'fonts/Inter-Bold.ttf', family: 'Inter', style: 'Bold' },
+  { file: 'fonts/Inter-ExtraBold.ttf', family: 'Inter', style: 'ExtraBold' },
+  { file: 'fonts/NotoNaskhArabic-Regular.ttf', family: 'Noto Naskh Arabic', style: 'Regular' },
+  { file: 'fonts/Roboto-Regular.woff2', family: 'Roboto', style: 'Regular' },
+  { file: 'fonts/Roboto-Medium.woff2', family: 'Roboto', style: 'Medium' },
+  { file: 'fonts/Roboto-Bold.woff2', family: 'Roboto', style: 'Bold' },
+];
+
 /** Where the build copies the engine files, beside the compiled host. */
 const ASSET_ROOT = fileURLToPath(new URL('../../../assets/', import.meta.url));
 

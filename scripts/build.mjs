@@ -124,6 +124,20 @@ const canvas = await bundle('src/client/canvas/entry.ts', {
     ...defines,
   },
 });
+// The exported mockup viewer runs inside a shared HTML file, with CanvasKit, the
+// scene, and the fonts inlined beside it, so it fetches nothing and needs no route.
+const viewer = await bundle('src/client/canvas/viewer-entry.ts', {
+  format: 'esm',
+  external: NODE_BUILTINS,
+  alias: { 'shaders/core': SHADERS_STUB },
+  define: {
+    'process.env.NODE_ENV': '"production"',
+    __VUE_OPTIONS_API__: 'true',
+    __VUE_PROD_DEVTOOLS__: 'false',
+    __VUE_PROD_HYDRATION_MISMATCH_DETAILS__: 'false',
+    ...defines,
+  },
+});
 const loader = await bundle('src/client/canvas/loader.ts', { define: defines });
 const main = await bundle('src/client/index.tsx', { define: defines });
 const doc = await bundle('src/client/doc/entry.ts');
@@ -137,6 +151,7 @@ const board = await bundle('src/client/board/entry.ts', {
 await copyAssets();
 await copyBoardAssets();
 await fs.writeFile(path.join(ROOT, 'assets', 'canvas.engine.js'), canvas);
+await fs.writeFile(path.join(ROOT, 'assets', 'canvas.viewer.js'), viewer);
 await fs.writeFile(path.join(ROOT, 'client.js'), wrap(main, { id: 'dsh-artifact-studio', bridge: true }));
 await fs.writeFile(path.join(ROOT, 'client.doc.js'), wrap(doc, { id: 'dsh-artifact-studio', chunk: 'client.doc.js' }));
 await fs.writeFile(path.join(ROOT, 'client.sheet.js'), wrap(sheet, { id: 'dsh-artifact-studio', chunk: 'client.sheet.js' }));
@@ -148,3 +163,4 @@ console.log(`client.sheet.js ${sheet.length} bytes`);
 console.log(`client.board.js ${board.length} bytes`);
 console.log(`client.canvas.js ${loader.length} bytes`);
 console.log(`canvas.engine.js ${canvas.length} bytes`);
+console.log(`canvas.viewer.js ${viewer.length} bytes`);

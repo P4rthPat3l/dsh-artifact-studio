@@ -750,12 +750,12 @@ export function createTools(host: ToolHost): ToolDefinition[] {
   const exportTool: ToolDefinition = {
     name: 'artifact_export',
     description:
-      'Write an artifact to a standalone file and return its path. A page exports as html; a doc exports as md, docx, or printable html; a design exports as png, svg, or .fig; a sheet exports as csv (first sheet) or xlsx (every sheet); a whiteboard exports as an .excalidraw scene.',
+      'Write an artifact to a standalone file and return its path. A page exports as html; a doc exports as md, docx, or printable html; a design exports as png, svg, .fig, a self-contained view-only html viewer, or a smaller html page with an svg scene and selectable text; a sheet exports as csv (first sheet) or xlsx (every sheet); a whiteboard exports as an .excalidraw scene.',
     parameters: {
       type: 'object',
       additionalProperties: false,
       required: ['id', 'format'],
-      properties: { id: { type: 'string' }, format: { type: 'string', enum: ['html', 'md', 'docx', 'png', 'svg', 'fig', 'csv', 'xlsx', 'excalidraw'] },
+      properties: { id: { type: 'string' }, format: { type: 'string', enum: ['html', 'md', 'docx', 'png', 'svg', 'fig', 'html-svg', 'csv', 'xlsx', 'excalidraw'] },
         version: { type: 'integer', minimum: 1, description: 'Saved version to export. Omit for the current version.' },
         workspaceId: WORKSPACE_PARAM },
     },

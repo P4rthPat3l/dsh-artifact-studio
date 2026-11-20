@@ -354,3 +354,59 @@ test('FEAT-007 AC-041: Roboto renders without a warning and differs from Inter',
   const interPng = await service.preview(target, inter.id);
   assert.ok(!Buffer.from(robotoPng.data, 'base64').equals(Buffer.from(interPng.data, 'base64')), 'Roboto and Inter rendered the same pixels');
 });
+
+test('AC-VIEW-001: a design exports as one self-contained view-only page', async () => {
+  const { home, service, target } = await fixture();
+  const created = await service.create(target, { type: 'design', title: 'Card', content: DESIGN, source: agent });
+  const file = await service.export(target, created.id, 'html');
+  assert.equal(file.mediaType, 'text/html');
+  assert.match(file.fileName, /[.]html$/);
+  const bytes = Buffer.from(file.data, 'base64');
+  assert.equal(file.bytes, bytes.byteLength);
+  const html = bytes.toString('utf8');
+  assert.ok(html.startsWith('<!doctype html>'));
+  assert.match(html, /<div id="dsh-mockup"><\/div>/);
+  assert.match(html, /id="dsh-mockup-data"/);
+  assert.match(html, /default-src 'none'/);
+  assert.match(html, /connect-src blob:/);
+  assert.ok(!html.includes('<script src'), 'the page must not load a script from a file');
+  assert.ok(!html.includes('http://') && !html.includes('https://'), 'the page must not name a network address');
+  assert.equal((await fs.stat(file.path)).size, bytes.byteLength);
+  const written = await fs.readdir(path.join(home, WORKSPACE_BASE, 'ws-a', 'exports'));
+  assert.equal(written.filter((name) => name.endsWith('.html')).length, 1);
+});
+
+test('AC-VIEW-003: the page shows the requested version, and a missing version fails', async () => {
+  const { service, target } = await fixture();
+  const created = await service.create(target, { type: 'design', title: 'Card', content: DESIGN, source: agent });
+  const next = '<Frame name="Card" w={200} p={10} bg="#ffffff"><Text size={12} color="#111111">Next</Text></Frame>';
+  await service.update(target, created.id, { baseVersion: 1, content: next, source: editor });
+  const first = Buffer.from((await service.export(target, created.id, 'html', 1)).data, 'base64').toString('utf8');
+  const second = Buffer.from((await service.export(target, created.id, 'html', 2)).data, 'base64').toString('utf8');
+  assert.notEqual(first, second, 'both versions produced the same page');
+  await assert.rejects(
+    service.export(target, created.id, 'html', 99),
+    (error) => error.code === 'artifact/version-not-found',
+  );
+});
+
+
+test('AC-SVG-006: the SVG HTML page shows the requested version, and a missing version fails', async () => {
+  const { service, target } = await fixture();
+  const created = await service.create(target, { type: 'design', title: 'Card', content: DESIGN, source: agent });
+  const next = '<Frame name="Card" w={200} p={10} bg="#ffffff"><Text size={12} color="#111111">Next</Text></Frame>';
+  await service.update(target, created.id, { baseVersion: 1, content: next, source: editor });
+  const first = await service.export(target, created.id, 'html-svg', 1);
+  const second = await service.export(target, created.id, 'html-svg', 2);
+  assert.equal(first.mediaType, 'text/html');
+  assert.match(first.fileName, /[.]html$/);
+  const one = Buffer.from(first.data, 'base64').toString('utf8');
+  const two = Buffer.from(second.data, 'base64').toString('utf8');
+  assert.notEqual(one, two, 'both versions produced the same page');
+  assert.match(one, /class="t"/);
+  assert.ok(!/<text/.test(one), 'the page must carry no SVG text');
+  await assert.rejects(
+    service.export(target, created.id, 'html-svg', 99),
+    (error) => error.code === 'artifact/version-not-found',
+  );
+});

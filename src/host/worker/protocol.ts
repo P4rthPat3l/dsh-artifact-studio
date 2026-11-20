@@ -4,7 +4,7 @@ import type { DesignInfo } from '../../contract.js';
 export type WorkerAction = 'inspect' | 'preview' | 'export';
 
 /** Formats a design export can produce. */
-export type WorkerFormat = 'png' | 'svg' | 'fig';
+export type WorkerFormat = 'png' | 'svg' | 'fig' | 'html-svg';
 
 /** One request to the renderer child. */
 export interface WorkerRequest {

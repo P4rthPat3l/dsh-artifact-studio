@@ -2021,7 +2021,7 @@ test('FEAT-007 AC-014: a design tab shows the rendered preview and its source', 
     assert.match(view.container.textContent, /Roboto/);
     await click(findButton(view, 'tab.export'));
     const formats = [...view.container.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent);
-    assert.deepEqual(formats, ['export.png', 'export.svg', 'export.fig']);
+    assert.deepEqual(formats, ['export.png', 'export.svg', 'export.fig', 'export.mockupHtml', 'export.mockupSvgHtml']);
     await click(findButton(view, 'tab.export'));
     await click([...view.container.querySelectorAll('.art-segment button')].find((button) => button.textContent === 'tab.source'));
     assert.match(view.container.textContent, /Quarterly/);

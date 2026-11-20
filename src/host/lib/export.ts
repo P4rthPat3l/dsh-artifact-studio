@@ -27,6 +27,8 @@ import type { SheetTable, SheetWorkbook } from '../../sheet/index.js';
 import { workbookToXlsx } from './xlsx.js';
 import type { DesignRenderer } from './design-render.js';
 import { ArtifactError } from './errors.js';
+import { buildSvgViewerHtml } from './svg-viewer.js';
+import { buildViewerHtml } from './viewer.js';
 import { assertWithin, withLock } from './fsutil.js';
 import type { ScopeRoot } from './paths.js';
 
@@ -36,11 +38,15 @@ const MEDIA_TYPES: Readonly<Record<ExportFormat, string>> = {
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   png: 'image/png',
   svg: 'image/svg+xml',
+  'html-svg': 'text/html',
   fig: 'application/octet-stream',
   csv: 'text/csv',
   xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   excalidraw: 'application/vnd.excalidraw+json',
 };
+
+/** The file extension of a format whose id is not its extension. */
+const EXTENSIONS: Readonly<Partial<Record<ExportFormat, string>>> = { 'html-svg': 'html' };
 
 const MARKED_TYPES: ReadonlySet<string> = new Set([
   'blockquote', 'br', 'checkbox', 'code', 'codespan', 'def', 'del', 'em', 'escape', 'heading', 'hr', 'html',
@@ -72,7 +78,7 @@ function exportFileName(manifest: Manifest, format: ExportFormat, now: Date): st
       .replace(/^-+|-+$/g, '')
       .slice(0, 60) || 'artifact';
   const stamp = now.toISOString().replace(/[-:]/g, '').replace(/\..*$/, '').replace('T', '-');
-  return `${slug}-v${manifest.version}-${stamp}.${format}`;
+  return `${slug}-v${manifest.version}-${stamp}.${EXTENSIONS[format] ?? format}`;
 }
 
 /**
@@ -460,14 +466,23 @@ export async function writeExport(
     if (designs === undefined) {
       throw new ArtifactError('artifact/design-unavailable', 'The design renderer is not available.', {});
     }
-    if (format !== 'png' && format !== 'svg' && format !== 'fig') {
+    if (format === 'html') {
+      const scene = await designs.exportContent(content, 'fig');
+      data = await buildViewerHtml({ title: manifest.title, fig: scene.bytes });
+      mediaType = 'text/html';
+    } else if (format === 'html-svg') {
+      const model = await designs.pageModel(content);
+      data = await buildSvgViewerHtml({ title: manifest.title, model });
+      mediaType = 'text/html';
+    } else if (format === 'png' || format === 'svg' || format === 'fig') {
+      const rendered = await designs.exportContent(content, format);
+      data = rendered.bytes;
+      mediaType = rendered.mediaType;
+    } else {
       throw new ArtifactError('artifact/unsupported-format', `A design cannot be exported as ${format}.`, {
         supported: FORMATS_BY_TYPE.design,
       });
     }
-    const rendered = await designs.exportContent(content, format);
-    data = rendered.bytes;
-    mediaType = rendered.mediaType;
   } else if (manifest.type === 'board') {
     if (format !== 'excalidraw') {
       throw new ArtifactError('artifact/unsupported-format', 'A whiteboard exports as an .excalidraw file from the host.', {
