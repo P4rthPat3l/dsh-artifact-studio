@@ -1,0 +1,42 @@
+{
+  "src/client/board-view.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "src/client/doc-view.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "src/client/gallery.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 3
+    }
+  },
+  "src/client/sheet-view.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "src/host/lib/design-catalog.ts": {
+    "@typescript-eslint/no-unused-vars": {
+      "count": 1
+    }
+  },
+  "src/host/lib/rpc.ts": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/host/lib/service.ts": {
+    "no-console": {
+      "count": 3
+    }
+  },
+  "src/host/lib/store.ts": {
+    "no-console": {
+      "count": 2
+    }
+  }
+}

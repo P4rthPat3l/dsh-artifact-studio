@@ -63,6 +63,7 @@
   "scripts": {
     "build": "rm -rf dist && tsc -p src/host/tsconfig.json && node scripts/build.mjs",
     "typecheck": "tsc -p src/host/tsconfig.json --noEmit && tsc -p src/client/tsconfig.json",
+    "lint": "eslint .",
     "test": "npm run build && node --test tests/*.test.mjs",
     "prepack": "node scripts/check-icon.mjs"
   },
@@ -90,11 +91,14 @@
     "@types/react-dom": "^18.3.7",
     "canvaskit-wasm": "0.41.1",
     "esbuild": "^0.25.0",
+    "eslint": "^9.39.5",
     "jsdom": "^25.0.1",
+    "knip": "^6.47.0",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "roboto-fontface": "0.10.0",
     "typescript": "^5.9.3",
+    "typescript-eslint": "^8.73.0",
     "vue": "3.5.41"
   }
 }
