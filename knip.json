@@ -4,6 +4,7 @@
   "entry": [
     "scripts/build.mjs!",
     "scripts/check-icon.mjs!",
+    "scripts/dsh-web-check.mjs!",
     "src/host/index.ts!",
     "src/host/tools-plugin.ts!",
     "src/host/skill-plugin.ts!",

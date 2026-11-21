@@ -66,6 +66,7 @@
     "lint": "eslint .",
     "check": "npm run typecheck && npm run lint && npm test",
     "test": "npm run build && node --test tests/*.test.mjs",
+    "webcheck": "node scripts/dsh-web-check.mjs",
     "knip": "knip --production",
     "prepack": "node scripts/check-icon.mjs"
   },
