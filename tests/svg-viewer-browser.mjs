@@ -88,11 +88,7 @@ try {
   page.on('request', (request) => { if (/^https?:/.test(request.url())) requests.push(request.url()); });
   await page.goto(pathToFileURL(file.pathname).href);
   await page.evaluate(() => document.fonts.ready);
-  const stage = await page.evaluate(() => {
-    const element = document.getElementById('dsh-stage');
-    return { width: element.offsetWidth, height: element.offsetHeight };
-  });
-  await page.setViewportSize({ width: stage.width, height: stage.height });
+  await page.setViewportSize({ width: model.width, height: model.height });
   await page.waitForTimeout(400);
   const shot = await page.screenshot({ fullPage: true });
   await fs.writeFile(new URL('shot.png', out), shot);
@@ -115,6 +111,42 @@ try {
   assert.equal(stats.width, raster.width ?? stats.width);
   assert.ok(stats.mean <= 4, 'mean difference ' + stats.mean.toFixed(2) + ' exceeds 4 of 255');
   assert.ok(stats.over96 <= 0.5, (stats.over96.toFixed(2)) + '% of pixels differ strongly');
+
+  // AC-SVG-008: a drag that starts on text selects it and does not move the page.
+  const fitted = await page.evaluate(() => document.getElementById('dsh-pan').style.transform);
+  const line = await page.evaluate(() => {
+    const box = [...document.querySelectorAll('.t')].find((element) => element.textContent.startsWith('A paragraph long enough'));
+    if (box === undefined) return null;
+    const range = document.createRange();
+    range.selectNodeContents(box);
+    const rect = range.getClientRects()[0];
+    return rect === undefined ? null : { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+  });
+  assert.ok(line !== null, 'the paragraph has no painted line');
+  const textY = line.y + line.height / 2;
+  await page.mouse.move(line.x + 4, textY);
+  await page.mouse.down();
+  await page.mouse.move(line.x + Math.min(line.width - 4, 220), textY, { steps: 8 });
+  await page.mouse.up();
+  const selected = await page.evaluate(() => window.getSelection().toString());
+  assert.ok(selected.trim().length > 0, 'dragging across text selected nothing');
+  assert.equal(await page.evaluate(() => document.getElementById('dsh-pan').style.transform), fitted, 'dragging across text moved the page');
+
+  // Panning still works anywhere: the middle button, and Space with the left button.
+  await page.mouse.move(60, 60);
+  await page.mouse.down({ button: 'middle' });
+  await page.mouse.move(140, 100, { steps: 5 });
+  await page.mouse.up({ button: 'middle' });
+  const panned = await page.evaluate(() => document.getElementById('dsh-pan').style.transform);
+  assert.notEqual(panned, fitted, 'the middle button did not pan the page');
+  await page.keyboard.down('Space');
+  await page.mouse.move(line.x + 4, textY);
+  await page.mouse.down();
+  await page.mouse.move(line.x + 74, textY + 30, { steps: 5 });
+  await page.mouse.up();
+  await page.keyboard.up('Space');
+  assert.notEqual(await page.evaluate(() => document.getElementById('dsh-pan').style.transform), panned, 'Space and a drag did not pan the page');
+  console.log('svg viewer selection check passed:', JSON.stringify(selected.trim().slice(0, 40)));
   console.log('svg viewer browser check passed:', stats.width + 'x' + stats.height, 'mean', stats.mean.toFixed(2), 'over96', stats.over96.toFixed(2) + '%');
 } finally {
   await browser.close();

@@ -196,7 +196,8 @@ function boxHtml(box: SvgTextBox): string {
 
 /**
  * The page script: fit the stage to the window, pan with a drag or a plain wheel, and
- * zoom about the pointer with Ctrl or Cmd wheel.
+ * zoom about the pointer with Ctrl or Cmd wheel. A left drag that starts on a text box
+ * selects text instead of panning, because the page exists to be read and copied.
  * @param width the stage width.
  * @param height the stage height.
  * @returns the script body.
@@ -204,11 +205,15 @@ function boxHtml(box: SvgTextBox): string {
 function pageScript(width: number, height: number): string {
   return `
 const host = document.getElementById('dsh-mockup');
+const pan = document.getElementById('dsh-pan');
 const stage = document.getElementById('dsh-stage');
 const W = ${width};
 const H = ${height};
-let zoom = 1, panX = 0, panY = 0, touched = false;
-const apply = () => { stage.style.transform = 'translate(' + panX + 'px,' + panY + 'px) scale(' + zoom + ')'; };
+let zoom = 1, panX = 0, panY = 0, touched = false, space = false;
+// The stage is fitted with CSS zoom, not a scaled transform: Chromium's drag
+// selection misfires on transform-scaled text at some fit scales, and the page
+// exists to be read and copied. Panning is a translate on the wrapper outside it.
+const apply = () => { pan.style.transform = 'translate(' + panX + 'px,' + panY + 'px)'; stage.style.zoom = String(zoom); };
 const fit = () => {
   zoom = Math.min(window.innerWidth / W, window.innerHeight / H);
   panX = (window.innerWidth - W * zoom) / 2;
@@ -217,23 +222,125 @@ const fit = () => {
 };
 fit();
 window.addEventListener('resize', () => { if (!touched) fit(); });
+// A text box is a hit target across its whole node box, which is wider and taller
+// than the painted lines. Only a press on a painted line belongs to text selection;
+// a press on the empty part of the box still pans.
+const onText = (event) => {
+  const target = event.target;
+  if (!(target instanceof Element)) return false;
+  const box = target.closest('.t');
+  if (box === null) return false;
+  const range = document.createRange();
+  range.selectNodeContents(box);
+  const x = event.clientX, y = event.clientY;
+  return [...range.getClientRects()].some((rect) => x >= rect.left - 1 && x <= rect.right + 1 && y >= rect.top - 1 && y <= rect.bottom + 1);
+};
+// The page fits scaled text, where Chromium's own drag sometimes moves a caret
+// instead of extending a selection. Drive the selection from the caret position
+// instead, so a drag over glyphs always selects them.
+const caretAt = (x, y) => {
+  if (document.caretRangeFromPoint) return document.caretRangeFromPoint(x, y);
+  const position = document.caretPositionFromPoint ? document.caretPositionFromPoint(x, y) : null;
+  if (position === null) return null;
+  const range = document.createRange();
+  range.setStart(position.offsetNode, position.offset);
+  range.collapse(true);
+  return range;
+};
+const inText = (range) => range !== null && range.startContainer.parentElement !== null && range.startContainer.parentElement.closest('.t') !== null;
+let selecting = null;
+const extendSelection = (event) => {
+  const focus = caretAt(event.clientX, event.clientY);
+  if (!inText(focus)) return;
+  window.getSelection().setBaseAndExtent(selecting.node, selecting.offset, focus.startContainer, focus.startOffset);
+};
+const selectWord = (caret) => {
+  const text = caret.startContainer.textContent === null ? '' : caret.startContainer.textContent;
+  let start = caret.startOffset;
+  let end = caret.startOffset;
+  while (start > 0 && text[start - 1].trim() !== '') start -= 1;
+  while (end < text.length && text[end].trim() !== '') end += 1;
+  window.getSelection().setBaseAndExtent(caret.startContainer, start, caret.startContainer, end);
+};
+const selectBox = (box) => {
+  const range = document.createRange();
+  range.selectNodeContents(box);
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(range);
+};
+// The browser's click counter is lost once a press is cancelled, so count the
+// presses here: two select a word, three select the whole text box.
+let lastPress = { time: 0, x: 0, y: 0, count: 0 };
+const pressCount = (event) => {
+  const near = Math.abs(event.clientX - lastPress.x) <= 4 && Math.abs(event.clientY - lastPress.y) <= 4;
+  const quick = event.timeStamp - lastPress.time <= 400;
+  lastPress = { time: event.timeStamp, x: event.clientX, y: event.clientY, count: near && quick ? lastPress.count + 1 : 1 };
+  return lastPress.count;
+};
 let drag = null;
 host.addEventListener('pointerdown', (event) => {
   if (event.button !== 0 && event.button !== 1) return;
+  if (event.button === 0 && !space && onText(event)) {
+    if (event.altKey) return;
+    const caret = caretAt(event.clientX, event.clientY);
+    if (!inText(caret)) return;
+    // A Shift click extends the current selection from its fixed end.
+    if (event.shiftKey) {
+      const selection = window.getSelection();
+      if (selection === null || selection.rangeCount === 0 || selection.anchorNode === null) return;
+      event.preventDefault();
+      selection.setBaseAndExtent(selection.anchorNode, selection.anchorOffset, caret.startContainer, caret.startOffset);
+      return;
+    }
+    event.preventDefault();
+    const count = pressCount(event);
+    if (count >= 3) {
+      const box = event.target.closest('.t');
+      if (box !== null) selectBox(box);
+      return;
+    }
+    if (count === 2) {
+      selectWord(caret);
+      return;
+    }
+    selecting = { node: caret.startContainer, offset: caret.startOffset };
+    window.getSelection().setBaseAndExtent(selecting.node, selecting.offset, selecting.node, selecting.offset);
+    host.setPointerCapture(event.pointerId);
+    return;
+  }
+  event.preventDefault();
+  const selection = window.getSelection();
+  if (selection !== null) selection.removeAllRanges();
   touched = true;
   drag = { x: event.clientX - panX, y: event.clientY - panY };
   host.setPointerCapture(event.pointerId);
   host.style.cursor = 'grabbing';
 });
 host.addEventListener('pointermove', (event) => {
+  if (selecting !== null) {
+    extendSelection(event);
+    return;
+  }
   if (drag === null) return;
   panX = event.clientX - drag.x;
   panY = event.clientY - drag.y;
   apply();
 });
-const end = (event) => { drag = null; host.style.cursor = 'grab'; if (host.hasPointerCapture(event.pointerId)) host.releasePointerCapture(event.pointerId); };
+const end = (event) => { drag = null; selecting = null; host.style.cursor = space ? 'grabbing' : 'grab'; if (host.hasPointerCapture(event.pointerId)) host.releasePointerCapture(event.pointerId); };
 host.addEventListener('pointerup', end);
 host.addEventListener('pointercancel', end);
+window.addEventListener('keydown', (event) => {
+  if (event.code !== 'Space' || space) return;
+  space = true;
+  host.style.cursor = 'grabbing';
+});
+window.addEventListener('keyup', (event) => {
+  if (event.code !== 'Space') return;
+  space = false;
+  host.style.cursor = drag === null ? 'grab' : 'grabbing';
+});
+window.addEventListener('blur', () => { space = false; host.style.cursor = drag === null ? 'grab' : 'grabbing'; });
 host.addEventListener('wheel', (event) => {
   event.preventDefault();
   touched = true;
@@ -266,9 +373,10 @@ export async function buildSvgViewerHtml(input: { title: string; model: SvgPageM
   const base = [
     'html,body{margin:0;height:100%;overflow:hidden;background:#fff}',
     '#dsh-mockup{position:fixed;inset:0;overflow:hidden;background:#fff;cursor:grab;touch-action:none}',
-    '#dsh-stage{position:absolute;transform-origin:0 0;width:' + model.width + 'px;height:' + model.height + 'px}',
+    '#dsh-pan{position:absolute;left:0;top:0;transform-origin:0 0}',
+    '#dsh-stage{position:absolute;left:0;top:0;transform-origin:0 0;width:' + model.width + 'px;height:' + model.height + 'px}',
     '#dsh-stage svg{display:block}',
-    '.t{margin:0}',
+    '.t{margin:0;cursor:text;user-select:text;-webkit-user-select:text}',
   ].join('');
   const html = [
     '<!doctype html>',
@@ -281,7 +389,7 @@ export async function buildSvgViewerHtml(input: { title: string; model: SvgPageM
     '<style>' + faces + base + '</style>',
     '</head>',
     '<body>',
-    '<div id="dsh-mockup"><div id="dsh-stage">' + model.svg + model.texts.map(boxHtml).join('') + '</div></div>',
+    '<div id="dsh-mockup"><div id="dsh-pan"><div id="dsh-stage">' + model.svg + model.texts.map(boxHtml).join('') + '</div></div></div>',
     '<script>' + pageScript(model.width, model.height) + '</script>',
     '</body>',
     '</html>',

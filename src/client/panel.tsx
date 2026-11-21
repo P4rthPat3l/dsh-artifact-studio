@@ -6,6 +6,7 @@ import { GalleryBody, formatScope, parseScopeValue } from './gallery.jsx';
 import type { GalleryProject, GalleryScope } from './gallery.jsx';
 import { useWorkspaceBinding } from './binding.js';
 import type { TabProps, Translator, WorkspacesSource } from './harness.js';
+import { runtime } from './runtime.js';
 
 /** Remembers the full page's scope: every project, one project, or the library. */
 const SCOPE_KEY = 'dsh-artifact-studio.panel.scope';
@@ -87,25 +88,21 @@ export function ArtifactsPanel({ t, workspaces }: { t: Translator; workspaces: W
 
 /**
  * The Artifacts page in the right sidebar. It is the full page fixed to the
- * session's workspace: one list, no scope control, and an in-place artifact view
- * with Back, so the right panel and the left panel behave the same way.
+ * session's workspace: one list and no scope control. A card opens the artifact
+ * as its own tab, so several artifacts can stay open beside the list.
  * @param props the translator, the session, and the workspace hooks.
  * @returns the page.
  */
-export function WorkspaceArtifactsPanel({ t, sessionId, useSessions, useWorkspaces, inputActions }: TabProps): ReactNode {
+export function WorkspaceArtifactsPanel({ t, sessionId, useSessions, useWorkspaces }: TabProps): ReactNode {
   const binding = useWorkspaceBinding({ sessionId, useSessions, useWorkspaces });
   const workspaceId = binding.workspaceId;
   const title = useWorkspaces((state) => state.items.find((item) => item.workspaceId === workspaceId)?.title);
-  const [selected, setSelected] = useState<string | null>(null);
-
-  // A different session workspace starts from the list again.
-  useEffect(() => { setSelected(null); }, [workspaceId]);
+  const open = useCallback((address: string) => { runtime.sidebarRight?.openResource(address); }, []);
 
   const projects = useMemo<GalleryProject[]>(
     () => (workspaceId === null ? [] : [{ workspaceId, title: title ?? workspaceId }]),
     [workspaceId, title],
   );
-  const address = useMemo(() => (selected === null ? undefined : parseArtifactAddress(selected)), [selected]);
 
   if (workspaceId === null) {
     return (
@@ -118,28 +115,13 @@ export function WorkspaceArtifactsPanel({ t, sessionId, useSessions, useWorkspac
   }
 
   return (
-    <div className="art-panel-stack">
-      <div className="art-panel-region" hidden={address !== undefined}>
-        <GalleryBody
-          t={t}
-          projects={projects}
-          scope={{ kind: 'workspace', workspaceId }}
-          contextWorkspaceId={workspaceId}
-          scopeLocked
-          open={(next) => setSelected(next)}
-        />
-      </div>
-      {address === undefined ? null : (
-        <div className="art-panel-region">
-          <ArtifactPanelBody
-            t={t}
-            address={address}
-            workspaceName={title}
-            onBack={() => setSelected(null)}
-            {...(inputActions === undefined ? {} : { inputActions })}
-          />
-        </div>
-      )}
-    </div>
+    <GalleryBody
+      t={t}
+      projects={projects}
+      scope={{ kind: 'workspace', workspaceId }}
+      contextWorkspaceId={workspaceId}
+      scopeLocked
+      open={open}
+    />
   );
 }

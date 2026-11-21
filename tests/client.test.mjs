@@ -1187,10 +1187,12 @@ test('AC-095: the right panel lists the current workspace only', async () => {
   } finally { await view.unmount(); }
 });
 
-test('AC-096: the right panel opens an artifact in place and creates in the workspace', async () => {
+test('AC-096: the right panel opens an artifact as a tab and creates in the workspace', async () => {
   const host = fakeHost();
   const id = 'art_ws_right096001';
   host.state.artifacts.set(id, { workspaceId: 'ws-a', manifest: host.manifest(id, 'page', 'Right page', 2), content: '<p>right</p>' });
+  const otherId = 'art_ws_right096002';
+  host.state.artifacts.set(otherId, { workspaceId: 'ws-a', manifest: host.manifest(otherId, 'doc', 'Second page', 1), content: '# second' });
   const { ctx, records } = stubContext(host);
   plugin.apply(ctx);
   const { view } = await rightGalleryView(records);
@@ -1198,13 +1200,17 @@ test('AC-096: the right panel opens an artifact in place and creates in the work
     await act(async () => settle(80));
     await click(view.container.querySelector('.art-tile-open'));
     await act(async () => settle(120));
-    assert.match(view.container.textContent, /Right page/);
-    assert.ok(byLabel(view, 'action.back'), 'the in-place view has no Back control');
+    assert.ok(records.opened.includes('dsh-resource://artifact/workspace/ws-a/' + id), 'the card did not open the artifact as its own tab');
+    assert.ok(view.container.querySelector('.art-tile-open'), 'opening a card hid the list');
 
-    await click(byLabel(view, 'action.back'));
-    await act(async () => settle(80));
-    assert.ok(view.container.querySelector('.art-tile-open'), 'Back did not return to the list');
+    const second = [...view.container.querySelectorAll('.art-tile-open')].find((tile) => tile.textContent.includes('Second page'));
+    assert.ok(second, 'the second artifact is not in the list');
+    await click(second);
+    await act(async () => settle(120));
+    assert.ok(records.opened.includes('dsh-resource://artifact/workspace/ws-a/' + otherId), 'the second card did not open a second tab');
+    assert.ok(view.container.querySelector('.art-tile-open'), 'opening a second card hid the list');
 
+    const opened = records.opened.length;
     await click(findButton(view, 'gallery.create'));
     const items = [...view.container.querySelectorAll('[role="menuitem"]')];
     assert.equal(items.length, 5);
@@ -1215,6 +1221,8 @@ test('AC-096: the right panel opens an artifact in place and creates in the work
     assert.ok(create, 'no create call was made');
     assert.equal(create.payload.scope, 'workspace');
     assert.equal(create.payload.workspaceId, 'ws-a');
+    assert.equal(records.opened.length, opened + 1, 'the created artifact did not open as a tab');
+    assert.match(records.opened[records.opened.length - 1], /^dsh-resource:\/\/artifact\/workspace\/ws-a\/art_ws_new\d{8}$/);
   } finally { await view.unmount(); }
 });
 
