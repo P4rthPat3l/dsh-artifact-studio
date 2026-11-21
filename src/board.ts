@@ -12,7 +12,7 @@
 export const BOARD_SCENE_TYPE = 'excalidraw';
 export const BOARD_SCENE_VERSION = 2;
 /** The source string stored on content this plugin owns. */
-export const BOARD_SOURCE = 'dsh-artifact-studio';
+const BOARD_SOURCE = 'dsh-artifact-studio';
 /** Where the host serves the editor's fonts and worker files. */
 export const BOARD_ASSET_PATH = '/artifacts-whiteboard/';
 

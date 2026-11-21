@@ -9,7 +9,7 @@ import { CaptureUpdateAction, Excalidraw, exportToBlob, exportToSvg, restore, se
 import type { AppState, BinaryFiles, ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types';
 import type { ExcalidrawElement } from '@excalidraw/excalidraw/element/types';
 import rawCss from '@excalidraw/excalidraw/index.css';
-import { BOARD_ASSET_PATH, BOARD_SOURCE, parseBoardScene } from '../../board.js';
+import { BOARD_ASSET_PATH, parseBoardScene } from '../../board.js';
 import type { Translator } from '../harness.js';
 
 /** Callbacks and labels the mounted editor reads at call time. */

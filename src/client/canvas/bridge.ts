@@ -1,4 +1,4 @@
-import { defineComponent, h, onScopeDispose, watch } from 'vue';
+import { defineComponent, onScopeDispose, watch } from 'vue';
 import type { Component } from 'vue';
 import { useAppearance, useLayerTree, usePosition, useTypography } from '@open-pencil/vue';
 import type { Editor } from '@open-pencil/core/editor';
@@ -13,14 +13,6 @@ import type {
 
 /** How a row click extends the current selection. */
 export type SelectionMode = 'replace' | 'add' | 'range';
-
-/** One layer type's localized name, resolved by the inspector. */
-const CANVAS_TOOLS: Readonly<Record<string, CanvasTool>> = {
-  SELECT: 'select',
-  HAND: 'hand',
-  FRAME: 'frame',
-  TEXT: 'text',
-};
 
 /** An empty snapshot, used before the Vue bridge has mounted. */
 export const EMPTY_SNAPSHOT: CanvasSnapshot = {

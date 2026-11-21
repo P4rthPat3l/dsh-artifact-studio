@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ClipboardEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react';
 import { Button, Menu, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives';
 import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives';
-import { SHEET_LIMITS, columnName, effectiveTextColor, formatCellRef, formatRangeRef, mergeStyle, parseCellRef, parseRangeRef, parseSheetWorkbook, rangeSize, serializeSheetWorkbook } from '../../sheet/model.js';
+import { SHEET_LIMITS, columnName, effectiveTextColor, formatCellRef, formatRangeRef, mergeStyle, parseCellRef, parseSheetWorkbook, rangeSize, serializeSheetWorkbook } from '../../sheet/model.js';
 import type { CellRange, NumberFormat, SheetCell, SheetData, SheetStyle, SheetStylePatch, SheetWorkbook } from '../../sheet/model.js';
 import { evaluateWorkbook } from '../../sheet/formula.js';
 import type { EvaluatedWorkbook } from '../../sheet/formula.js';

@@ -1,4 +1,3 @@
-import React from 'react';
 import type { ReactNode } from 'react';
 
 /** One 24-unit stroke glyph; every icon in the plugin shares this stroke and weight. */

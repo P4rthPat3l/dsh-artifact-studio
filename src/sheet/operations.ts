@@ -24,7 +24,7 @@ import {
   rangeSize,
   sheetOf,
 } from './model.js';
-import type { HorizontalAlign, NumberFormat, SheetCell, SheetData, SheetScalar, SheetStylePatch, SheetWorkbook } from './model.js';
+import type { HorizontalAlign, NumberFormat, SheetCell, SheetData, SheetScalar, SheetWorkbook } from './model.js';
 
 /** A validated cell style update. */
 interface StylePatch {
