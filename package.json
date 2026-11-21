@@ -64,7 +64,9 @@
     "build": "rm -rf dist && tsc -p src/host/tsconfig.json && node scripts/build.mjs",
     "typecheck": "tsc -p src/host/tsconfig.json --noEmit && tsc -p src/client/tsconfig.json",
     "lint": "eslint .",
+    "check": "npm run typecheck && npm run lint && npm test",
     "test": "npm run build && node --test tests/*.test.mjs",
+    "knip": "knip --production",
     "prepack": "node scripts/check-icon.mjs"
   },
   "dependencies": {

@@ -1,0 +1,25 @@
+{
+  "$schema": "./node_modules/knip/schema.json",
+  "project": ["src/**!", "scripts/**!"],
+  "entry": [
+    "scripts/build.mjs!",
+    "scripts/check-icon.mjs!",
+    "src/host/index.ts!",
+    "src/host/tools-plugin.ts!",
+    "src/host/skill-plugin.ts!",
+    "src/client/index.tsx!",
+    "src/client/doc/entry.ts!",
+    "src/client/sheet/entry.ts!",
+    "src/client/board/entry.ts!",
+    "src/client/canvas/entry.ts!",
+    "src/client/canvas/viewer-entry.ts!",
+    "src/client/canvas/loader.ts!"
+  ],
+  "ignore": [
+    "src/client/canvas/shaders-stub.ts",
+    "src/client/board/mermaid-stub.ts"
+  ],
+  "ignoreDependencies": [
+    "@deepseek-ai/dsh-client-ui-primitives"
+  ]
+}
