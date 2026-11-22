@@ -111,14 +111,19 @@ Call this artifact a mockup when you talk to the user. The tools still take type
 
 - Elements: \`Frame\`, \`Text\`, \`Rectangle\`, \`Ellipse\`, \`Line\`, \`Star\`, \`Polygon\`, \`Vector\`, \`Group\`, \`Section\`.
 - Layout props: \`w\`, \`h\`, \`p\`, \`px\`, \`py\`, \`gap\`, \`flex\` (\`row\` or \`col\`), \`items\`, \`justify\`, \`bg\`, \`rounded\`, \`stroke\`, \`strokeWidth\`, \`opacity\`.
-- Use \`flex\`, not \`dir\`. \`dir\` is accepted and does nothing, so every child sits at the same origin. A frame with \`flex\` sizes itself to its children unless you give it \`w\` or \`h\`.
+- \`flex\` turns on auto layout; without it every child sits at the same origin. A frame with \`flex\` sizes itself to its children unless you give it \`w\` or \`h\`. \`w="fill"\` or \`h="fill"\` takes the space a layout parent offers, and \`dir="rtl"\` flips the flow direction inside a flex frame.
+- \`grid\` with \`columns\` or \`rows\` lays children on a grid, with tracks such as \`columns="repeat(3, 1fr)"\`, \`"auto"\`, or \`"minmax(120px, 1fr)"\`, and \`gap\` between them.
 - Text props: \`size\`, \`weight\`, \`color\`, \`font\`, \`lineHeight\`, \`letterSpacing\`, \`textAlign\`, \`maxLines\`.
+- Inside \`Text\`, \`Paragraph\` writes one paragraph and \`Span\` styles part of one: \`<Text size={16}><Paragraph spacing={8}>Hello <Span weight="bold" color="#EE2222">world</Span></Paragraph><Paragraph list="ordered">First</Paragraph></Text>\`. A paragraph takes \`list="ordered"\` or \`list="unordered"\` with \`level\` 1 to 5.
+- \`bg\` and \`stroke\` take one color. For a gradient or several paints use \`fills={[linearGradient([['#3b82f6', 0], ['#8b5cf6', 1]])]}\`; \`radialGradient\`, \`angularGradient\`, and \`diamondGradient\` work the same way, and each stop is a color and a position from 0 to 1.
+- Effects: \`shadow="0 4 8 #00000033"\` takes a CSS shadow list, \`blur={4}\` blurs the layer, and \`effects={[dropShadow({ x: 0, y: 4, radius: 8, color: '#00000055' })]}\` stacks structured effects such as \`innerShadow\` and \`backgroundBlur\`.
 - Put a background on the outer \`Frame\`; the preview crops transparent space around the content.
 - Example: \`<Frame w={720} p={40} bg="#ffffff" flex="col" gap={12}><Text size={40} weight={700} color="#16181d">Title</Text><Text size={16} color="#5b6170">One line of context.</Text></Frame>\`
 - Icons: \`<Icon name="mdi:home" size={24} color="#1b1712" />\`. Only the \`mdi:\` set is bundled. Common names: \`home\`, \`search\`, \`user\`, \`heart\`, \`star\`, \`check\`, \`close\`, \`plus\`, \`arrow-right\`, \`settings\`, \`bell\`, \`calendar\`, \`mail\`, \`image\`, \`file\`, \`folder\`, \`trash\`, \`edit\`, \`download\`, \`lock\`, \`eye\`, \`cart\`, \`chart-bar\`, \`alert\`, \`clock\`, \`map-marker\`, \`menu\`, \`chevron-right\`. An unknown set or name refuses the save. Icons draw as vectors and keep their 24 unit box.
 - Text uses Inter, Roboto, or Noto Naskh Arabic, which ship with the package. Any other family substitutes a default face and returns a warning.
 - A design has no network and no external images. Use solid and gradient fills, shapes, and text.
 - The stored artifact is the JSX source. Send the complete source as \`content\` when you update a design. The host compiles and validates before saving, so a compile error refuses the write and returns the compiler message.
+- The renderer reports a warning when it ignores a prop or a helper option that would change what you drew, such as \`margin\` on a frame. Those warnings travel with the design summary; fix the ones that apply to your change.
 - Export is PNG, SVG, \`.fig\`, a self-contained HTML viewer, or a smaller HTML/SVG viewer with selectable text. A \`.fig\` opens in OpenPencil or Figma. If the user supplies a \`.fig\` file, use artifact_import instead of recreating it from a description.
 
 ### When a design write fails

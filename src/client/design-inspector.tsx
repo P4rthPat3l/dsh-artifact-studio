@@ -24,12 +24,14 @@ import {
   IconEye,
   IconEyeOff,
   IconForward,
+  IconGroup,
   IconLayerFrame,
   IconLayerGroup,
   IconLayerShape,
   IconLayerText,
   IconLock,
   IconLockOpen,
+  IconUngroup,
 } from './icons.jsx';
 
 /** The inspector's two tabs. */
@@ -459,6 +461,8 @@ function PropertiesPanel({ t, handle, snapshot, palette }: { t: Translator; hand
         {action('panel.duplicate', <IconDuplicate size={14} />, properties.ids.length === 0, () => handle.duplicateSelection())}
         {action('panel.forward', <IconForward size={14} />, properties.ids.length === 0, () => handle.changeOrder('forward'))}
         {action('panel.backward', <IconBackward size={14} />, properties.ids.length === 0, () => handle.changeOrder('backward'))}
+        {action('panel.group', <IconGroup size={14} />, snapshot.selection.length < 2, () => handle.groupSelection())}
+        {action('panel.ungroup', <IconUngroup size={14} />, !snapshot.selection.some((layer) => layer.type === 'GROUP'), () => handle.ungroupSelection())}
       </div>
       {properties.ids.length < 2 ? null : (
         <div className="art-inspector-actions" role="toolbar" aria-label={t('panel.align')}>

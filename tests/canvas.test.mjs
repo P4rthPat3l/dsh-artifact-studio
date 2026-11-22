@@ -90,7 +90,7 @@ test('FEAT-007 AC-024: the engine registers the shape and pen tools the dock exp
     getViewportSize: () => ({ width: 800, height: 600 }),
   });
   try {
-    for (const tool of ['RECTANGLE', 'ELLIPSE', 'LINE', 'PEN']) {
+    for (const tool of ['RECTANGLE', 'ELLIPSE', 'LINE', 'POLYGON', 'STAR', 'PEN', 'PENCIL']) {
       editor.setTool(tool);
       assert.equal(editor.state.activeTool, tool, tool);
     }
@@ -131,6 +131,33 @@ test('FEAT-007 AC-025: duplicate, z-order, and align mutate the compiled design'
     editor.dispose();
   }
 });
+test('FEAT-007 AC-072: group and ungroup mutate the compiled design and undo reverts one step', async () => {
+  const source = '<Frame name="A" w={100} h={50} x={10} y={10} bg="#111111" /><Frame name="B" w={100} h={50} x={70} y={40} bg="#222222" />';
+  const first = await compile(source);
+  const editor = createEditor({
+    graph: first.graph,
+    state: reactive(createDefaultEditorState(first.page.id)),
+    getViewportSize: () => ({ width: 800, height: 600 }),
+  });
+  try {
+    const ids = [...first.page.childIds];
+    editor.select(ids);
+    editor.groupSelected();
+    const grouped = [...first.page.childIds];
+    assert.equal(grouped.length, 1, 'grouping left more than one top-level node');
+    assert.equal(editor.graph.getNode(grouped[0]).type, 'GROUP');
+    assert.deepEqual([...editor.graph.getNode(grouped[0]).childIds].sort(), [...ids].sort(), 'the group does not hold both frames');
+    editor.select(grouped);
+    editor.ungroupSelected();
+    assert.deepEqual([...first.page.childIds].sort(), [...ids].sort(), 'ungrouping did not restore the top-level frames');
+    editor.undo.undo();
+    assert.equal(first.page.childIds.length, 1, 'undo did not restore the group');
+    assert.equal(editor.graph.getNode(first.page.childIds[0]).type, 'GROUP', 'undo did not restore a group node');
+  } finally {
+    editor.dispose();
+  }
+});
+
 test('FEAT-007 AC-027: a color preview commits with one undo step to the original paint', async () => {
   const first = await compile('<Frame name="Card" w={120} h={80} bg="#111111" />');
   const editor = createEditor({

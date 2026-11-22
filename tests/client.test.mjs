@@ -2235,7 +2235,7 @@ test('FEAT-007 AC-046: Edit mode adds the tools and opens the inspector', async 
     const handle = canvasDispatch.mounts[0];
     await openEdit(view);
     assert.equal(handle.mode, 'edit', 'Entering Edit did not reach the handle');
-    for (const label of ['canvas.select', 'canvas.hand', 'canvas.frame', 'canvas.text', 'canvas.undo', 'canvas.redo']) {
+    for (const label of ['canvas.select', 'canvas.hand', 'canvas.frame', 'canvas.text', 'canvas.rectangle', 'canvas.ellipse', 'canvas.line', 'canvas.polygon', 'canvas.star', 'canvas.pen', 'canvas.pencil', 'canvas.undo', 'canvas.redo']) {
       assert.ok(byLabel(view, label), label + ' is missing from the Edit dock');
     }
     assert.equal(byLabel(view, 'canvas.undo').disabled, true, 'Undo is enabled with no history');

@@ -22,7 +22,7 @@ declare const __CANVAS_ASSET_VERSION__: string;
 const ASSET_BASE = '/artifacts-canvas/';
 
 /** Tools the dock offers. */
-export type CanvasTool = 'select' | 'hand' | 'frame' | 'text' | 'rectangle' | 'ellipse' | 'line' | 'pen';
+export type CanvasTool = 'select' | 'hand' | 'frame' | 'text' | 'rectangle' | 'ellipse' | 'line' | 'polygon' | 'star' | 'pen' | 'pencil';
 
 /** Which editing behaviour a mount allows. */
 export type CanvasMode = 'view' | 'edit';
@@ -36,7 +36,10 @@ const TOOLS: Record<CanvasTool, Tool> = {
   rectangle: 'RECTANGLE',
   ellipse: 'ELLIPSE',
   line: 'LINE',
+  polygon: 'POLYGON',
+  star: 'STAR',
   pen: 'PEN',
+  pencil: 'PENCIL',
 };
 
 /** The dock tool for an editor tool, when the dock shows one. */
@@ -48,7 +51,10 @@ const DOCK_TOOLS: Readonly<Record<string, CanvasTool>> = {
   RECTANGLE: 'rectangle',
   ELLIPSE: 'ellipse',
   LINE: 'line',
+  POLYGON: 'polygon',
+  STAR: 'star',
   PEN: 'pen',
+  PENCIL: 'pencil',
 };
 
 /** The Roboto faces the package ships, by style. */
@@ -166,6 +172,8 @@ export interface DesignCanvasHandle {
   rename(id: string, name: string): void;
   setVisible(visible: boolean): void;
   duplicateSelection(): void;
+  groupSelection(): void;
+  ungroupSelection(): void;
   changeOrder(change: 'forward' | 'backward'): void;
   alignSelection(axis: 'horizontal' | 'vertical', align: 'min' | 'center' | 'max'): void;
   setColor(kind: 'fill' | 'stroke', hex: string, commit: boolean): void;
@@ -391,6 +399,12 @@ export async function mountDesignCanvas(options: DesignCanvasOptions): Promise<D
       editor.undo.redo();
       return;
     }
+    if (meta && key === 'g') {
+      event.preventDefault();
+      if (event.shiftKey) editor.ungroupSelected();
+      else editor.groupSelected();
+      return;
+    }
     if (meta || event.altKey) return;
     if (key === 'delete' || key === 'backspace') {
       event.preventDefault();
@@ -404,7 +418,10 @@ export async function mountDesignCanvas(options: DesignCanvasOptions): Promise<D
     else if (key === 'r') editor.setTool(TOOLS.rectangle);
     else if (key === 'e') editor.setTool(TOOLS.ellipse);
     else if (key === 'l') editor.setTool(TOOLS.line);
+    else if (key === 'g') editor.setTool(TOOLS.polygon);
+    else if (key === 's') editor.setTool(TOOLS.star);
     else if (key === 'p') editor.setTool(TOOLS.pen);
+    else if (key === 'b') editor.setTool(TOOLS.pencil);
   };
   const focus = (): void => {
     element.focus({ preventScroll: true });
@@ -480,6 +497,16 @@ export async function mountDesignCanvas(options: DesignCanvasOptions): Promise<D
     },
     duplicateSelection(): void {
       bridge.duplicateSelection();
+    },
+    groupSelection(): void {
+      if (editor.state.selectedIds.size < 2) return;
+      editor.groupSelected();
+    },
+    ungroupSelection(): void {
+      const ids = [...editor.state.selectedIds];
+      if (ids.length === 0) return;
+      if (!ids.some((id) => editor.graph.getNode(id)?.type === 'GROUP')) return;
+      editor.ungroupSelected();
     },
     changeOrder(change): void {
       bridge.changeOrder(change);

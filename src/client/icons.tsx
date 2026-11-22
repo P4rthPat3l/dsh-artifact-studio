@@ -157,6 +157,45 @@ export const IconPen = ({ size }: { size?: number }) => (
   </Glyph>
 );
 
+/** A pencil: freehand vector drawing. */
+export const IconPencil = ({ size }: { size?: number }) => (
+  <Glyph size={size}>
+    <path d="M5 19.5l1.2-4.2L16.5 5l2.5 2.5L8.7 17.8 5 19.5z" />
+    <path d="M14.8 6.7l2.5 2.5" />
+  </Glyph>
+);
+
+/** A hexagon: the polygon tool. */
+export const IconPolygon = ({ size }: { size?: number }) => (
+  <Glyph size={size}>
+    <path d="M12 4.5l6.6 3.8v7.4L12 19.5l-6.6-3.8V8.3z" />
+  </Glyph>
+);
+
+/** A five-point star: the star tool. */
+export const IconStar = ({ size }: { size?: number }) => (
+  <Glyph size={size}>
+    <path d="M12 4.2l2.4 5.3 5.8.6-4.3 4 1.2 5.8L12 16.9l-5.1 3 1.2-5.8-4.3-4 5.8-.6z" />
+  </Glyph>
+);
+
+/** A dashed box around one shape: group. */
+export const IconGroup = ({ size }: { size?: number }) => (
+  <Glyph size={size}>
+    <rect x="4.5" y="4.5" width="15" height="15" rx="2" strokeDasharray="3 2.5" />
+    <rect x="9" y="9" width="6" height="6" rx="1" />
+  </Glyph>
+);
+
+/** A broken box around two shapes: ungroup. */
+export const IconUngroup = ({ size }: { size?: number }) => (
+  <Glyph size={size}>
+    <path d="M4.5 9.5v-3a2 2 0 0 1 2-2h3M14.5 4.5h3a2 2 0 0 1 2 2v3M19.5 14.5v3a2 2 0 0 1-2 2h-3M9.5 19.5h-3a2 2 0 0 1-2-2v-3" />
+    <rect x="8" y="8" width="5" height="5" rx="1" />
+    <rect x="13" y="13" width="3.5" height="3.5" rx="1" />
+  </Glyph>
+);
+
 /** Two copies offset: duplicate. */
 export const IconDuplicate = ({ size }: { size?: number }) => (
   <Glyph size={size}>

@@ -100,6 +100,17 @@ test('FEAT-007 AC-032: small text alone raises no lint warnings', async () => {
   assert.equal(payload.designInfo.warnings.filter((warning) => warning.startsWith('Design issue')).length, 0, JSON.stringify(payload.designInfo.warnings));
 });
 
+test('FEAT-007 AC-070: an ignored authoring prop reaches the design summary as a warning', async () => {
+  const { service, target } = await fixture();
+  const manifest = await service.create(target, { type: 'design', title: 'Margin', content: '<Frame name="Card" w={120} h={60} margin={8} bg="#ffffff"><Text color="#111111" size={14}>Hi</Text></Frame>', source: agent });
+  const payload = await service.read(target, manifest.id);
+  assert.ok(payload.designInfo !== undefined);
+  assert.ok(payload.designInfo.warnings.some((warning) => warning.includes('Unsupported prop "margin"')), JSON.stringify(payload.designInfo.warnings));
+  const clean = await service.create(target, { type: 'design', title: 'No margin', content: DESIGN, source: agent });
+  const cleanPayload = await service.read(target, clean.id);
+  assert.equal(cleanPayload.designInfo.warnings.some((warning) => warning.includes('Unsupported prop')), false, JSON.stringify(cleanPayload.designInfo.warnings));
+});
+
 test('FEAT-007 AC-030: a .fig file imports as an editable design', async () => {
   const { home, service, target } = await fixture();
   const created = await service.create(target, { type: 'design', title: 'Card', content: DESIGN, source: agent });
@@ -313,7 +324,7 @@ test('FEAT-007 AC-012b: the starter and mockup brief teach flex layout, not dir'
   const starter = starterContent('design', 'Untitled design');
   assert.match(starter, /flex="col"/);
   assert.doesNotMatch(starter, /dir="/);
-  assert.match(brief, /Use .+flex.+not .+dir/);
+  assert.match(brief, /`flex` turns on auto layout/);
   const example = brief.split('- Example: `')[1].split('`')[0];
   assert.ok((await new DesignRenderer().inspect(example)).nodes >= 3, 'brief example compiles');
   const renderer = new DesignRenderer();

@@ -45,6 +45,7 @@ const { renderJSX } = designJSXRenderer(
 interface Compiled {
   graph: SceneGraph;
   page: SceneNode;
+  renderWarnings: string[];
 }
 
 /**
@@ -57,16 +58,36 @@ function messageOf(error: unknown): string {
 }
 
 /**
- * Compile a source into a graph whose first page holds the top-level elements.
+ * Compile a source into a graph whose first page holds the top-level elements,
+ * keeping the renderer's warnings about ignored props and helper options.
  * @param source the Design JSX source.
- * @returns the graph and page.
+ * @returns the graph, page, and warnings.
  */
 async function compile(source: string): Promise<Compiled> {
   const graph = new SceneGraph();
-  await renderJSX(graph, source);
+  const results = await renderJSX(graph, source);
   const page = graph.getPages()[0];
   if (page === undefined) throw new Error('The design has no page.');
-  return { graph, page };
+  const renderWarnings: string[] = [];
+  for (const result of results) {
+    for (const warning of result.warnings ?? []) {
+      if (!renderWarnings.includes(warning)) renderWarnings.push(warning);
+    }
+  }
+  return { graph, page, renderWarnings };
+}
+
+/**
+ * The first LIMIT warnings, with one line counting the rest.
+ * @param lines the warnings.
+ * @param noun what the rest are, in the closing line.
+ * @returns the capped warnings.
+ */
+function capWarnings(lines: readonly string[], noun: string): string[] {
+  const LIMIT = 12;
+  const kept = lines.slice(0, LIMIT);
+  const rest = lines.length - kept.length;
+  return rest > 0 ? [...kept, `And ${rest} more ${noun}.`] : [...kept];
 }
 
 /**
@@ -96,13 +117,10 @@ function descendants(graph: SceneGraph, page: SceneNode): SceneNode[] {
  * @returns the warnings.
  */
 function lintWarnings(graph: SceneGraph): string[] {
-  const LIMIT = 12;
   try {
     const result = createLinter({ preset: 'recommended' }).lintGraph(graph);
     const relevant = result.messages.filter((message) => (message.severity === 'error' || message.severity === 'warning') && message.ruleId !== 'min-text-size');
-    const lines = relevant.slice(0, LIMIT).map((message) => `Design issue, ${message.nodePath.join(' / ')}: ${message.message}`);
-    const rest = relevant.length - lines.length;
-    return rest > 0 ? [...lines, `And ${rest} more design issues.`] : lines;
+    return capWarnings(relevant.map((message) => `Design issue, ${message.nodePath.join(' / ')}: ${message.message}`), 'design issues');
   } catch {
     return [];
   }
@@ -110,12 +128,13 @@ function lintWarnings(graph: SceneGraph): string[] {
 
 /**
  * Count the design's nodes, record its types and fonts, and warn about
- * families the engine cannot load.
+ * families the engine cannot load, ignored authoring options, and lint issues.
  * @param graph the graph.
  * @param page the page node.
+ * @param renderWarnings the renderer's own warnings about the source.
  * @returns the summary.
  */
-function summarize(graph: SceneGraph, page: SceneNode): DesignInfo {
+function summarize(graph: SceneGraph, page: SceneNode, renderWarnings: readonly string[]): DesignInfo {
   const nodes = descendants(graph, page);
   const types: Record<string, number> = {};
   const fonts = new Set<string>();
@@ -128,7 +147,7 @@ function summarize(graph: SceneGraph, page: SceneNode): DesignInfo {
   const warnings = sorted
     .filter((family) => !BUNDLED_FONTS.has(family))
     .map((family) => `Font "${family}" is not bundled. The preview substitutes a default face.`);
-  return { pages: graph.getPages().length, nodes: nodes.length, types, fonts: sorted, warnings: [...warnings, ...lintWarnings(graph)] };
+  return { pages: graph.getPages().length, nodes: nodes.length, types, fonts: sorted, warnings: [...warnings, ...capWarnings(renderWarnings, 'render warnings'), ...lintWarnings(graph)] };
 }
 
 /**
@@ -159,7 +178,7 @@ async function handleImport(bytes64: string): Promise<WorkerResponse> {
   if (source === null) {
     return { ok: false, code: 'artifact/design-render-failed', message: 'The design produced no source.' };
   }
-  const info = summarize(graph, page);
+  const info = summarize(graph, page, []);
   const skipped = pages.filter((candidate) => candidate !== page && candidate.childIds.length > 0).length;
   if (skipped > 0) {
     info.warnings.push(`The file holds ${skipped} more page${skipped === 1 ? '' : 's'}; only "${page.name}" was imported.`);
@@ -219,7 +238,7 @@ async function handle(source: string, request: WorkerRequest): Promise<WorkerRes
     }
     return { ok: false, code: 'artifact/design-invalid', message };
   }
-  const info = summarize(compiled.graph, compiled.page);
+  const info = summarize(compiled.graph, compiled.page, compiled.renderWarnings);
   if (info.nodes === 0) {
     return {
       ok: false,

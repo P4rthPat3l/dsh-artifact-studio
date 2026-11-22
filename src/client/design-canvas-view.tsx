@@ -8,7 +8,7 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import type { CanvasMode, CanvasSnapshot, CanvasTool, DesignCanvasHandle, DesignCanvasModule, SelectedLayer } from './canvas/entry.js';
 import type { Translator } from './harness.js';
-import { IconCursor, IconEllipse, IconFrame, IconHand, IconLine, IconPen, IconRectangle, IconRedo, IconText, IconUndo } from './icons.jsx';
+import { IconCursor, IconEllipse, IconFrame, IconHand, IconLine, IconPen, IconPencil, IconPolygon, IconRectangle, IconRedo, IconStar, IconText, IconUndo } from './icons.jsx';
 
 let engine: Promise<DesignCanvasModule> | null = null;
 
@@ -69,7 +69,10 @@ const TOOLS: ReadonlyArray<{ value: CanvasTool; label: string; icon: ReactNode }
   { value: 'rectangle', label: 'canvas.rectangle', icon: <IconRectangle size={16} /> },
   { value: 'ellipse', label: 'canvas.ellipse', icon: <IconEllipse size={16} /> },
   { value: 'line', label: 'canvas.line', icon: <IconLine size={16} /> },
+  { value: 'polygon', label: 'canvas.polygon', icon: <IconPolygon size={16} /> },
+  { value: 'star', label: 'canvas.star', icon: <IconStar size={16} /> },
   { value: 'pen', label: 'canvas.pen', icon: <IconPen size={16} /> },
+  { value: 'pencil', label: 'canvas.pencil', icon: <IconPencil size={16} /> },
   { value: 'frame', label: 'canvas.frame', icon: <IconFrame size={16} /> },
   { value: 'text', label: 'canvas.text', icon: <IconText size={16} /> },
 ];
