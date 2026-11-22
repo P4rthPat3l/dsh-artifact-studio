@@ -133,6 +133,15 @@ export interface ResolvedDesignSystem {
   catalogRevision?: number;
 }
 
+/** One layer the patch flow can target, with one level of its children. A path is the dotted index chain from the page, which a compile of the same source always reproduces. */
+export type DesignOutlineRow = {
+  path: string;
+  name: string;
+  type: string;
+  /** Direct children, when the row is a top-level layer that has any. */
+  children?: DesignOutlineRow[];
+};
+
 /** What a rendered design reports about its own scene graph. */
 export interface DesignInfo {
   pages: number;
@@ -140,6 +149,8 @@ export interface DesignInfo {
   types: Record<string, number>;
   fonts: string[];
   warnings: string[];
+  /** The targetable layers, when the caller asked for them. */
+  outline?: DesignOutlineRow[];
 }
 
 /** One rendered preview of a design, plus the summary that came with it. */
@@ -167,7 +178,8 @@ export function isDesignInfo(value: unknown): value is DesignInfo {
     Array.isArray(record.fonts) &&
     record.fonts.every((font) => typeof font === 'string') &&
     Array.isArray(record.warnings) &&
-    record.warnings.every((warning) => typeof warning === 'string')
+    record.warnings.every((warning) => typeof warning === 'string') &&
+    (record.outline === undefined || Array.isArray(record.outline))
   );
 }
 

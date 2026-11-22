@@ -29,12 +29,24 @@ interface TextBlock {
   readonly text: string;
 }
 
+/** One image block the model sees beside the text. */
+interface ImageBlock {
+  readonly type: 'image';
+  readonly attachment: { readonly attachmentId: string; readonly mediaType: string; readonly bytes: number; readonly width: number; readonly height: number };
+}
+
+/** One model-facing block of a tool result. */
+type RenderedBlock = TextBlock | ImageBlock;
+
 /** A JSON value, as tool outputs and presentation meta must be. */
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
-/** The calling agent: its id is the session id. */
+/** The calling agent: its id is the session id, and its session carries the routed model. */
 interface ToolAgent {
   readonly id: string;
+  readonly session?: {
+    readonly requestHeader?: () => { readonly config?: { readonly provider?: string; readonly model?: string } };
+  };
 }
 
 /** The execution context the tool registry passes. */
@@ -50,7 +62,7 @@ export interface ToolDefinition {
   readonly parameters: Readonly<Record<string, unknown>>;
   readonly output: {
     readonly schema: Readonly<Record<string, unknown>>;
-    render(args: unknown, value: JsonValue): TextBlock[];
+    render(args: unknown, value: JsonValue): RenderedBlock[];
     presentationMeta?(args: unknown, value: JsonValue): JsonValue;
   };
   execute(args: unknown, exec: ToolExec): Promise<JsonValue>;
@@ -247,6 +259,26 @@ function writeText(value: JsonValue, verb: string): string {
   return list.length === 0 ? head : `${head}\nWarnings, fix all of them in one update:\n${list.map((item) => `- ${item}`).join('\n')}`;
 }
 
+/**
+ * The outline lines the model reads: one row per layer with its id, type, and
+ * name, children indented one level.
+ * @param rows the outline rows.
+ * @returns the text.
+ */
+function outlineText(rows: readonly JsonValue[]): string {
+  const lines: string[] = [];
+  const walk = (items: readonly JsonValue[], depth: number): void => {
+    for (const item of items) {
+      const row = record(item);
+      const children = Array.isArray(row.children) ? row.children : [];
+      lines.push(`${'  '.repeat(depth)}- ${String(row.path)} ${String(row.type)} "${String(row.name)}"${children.length === 0 ? '' : ` (${String(children.length)} children)`}`);
+      if (depth < 1) walk(children, depth + 1);
+    }
+  };
+  walk(rows, 0);
+  return lines.join('\n');
+}
+
 const SUMMARY_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -350,6 +382,7 @@ export function createTools(host: ToolHost): ToolDefinition[] {
       properties: {
         id: { type: 'string', description: 'Artifact id from artifact_create or artifact_list.' },
         version: { type: 'integer', description: 'An earlier version to read. Omit for the current one.' },
+        outline: { type: 'boolean', description: 'For a design, include the layer outline with paths for artifact_patch. Defaults to false; set it when you plan to patch.' },
         workspaceId: WORKSPACE_PARAM,
       },
     },
@@ -377,6 +410,8 @@ export function createTools(host: ToolHost): ToolDefinition[] {
         const fields = record(value);
         const artifact = record(fields.artifact ?? null);
         const info = record(fields.designInfo ?? null);
+        const outlineRows = Array.isArray(info.outline) ? info.outline : [];
+        const outlineBlock = outlineRows.length === 0 ? '' : '\n\nOutline (paths for artifact_patch):\n' + outlineText(outlineRows);
         const sheetRows = Array.isArray(fields.sheetInfo) ? fields.sheetInfo.map(record) : [];
         const sheetLine = sheetRows.length === 0
           ? ''
@@ -388,7 +423,7 @@ export function createTools(host: ToolHost): ToolDefinition[] {
         return [
           {
             type: 'text',
-            text: `${line(artifact, 'Artifact')} Showing version ${String(fields.readVersion)}.${summaryLine}${sheetLine}\n\n${String(fields.content)}`,
+            text: `${line(artifact, 'Artifact')} Showing version ${String(fields.readVersion)}.${summaryLine}${sheetLine}${outlineBlock}\n\n${String(fields.content)}`,
           },
         ];
       },
@@ -399,13 +434,14 @@ export function createTools(host: ToolHost): ToolDefinition[] {
       const target = await targetFor(host, exec, id.startsWith('art_lib_') ? 'library' : undefined, optionalString(fields, 'workspaceId'));
       const result = await service.read(target, id, optionalInteger(fields, 'version'));
       const info = result.designInfo;
+      const wantOutline = fields.outline === true;
       return {
         artifact: summary(result.manifest, target),
         readVersion: result.version,
         content: result.content,
         ...(info === undefined
           ? {}
-          : { designInfo: { pages: info.pages, nodes: info.nodes, types: info.types, fonts: info.fonts, warnings: info.warnings } }),
+          : { designInfo: { pages: info.pages, nodes: info.nodes, types: info.types, fonts: info.fonts, warnings: info.warnings, ...(wantOutline ? { outline: info.outline ?? [] } : {}) } }),
         ...(result.manifest.type === 'sheet'
           ? { sheetInfo: sheetOverview(parseSheetWorkbook(result.content)).map((item) => ({ name: item.name, rows: item.rows, columns: item.columns, cells: item.cells, formulas: item.formulas })) }
           : {}),
@@ -478,6 +514,54 @@ export function createTools(host: ToolHost): ToolDefinition[] {
         ? (await service.read(target, id, manifest.version)).designInfo?.warnings ?? []
         : await writtenWarnings(manifest.type, content, edits === undefined && recipeId === undefined ? undefined : () => service.read(target, id, manifest.version), recipe);
       return { ...summary(manifest, target), warnings };
+    },
+  };
+
+  const patch: ToolDefinition = {
+    name: 'artifact_patch',
+    description: [
+      'Apply one layer-level change to a design without resending the whole source. Read the design first (outline: true) for layer ids, then send the complete Design JSX of one element; its single root replaces the named layer in place, keeping its position among its siblings.',
+      'Patch the one screen or component you are editing. Use artifact_update instead when most of the source changes, or when the design holds component instances, which a patch refuses because a patch save would downgrade them to plain frames.',
+      'The whole design is re-serialized and validated before saving, and a stale baseVersion is refused like any other write. The result carries the fresh outline, so you can chain patches without re-reading.',
+    ].join('\n'),
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['id', 'baseVersion', 'targetPath', 'patch'],
+      properties: {
+        id: { type: 'string', description: 'Design artifact id.' },
+        baseVersion: { type: 'integer', description: 'The version your change is based on; a stale value is refused.' },
+        targetPath: { type: 'string', description: 'The dotted path of the layer to replace, such as "0.1", from the outline in artifact_read or a previous patch.' },
+        patch: { type: 'string', description: 'The complete Design JSX of one element, including the full subtree of the target. Exactly one root element.' },
+        workspaceId: WORKSPACE_PARAM,
+      },
+    },
+    output: {
+      schema: {
+        ...WRITE_SCHEMA,
+        properties: { ...WRITE_SCHEMA.properties, outline: { type: 'array', items: { type: 'object' } } },
+        required: [...WRITE_SCHEMA.required, 'outline'],
+      },
+      render: (_args, value) => {
+        const fields = record(value);
+        const outlineRows = Array.isArray(fields.outline) ? fields.outline : [];
+        const outlineBlock = outlineRows.length === 0 ? '' : '\nOutline (paths for the next patch):\n' + outlineText(outlineRows);
+        return [{ type: 'text', text: writeText(value, 'Patched') + outlineBlock }];
+      },
+      presentationMeta: (_args, value) => cardMeta(value),
+    },
+    async execute(args, exec) {
+      const fields = fieldsOf(args);
+      const id = requiredString(fields, 'id');
+      const target = await targetFor(host, exec, id.startsWith('art_lib_') ? 'library' : undefined, optionalString(fields, 'workspaceId'));
+      const manifest = await service.patchDesign(target, id, {
+        baseVersion: requiredInteger(fields, 'baseVersion'),
+        patch: requiredString(fields, 'patch'),
+        targetPath: requiredString(fields, 'targetPath'),
+        source: { origin: 'agent', action: 'update', ...(exec.agent === undefined ? {} : { sessionId: exec.agent.id }) },
+      });
+      const info = (await service.read(target, id, manifest.version)).designInfo;
+      return { ...summary(manifest, target), warnings: info?.warnings ?? [], outline: info?.outline ?? [] };
     },
   };
 
@@ -862,5 +946,141 @@ export function createTools(host: ToolHost): ToolDefinition[] {
       return { ...summary(manifest, target), warnings: [] };
     },
   };
-  return [create, read, update, sheetUpdate, list, remove, importTool, exportTool, designRead, designUpdate, brief, guideUpdate, designList, rebase];
+  return [create, read, update, patch, sheetUpdate, list, remove, importTool, exportTool, designRead, designUpdate, brief, guideUpdate, designList, rebase];
+}
+
+/** The services the preview tool needs beyond the artifact host. */
+export interface PreviewServices {
+  /** Durable image storage; the tool registers only while this is mounted. */
+  readonly attachments: {
+    saveImages(inputs: readonly { data: Uint8Array; mediaType: string; name?: string }[]): Promise<readonly {
+      attachmentId: string;
+      mediaType: string;
+      bytes: number;
+      width: number;
+      height: number;
+    }[]>;
+  };
+  /** Model routes, to gate on the calling route's image capability. */
+  readonly llm: {
+    resolveModelInfo(provider: string, model: string, signal: AbortSignal): Promise<{ inputModalities?: readonly string[] }>;
+  };
+}
+
+/**
+ * Require the calling route to declare image input, so the render reaches the
+ * model instead of returning a result it cannot see.
+ * @param exec the execution.
+ * @param services the preview services.
+ */
+async function assertImageVisible(exec: ToolExec, services: PreviewServices): Promise<void> {
+  const routed = exec.agent?.session?.requestHeader?.().config;
+  const provider = routed?.provider;
+  const model = routed?.model;
+  if (provider === undefined || model === undefined) {
+    throw new ArtifactError('artifact/preview-invisible', 'The current model route could not be resolved, so a preview cannot be shown to you. Rely on the design warnings instead.');
+  }
+  const active = await services.llm.resolveModelInfo(provider, model, exec.signal);
+  if (active.inputModalities === undefined || !active.inputModalities.includes('image')) {
+    throw new ArtifactError('artifact/preview-invisible', `Model "${model}" does not accept image input, so it cannot see a preview. Rely on the design warnings instead.`);
+  }
+}
+
+/**
+ * The `artifact_preview` tool: render a design and return the image beside the
+ * result text, so the model can check the visual result itself. Registered only
+ * while durable image storage and model routes are mounted.
+ * @param host the artifact services.
+ * @param services the image and route services.
+ * @returns the tool definition.
+ */
+export function createPreviewTool(host: ToolHost, services: PreviewServices): ToolDefinition {
+  const { service } = host;
+  return {
+    name: 'artifact_preview',
+    description: [
+      'Render a design artifact and return the image beside the result, so you can check the visual result yourself: layout, spacing, alignment, contrast, clipping, and that every requested state exists. Call it after creating or updating a design, and again after fixing warnings.',
+      'The calling model route must accept image input; the tool refuses on routes that cannot see images.',
+    ].join('\n'),
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['id'],
+      properties: {
+        id: { type: 'string', description: 'Design artifact id.' },
+        version: { type: 'integer', minimum: 1, description: 'Saved version to render. Omit for the current version.' },
+        workspaceId: WORKSPACE_PARAM,
+      },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['id', 'title', 'version', 'width', 'height', 'image'],
+        properties: {
+          id: { type: 'string' },
+          title: { type: 'string' },
+          version: { type: 'integer' },
+          width: { type: 'integer' },
+          height: { type: 'integer' },
+          warnings: { type: 'array', items: { type: 'string' } },
+          image: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['attachmentId', 'mediaType', 'bytes', 'width', 'height'],
+            properties: {
+              attachmentId: { type: 'string' },
+              mediaType: { type: 'string' },
+              bytes: { type: 'integer' },
+              width: { type: 'integer' },
+              height: { type: 'integer' },
+            },
+          },
+        },
+      },
+      render: (_args, value) => {
+        const fields = record(value);
+        const image = record(fields.image ?? null);
+        const warnings = Array.isArray(fields.warnings) ? fields.warnings.map(String) : [];
+        const head = `Preview of ${String(fields.title)} (version ${String(fields.version)}): ${String(image.width)}x${String(image.height)} px. The image rides beside this text; check layout, spacing, alignment, and text fit against what the user asked for.`;
+        const warningLines = warnings.length === 0 ? '' : '\nWarnings:\n' + warnings.map((item) => '- ' + item).join('\n');
+        return [
+          { type: 'text', text: head + warningLines },
+          {
+            type: 'image',
+            attachment: {
+              attachmentId: String(image.attachmentId),
+              mediaType: String(image.mediaType),
+              bytes: Number(image.bytes),
+              width: Number(image.width),
+              height: Number(image.height),
+            },
+          },
+        ];
+      },
+    },
+    async execute(args, exec) {
+      const fields = fieldsOf(args);
+      const id = requiredString(fields, 'id');
+      const target = await targetFor(host, exec, id.startsWith('art_lib_') ? 'library' : undefined, optionalString(fields, 'workspaceId'));
+      await assertImageVisible(exec, services);
+      const manifest = await service.store.manifest(await service.root(target, id), id);
+      const version = optionalInteger(fields, 'version') ?? manifest.version;
+      const preview = await service.preview(target, id, version);
+      const refs = await services.attachments.saveImages([
+        { data: Buffer.from(preview.data, 'base64'), mediaType: 'image/png', name: String(preview.info.nodes) + '-node design preview' },
+      ]);
+      const ref = refs[0];
+      if (ref === undefined) throw new ArtifactError('artifact/design-render-failed', 'The preview image was not stored.');
+      return {
+        id,
+        title: manifest.title,
+        version,
+        width: preview.width,
+        height: preview.height,
+        warnings: preview.info.warnings,
+        image: { attachmentId: ref.attachmentId, mediaType: ref.mediaType, bytes: ref.bytes, width: ref.width, height: ref.height },
+      };
+    },
+  };
 }

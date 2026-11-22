@@ -1,7 +1,7 @@
 import type { DesignInfo } from '../../contract.js';
 
 /** Actions the host can ask the renderer to perform. */
-export type WorkerAction = 'inspect' | 'preview' | 'export' | 'import-fig';
+export type WorkerAction = 'inspect' | 'preview' | 'export' | 'import-fig' | 'patch';
 
 /** Formats a design export can produce. */
 export type WorkerFormat = 'png' | 'svg' | 'fig' | 'html-svg';
@@ -17,6 +17,10 @@ export interface WorkerRequest {
   format?: WorkerFormat;
   /** Base64 .fig file bytes for an import. The host read the file; the child sees no filesystem. */
   bytes?: string;
+  /** The Design JSX of one layer, for a patch. Its single root replaces the layer at `targetPath` in place. */
+  patch?: string;
+  /** The dotted index path from the page to the layer a patch replaces. */
+  targetPath?: string;
 }
 
 /** One successful answer. */

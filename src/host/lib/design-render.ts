@@ -134,6 +134,12 @@ export interface ImportedFig {
   info: DesignInfo;
 }
 
+/** One patch: the stored Design JSX source that results, and its summary. */
+export interface PatchedDesign {
+  source: string;
+  info: DesignInfo;
+}
+
 /**
  * Runs Design JSX in a separate, sandboxed Node process. Every call compiles
  * and renders from scratch; the caller caches what it needs.
@@ -195,6 +201,22 @@ export class DesignRenderer {
     const response = await this.request('', { action: 'import-fig', bytes: bytes.toString('base64') });
     if (typeof response.source !== 'string') {
       throw new ArtifactError('artifact/design-render-failed', 'The design renderer returned no source.');
+    }
+    return { source: response.source, info: response.info };
+  }
+
+  /**
+   * Apply one patch to a stored design: the patch's single root replaces the
+   * layer at the dotted path, and the whole design re-serializes.
+   * @param source the stored Design JSX source.
+   * @param patch the Design JSX of one layer.
+   * @param targetPath the dotted index path of the layer the patch replaces.
+   * @returns the patched source and its summary.
+   */
+  async patch(source: string, patch: string, targetPath: string): Promise<PatchedDesign> {
+    const response = await this.request(source, { action: 'patch', patch, targetPath });
+    if (typeof response.source !== 'string') {
+      throw new ArtifactError('artifact/design-render-failed', 'The design renderer returned no patched source.');
     }
     return { source: response.source, info: response.info };
   }

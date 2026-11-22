@@ -9,7 +9,8 @@ import { computeContentBounds, headlessRenderNodes } from '@open-pencil/core/io/
 import { renderNodesToSVG } from '@open-pencil/core/io/formats/svg';
 import { exportFigFile, parseFigFile } from '@open-pencil/core/io/formats/fig';
 import { selectionToJSX } from '@open-pencil/design-jsx';
-import type { DesignInfo } from '../../contract.js';
+import { layoutAuthoredNodes } from '@open-pencil/core/layout';
+import type { DesignInfo, DesignOutlineRow } from '../../contract.js';
 import { bundledIconProvider } from '../../icon-set.js';
 import { buildPageModel } from './page-model.js';
 import type { WorkerRequest, WorkerResponse } from './protocol.js';
@@ -77,6 +78,50 @@ async function compile(source: string): Promise<Compiled> {
   return { graph, page, renderWarnings };
 }
 
+/** The most rows an outline carries, across both levels. */
+const OUTLINE_ROWS = 120;
+
+/**
+ * The layers the patch flow can target: every top-level layer and one level of
+ * its children, capped, so a large design still reads cheaply. A row's path is
+ * the dotted index chain from the page, which a compile of the same source
+ * always reproduces.
+ * @param graph the graph.
+ * @param page the page node.
+ * @returns the outline rows.
+ */
+function outlineOf(graph: SceneGraph, page: SceneNode): DesignOutlineRow[] {
+  const rows: DesignOutlineRow[] = [];
+  let budget = OUTLINE_ROWS;
+  page.childIds.forEach((id, index) => {
+    if (budget <= 0) return;
+    const node = graph.getNode(id);
+    if (node === undefined) return;
+    budget -= 1;
+    const children: DesignOutlineRow[] = [];
+    node.childIds.forEach((childId, childIndex) => {
+      if (budget <= 0) return;
+      const child = graph.getNode(childId);
+      if (child === undefined) return;
+      budget -= 1;
+      children.push({ path: String(index) + '.' + String(childIndex), name: child.name, type: String(child.type) });
+    });
+    rows.push({ path: String(index), name: node.name, type: String(node.type), ...(children.length === 0 ? {} : { children }) });
+  });
+  return rows;
+}
+
+/**
+ * Whether the design holds component instances or sets, which the JSX writer
+ * downgrades to plain frames on a save. A patch re-serializes the whole design.
+ * @param graph the graph.
+ * @param page the page node.
+ * @returns whether an instance-like node exists.
+ */
+function hasInstanceLike(graph: SceneGraph, page: SceneNode): boolean {
+  return descendants(graph, page).some((node) => node.type === 'INSTANCE' || node.type === 'COMPONENT_SET');
+}
+
 /**
  * The first LIMIT warnings, with one line counting the rest.
  * @param lines the warnings.
@@ -96,6 +141,31 @@ function capWarnings(lines: readonly string[], noun: string): string[] {
  * @param page the page node.
  * @returns the nodes.
  */
+/**
+ * The failure a compile or patch render produced, with guidance where the
+ * engine message names a limitation the model can act on.
+ * @param error the thrown value.
+ * @returns the failure response.
+ */
+function compileFailure(error: unknown): WorkerResponse {
+  const message = messageOf(error);
+  const missing = /^Icon "([^"]+)" not found$/.exec(message);
+  if (missing !== null) {
+    return { ok: false, code: 'artifact/design-icon-not-found', message: 'The bundled mdi set has no "' + (missing[1] ?? '') + '". Use a name from the mdi set.' };
+  }
+  if (/^Icon set "[^"]+" is not bundled\./.test(message)) {
+    return { ok: false, code: 'artifact/design-icon-not-found', message };
+  }
+  if (/^Variable "[^"]+" not found$/.test(message)) {
+    return {
+      ok: false,
+      code: 'artifact/design-variable',
+      message: 'Design JSX cannot create variables; designVar() and defineVars() only reference variables the document already has, which a .fig import may carry. Use literal colors instead.',
+    };
+  }
+  return { ok: false, code: 'artifact/design-invalid', message };
+}
+
 function descendants(graph: SceneGraph, page: SceneNode): SceneNode[] {
   const out: SceneNode[] = [];
   const visit = (id: string): void => {
@@ -147,7 +217,14 @@ function summarize(graph: SceneGraph, page: SceneNode, renderWarnings: readonly 
   const warnings = sorted
     .filter((family) => !BUNDLED_FONTS.has(family))
     .map((family) => `Font "${family}" is not bundled. The preview substitutes a default face.`);
-  return { pages: graph.getPages().length, nodes: nodes.length, types, fonts: sorted, warnings: [...warnings, ...capWarnings(renderWarnings, 'render warnings'), ...lintWarnings(graph)] };
+  return {
+    pages: graph.getPages().length,
+    nodes: nodes.length,
+    types,
+    fonts: sorted,
+    outline: outlineOf(graph, page),
+    warnings: [...warnings, ...capWarnings(renderWarnings, 'render warnings'), ...lintWarnings(graph)],
+  };
 }
 
 /**
@@ -184,6 +261,97 @@ async function handleImport(bytes64: string): Promise<WorkerResponse> {
     info.warnings.push(`The file holds ${skipped} more page${skipped === 1 ? '' : 's'}; only "${page.name}" was imported.`);
   }
   return { ok: true, info, source };
+}
+
+/**
+ * The layer at a dotted index path from the page, or undefined when any step
+ * is out of range or the path is not a chain of whole numbers.
+ * @param graph the graph.
+ * @param page the page node.
+ * @param path the dotted path, such as "0.1".
+ * @returns the node, or undefined.
+ */
+function nodeAtPath(graph: SceneGraph, page: SceneNode, path: string): SceneNode | undefined {
+  const parts = path.split('.').map((part) => Number.parseInt(part, 10));
+  if (parts.length === 0 || parts.some((part) => !Number.isInteger(part) || part < 0)) return undefined;
+  let node = page;
+  for (const part of parts) {
+    const child = graph.getNode(node.childIds[part] ?? '');
+    if (child === undefined) return undefined;
+    node = child;
+  }
+  return node;
+}
+
+/**
+ * Apply one patch to a compiled design and return the stored source that
+ * results. The patch renders beside its target with layout deferred, takes the
+ * target's place in its parent's child order, and the target is deleted before
+ * layout, in the same order the engine's own preview stage uses.
+ * @param source the stored Design JSX source.
+ * @param request the patch action and its target.
+ * @returns the response.
+ */
+async function handlePatch(source: string, request: WorkerRequest): Promise<WorkerResponse> {
+  const patch = request.patch ?? '';
+  const targetPath = request.targetPath ?? '';
+  if (patch.trim() === '' || targetPath === '') {
+    return { ok: false, code: 'artifact/bad-request', message: 'A patch needs the patch JSX and the targetPath of the layer it replaces.' };
+  }
+  let compiled: Compiled;
+  try {
+    compiled = await compile(source);
+  } catch (error) {
+    return compileFailure(error);
+  }
+  if (hasInstanceLike(compiled.graph, compiled.page)) {
+    return {
+      ok: false,
+      code: 'artifact/design-instances',
+      message: 'This design holds component instances, and a patch save would downgrade them to plain frames. Send the complete source through artifact_update instead.',
+    };
+  }
+  const target = nodeAtPath(compiled.graph, compiled.page, targetPath);
+  if (target === undefined) {
+    return { ok: false, code: 'artifact/bad-request', message: 'Patch path "' + targetPath + '" does not exist in the current design. Read it again for a fresh outline.' };
+  }
+  const parentId = target.parentId;
+  if (parentId === null) {
+    return { ok: false, code: 'artifact/bad-request', message: 'Patch path "' + targetPath + '" has no parent.' };
+  }
+  const parent = compiled.graph.getNode(parentId);
+  if (parent === undefined) {
+    return { ok: false, code: 'artifact/bad-request', message: 'Patch path "' + targetPath + '" has no parent.' };
+  }
+  const index = parent.childIds.indexOf(target.id);
+  let results;
+  try {
+    results = await renderJSX(compiled.graph, patch, { parentId, deferLayout: true });
+  } catch (error) {
+    return compileFailure(error);
+  }
+  if (results.length !== 1) {
+    return { ok: false, code: 'artifact/bad-request', message: 'A patch must hold exactly one top-level element; this one rendered ' + String(results.length) + '.' };
+  }
+  const newId = results[0]?.id;
+  if (newId === undefined) {
+    return { ok: false, code: 'artifact/design-render-failed', message: 'The patch produced no layer.' };
+  }
+  const patchWarnings: string[] = [];
+  for (const result of results) {
+    for (const warning of result.warnings ?? []) {
+      if (!patchWarnings.includes(warning)) patchWarnings.push(warning);
+    }
+  }
+  compiled.graph.reorderChild(newId, parentId, index);
+  compiled.graph.deleteNode(target.id);
+  layoutAuthoredNodes(compiled.graph, [newId]);
+  const next = selectionToJSX(compiled.page.childIds, compiled.graph);
+  if (next === null) {
+    return { ok: false, code: 'artifact/design-render-failed', message: 'The patched design produced no source.' };
+  }
+  const info = summarize(compiled.graph, compiled.page, patchWarnings);
+  return { ok: true, info, source: next };
 }
 
 /**
@@ -224,19 +392,12 @@ async function renderPng(compiled: Compiled, maxSide: number): Promise<Uint8Arra
  */
 async function handle(source: string, request: WorkerRequest): Promise<WorkerResponse> {
   if (request.action === 'import-fig') return handleImport(request.bytes ?? '');
+  if (request.action === 'patch') return handlePatch(source, request);
   let compiled: Compiled;
   try {
     compiled = await compile(source);
   } catch (error) {
-    const message = messageOf(error);
-    const missing = /^Icon "([^"]+)" not found$/.exec(message);
-    if (missing !== null) {
-      return { ok: false, code: 'artifact/design-icon-not-found', message: 'The bundled mdi set has no "' + (missing[1] ?? '') + '". Use a name from the mdi set.' };
-    }
-    if (/^Icon set "[^"]+" is not bundled\./.test(message)) {
-      return { ok: false, code: 'artifact/design-icon-not-found', message };
-    }
-    return { ok: false, code: 'artifact/design-invalid', message };
+    return compileFailure(error);
   }
   const info = summarize(compiled.graph, compiled.page, compiled.renderWarnings);
   if (info.nodes === 0) {
@@ -288,7 +449,7 @@ async function readRequest(): Promise<WorkerRequest> {
   const fields: Record<string, unknown> = { ...parsed };
   if (typeof fields.nonce !== 'string' || fields.nonce === '') throw new Error('The design request has no nonce.');
   if (typeof fields.source !== 'string') throw new Error('The design request has no source.');
-  if (fields.action !== 'inspect' && fields.action !== 'preview' && fields.action !== 'export' && fields.action !== 'import-fig') {
+  if (fields.action !== 'inspect' && fields.action !== 'preview' && fields.action !== 'export' && fields.action !== 'import-fig' && fields.action !== 'patch') {
     throw new Error('The design request has an unknown action.');
   }
   return {
@@ -298,6 +459,8 @@ async function readRequest(): Promise<WorkerRequest> {
     ...(typeof fields.maxSide === 'number' ? { maxSide: fields.maxSide } : {}),
     ...(fields.format === 'png' || fields.format === 'svg' || fields.format === 'fig' || fields.format === 'html-svg' ? { format: fields.format } : {}),
     ...(typeof fields.bytes === 'string' ? { bytes: fields.bytes } : {}),
+    ...(typeof fields.patch === 'string' ? { patch: fields.patch } : {}),
+    ...(typeof fields.targetPath === 'string' ? { targetPath: fields.targetPath } : {}),
   };
 }
 

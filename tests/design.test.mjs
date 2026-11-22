@@ -8,7 +8,7 @@ import { ArtifactStore } from '../dist/host/lib/store.js';
 import { DesignRenderer } from '../dist/host/lib/design-render.js';
 import { ArtifactError } from '../dist/host/lib/errors.js';
 import { createHandler } from '../dist/host/lib/rpc.js';
-import { createTools } from '../dist/host/lib/tools.js';
+import { createPreviewTool, createTools } from '../dist/host/lib/tools.js';
 
 const WORKSPACE_BASE = 'artifacts/workspaces';
 const DESIGN = '<Frame name="Card" w={320} p={24} bg="#ffffff" rounded={16} flex="col" gap={8}><Text size={24} weight={700} color="#111111">Quarterly</Text><Text size={14} color="#666666">Revenue is up.</Text></Frame>';
@@ -398,6 +398,105 @@ test('FEAT-007 AC-001b: the create tool reports design info and warnings', async
   assert.equal(target.workspaceId, 'ws-a');
 });
 
+
+test('FEAT-007 AC-073: a patch replaces one layer without resending the source', async () => {
+  const { service, target } = await fixture();
+  const tools = createTools({ service, registry, workingDirectory: { ensure: async () => path.join(base, 'project-a') } });
+  const byName = Object.fromEntries(tools.map((tool) => [tool.name, tool]));
+  const exec = { agent: { id: 'ses-a' }, signal: new AbortController().signal };
+  const created = await byName.artifact_create.execute({ type: 'design', title: 'Card', content: DESIGN }, exec);
+  const read = await byName.artifact_read.execute({ id: created.id, outline: true }, exec);
+  const outline = read.designInfo.outline;
+  assert.ok(Array.isArray(outline) && outline.length === 1, JSON.stringify(outline));
+  assert.equal(outline[0].type, 'FRAME');
+  assert.equal(outline[0].path, '0');
+  const title = outline[0].children[0];
+  const patched = await byName.artifact_patch.execute({
+    id: created.id,
+    baseVersion: 1,
+    targetPath: title.path,
+    patch: '<Text name="Title" size={40} color="#ff0000">Annual</Text>',
+  }, exec);
+  assert.equal(patched.version, 2);
+  assert.ok(Array.isArray(patched.outline), 'the patch returns a fresh outline');
+  const payload = await service.read(target, created.id);
+  assert.match(payload.content, /Annual/);
+  assert.match(payload.content, /Revenue is up\./, 'the sibling layer stays');
+  const frameRow = patched.outline.find((row) => row.name === 'Card');
+  const second = await byName.artifact_patch.execute({
+    id: created.id,
+    baseVersion: 2,
+    targetPath: frameRow.path,
+    patch: '<Frame name="Card" w={480} p={24} bg="#00ff00" flex="col" gap={8}><Text name="Title" size={40} color="#ff0000">Annual</Text><Text name="Body" size={14} color="#666666">Revenue is up.</Text></Frame>',
+  }, exec);
+  assert.equal(second.version, 3);
+  const after = await service.read(target, created.id);
+  assert.match(after.content, /00ff00/i);
+});
+
+test('FEAT-007 AC-074: a patch refuses a design that holds component instances', async () => {
+  const { service, target } = await fixture();
+  const source = '<Component name="Badge" w={60} h={24} bg="#22C55E" rounded={12}><Text size={10} color="#ffffff">New</Text></Component><Instance of="Badge" x={80} />';
+  const created = await service.create(target, { type: 'design', title: 'Badged', content: source, source: agent });
+  const payload = await service.read(target, created.id, 1);
+  const outline = payload.designInfo.outline;
+  assert.ok(Array.isArray(outline) && outline.length > 0, JSON.stringify(payload.designInfo));
+  await assert.rejects(
+    service.patchDesign(target, created.id, { baseVersion: 1, patch: '<Frame name="Badge" w={60} h={24} />', targetPath: outline[0].path, source: editor }),
+    (error) => error.code === 'artifact/design-instances' && /artifact_update/.test(error.message),
+  );
+});
+
+test('FEAT-007 AC-075: a patch refuses a missing target and a stale base version', async () => {
+  const { service, target } = await fixture();
+  const created = await service.create(target, { type: 'design', title: 'Card', content: DESIGN, source: agent });
+  await assert.rejects(
+    service.patchDesign(target, created.id, { baseVersion: 1, patch: '<Frame name="X" w={10} h={10} />', targetPath: 'gone', source: editor }),
+    (error) => error.code === 'artifact/bad-request' && /does not exist/.test(error.message),
+  );
+  const outline = (await service.read(target, created.id)).designInfo.outline;
+  await assert.rejects(
+    service.patchDesign(target, created.id, { baseVersion: 99, patch: '<Frame name="Card" w={320} />', targetPath: outline[0].path, source: editor }),
+    (error) => error.code === 'artifact/stale-version',
+  );
+});
+
+test('FEAT-007 AC-076: a variable reference without a stored variable is refused with guidance', async () => {
+  const { service, target } = await fixture();
+  await assert.rejects(
+    service.create(target, { type: 'design', title: 'Var', content: '<Frame w={100} h={50} bg={designVar("primary")} />', source: agent }),
+    (error) => error.code === 'artifact/design-variable' && /cannot create variables/.test(error.message),
+  );
+});
+
+test('FEAT-007 AC-077: the preview tool returns the render beside the result and refuses routes without image input', async () => {
+  const { service, target } = await fixture();
+  const created = await service.create(target, { type: 'design', title: 'Card', content: DESIGN, source: agent });
+  const host = { service, registry, workingDirectory: { ensure: async () => path.join(base, 'project-a') } };
+  const saved = [];
+  const imageLlm = { resolveModelInfo: async () => ({ inputModalities: ['image'] }) };
+  const attachments = {
+    saveImages: async (inputs) => {
+      saved.push(...inputs);
+      return inputs.map(() => ({ attachmentId: 'att-1', mediaType: 'image/png', bytes: 42, width: 160, height: 90 }));
+    },
+  };
+  const exec = { agent: { id: 'ses-a', session: { requestHeader: () => ({ config: { provider: 'p', model: 'glm' } }) } }, signal: new AbortController().signal };
+  const tool = createPreviewTool(host, { attachments, llm: imageLlm });
+  const value = await tool.execute({ id: created.id }, exec);
+  assert.equal(value.image.attachmentId, 'att-1');
+  assert.ok(value.width > 0 && value.height > 0);
+  assert.equal(saved.length, 1, 'the render was stored once');
+  const rendered = tool.output.render({}, value);
+  assert.equal(rendered[0].type, 'text');
+  assert.equal(rendered[1].type, 'image');
+  assert.equal(rendered[1].attachment.mediaType, 'image/png');
+  const textOnly = createPreviewTool(host, { attachments, llm: { resolveModelInfo: async () => ({ inputModalities: ['text'] }) } });
+  await assert.rejects(
+    textOnly.execute({ id: created.id }, exec),
+    (error) => error.code === 'artifact/preview-invisible' && /cannot see a preview/.test(error.message),
+  );
+});
 
 test('FEAT-007 AC-037: bundled icons compile to vectors and render', async () => {
   const { service, target } = await fixture();

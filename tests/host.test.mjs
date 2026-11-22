@@ -647,12 +647,12 @@ test('SEC-001: the route serves only admitted owner peers', async () => {
 });
 
 
-test('AC-070: the artifact-design skill registers and the tools load without the skill registry', () => {
+test('AC-070: both artifact skills register and the tools load without the skill registry', () => {
   const skills = [];
   applySkill({ skills: { register: (skill) => { skills.push(skill); return () => {}; } } });
-  assert.equal(skills.length, 1);
-  const [skill] = skills;
-  assert.equal(skill.name, 'artifact-design');
+  assert.deepEqual(skills.map(skill => skill.name).sort(), ['artifact-design', 'visual-codebase-walkthrough']);
+  const skill = skills.find(item => item.name === 'artifact-design');
+  assert.ok(skill);
   assert.ok(skill.description.length > 0 && skill.description.length < 300);
   for (const topic of ['## Precedence', 'sandbox', 'artifact_brief', 'Sheets do not use recipes', 'Only pages and documents pin', 'baseVersion', 'edits']) {
     assert.ok(skill.content.includes(topic), `skill covers ${topic}`);
@@ -663,8 +663,46 @@ test('AC-070: the artifact-design skill registers and the tools load without the
     workspaceRegistry: registry,
     workingDirectory: { ensure: async () => wsA },
   });
-  assert.equal(registered.length, 14);
-  assert.ok(registered.includes('artifact_brief') && registered.includes('artifact_guide_update') && registered.includes('artifact_import'));
+  assert.equal(registered.length, 15);
+  assert.ok(registered.includes('artifact_brief') && registered.includes('artifact_guide_update') && registered.includes('artifact_import') && registered.includes('artifact_patch'));
+});
+
+test('FEAT-009: the walkthrough skill routes visual tracing to source-backed Pages without overriding explicit formats', () => {
+  const skills = [];
+  applySkill({ skills: { register: (skill) => { skills.push(skill); return () => {}; } } });
+  const skill = skills.find(item => item.name === 'visual-codebase-walkthrough');
+  assert.ok(skill);
+  assert.equal(skill.source, 'bundled');
+  assert.ok(skill.description.length > 0 && skill.description.length < 300);
+  assert.match(skill.whenToUse, /not for every coding question/);
+  assert.match(skill.content, /Load artifact-design and use artifact_brief/);
+  assert.match(skill.content, /Default to a Page and the architecture recipe/);
+  assert.match(skill.content, /Respect an explicit output format/);
+  assert.match(skill.content, /requested Mockup remains design/);
+  assert.match(skill.content, /same embedded findings for diagram labels and step details/);
+  assert.ok(skill.content.includes('previous/next navigation and direct step selection'));
+  const design = skills.find(item => item.name === 'artifact-design');
+  assert.match(design.content, /Use page for visual explainers and technical code walkthroughs when no format was requested/);
+});
+
+test('FEAT-009: loaded walkthrough instructions preserve evidence, investigation safety, and artifact update boundaries', () => {
+  const skills = [];
+  applySkill({ skills: { register: (skill) => { skills.push(skill); return () => {}; } } });
+  const skill = skills.find(item => item.name === 'visual-codebase-walkthrough');
+  assert.ok(skill);
+  for (const label of ['Source-verified:', 'Runtime-observed:', 'Inferred:', 'Unresolved:']) {
+    assert.ok(skill.content.includes(label), `walkthrough names ${label}`);
+  }
+  assert.match(skill.content, /repository revision and relevant uncommitted state/);
+  assert.match(skill.content, /An import or matching name alone is not evidence/);
+  assert.match(skill.content, /A test that was read is not a test that ran/);
+  assert.match(skill.content, /Runtime absence does not prove a path cannot execute/);
+  assert.match(skill.content, /Investigation is read-only by default/);
+  assert.match(skill.content, /Keep secrets and sensitive payload values out/);
+  assert.match(skill.content, /cannot open repository files/);
+  assert.match(skill.content, /No network, browser storage, live filesystem access, automatic chat submission/);
+  assert.match(skill.content, /rendering and interactions remain unverified/);
+  assert.match(skill.content, /preserve user edits, and update the same artifact using its current baseVersion/);
 });
 
 test('AC-071: write tool descriptions name the skill and the precedence rule', () => {
@@ -736,7 +774,8 @@ test('AC-073: dark tokens and the display font resolve and old files still load'
 test('AC-091: shared skill and page brief retain preflight and batched save discipline', async () => {
   const skills = [];
   applySkill({ skills: { register: (skill) => { skills.push(skill); return () => {}; } } });
-  const [skill] = skills;
+  const skill = skills.find(item => item.name === 'artifact-design');
+  assert.ok(skill);
   assert.match(skill.content, /## Check before you save/);
   assert.match(skill.content, /Finish the artifact before the first save/);
   const { run } = toolsFor('ses-a', wsA);
@@ -757,7 +796,8 @@ test('AC-091: shared skill and page brief retain preflight and batched save disc
 test('FEAT-007 AC-068: a mockup request gets a design, and a failed design is reported, not redone as a page', async () => {
   const skills = [];
   applySkill({ skills: { register: (skill) => { skills.push(skill); return () => {}; } } });
-  const [skill] = skills;
+  const skill = skills.find(item => item.name === 'artifact-design');
+  assert.ok(skill);
   assert.match(skill.content, /A request for a mockup or a wireframe always gets design, even when it shows a flow/);
   assert.match(skill.content, /If the user offers both, such as "a page or a mockup", make a mockup/);
   assert.match(skill.content, /Never title or describe a page as a mockup/);

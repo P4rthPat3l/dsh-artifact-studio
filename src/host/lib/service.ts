@@ -436,6 +436,37 @@ export class ArtifactService {
   }
 
   /**
+   * Apply one patch to a design and store the result as a new version. The
+   * patch's single root replaces the layer at the dotted path in place; the
+   * whole design re-serializes, so a design holding component instances is
+   * refused, because the JSX writer would downgrade them.
+   * @param target the caller's context.
+   * @param id the artifact id.
+   * @param input the base version, the patch JSX, and the target layer path.
+   * @returns the new manifest.
+   */
+  async patchDesign(
+    target: Target,
+    id: string,
+    input: { baseVersion: number; patch: string; targetPath: string; source: VersionSource },
+  ): Promise<Manifest> {
+    const root = await this.root(target, id);
+    const current = await this.store.manifest(root, id);
+    if (current.type !== 'design') {
+      throw new ArtifactError('artifact/unsupported-type', 'Only a design takes a patch.', { type: current.type });
+    }
+    const existing = await this.store.read(root, id);
+    const patched = await this.designs.patch(existing.content, input.patch, input.targetPath);
+    const manifest = await this.store.update(root, id, {
+      baseVersion: input.baseVersion,
+      content: patched.source,
+      source: input.source,
+    });
+    await this.writeInfo(root, id, patched.source, patched.info);
+    return manifest;
+  }
+
+  /**
    * Restore an earlier version.
    * @param target the caller's context.
    * @param id the artifact id.
