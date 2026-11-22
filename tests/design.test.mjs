@@ -92,6 +92,14 @@ test('FEAT-007 AC-029: a well-formed design carries no lint warnings', async () 
   assert.equal(payload.designInfo.warnings.filter((warning) => warning.startsWith('Design issue')).length, 0, JSON.stringify(payload.designInfo.warnings));
 });
 
+test('FEAT-007 AC-032: small text alone raises no lint warnings', async () => {
+  const { service, target } = await fixture();
+  const manifest = await service.create(target, { type: 'design', title: 'Small', content: '<Frame name="Card" w={120} h={60} bg="#ffffff"><Text color="#111111" size={10}>Tiny</Text></Frame>', source: agent });
+  const payload = await service.read(target, manifest.id);
+  assert.ok(payload.designInfo !== undefined);
+  assert.equal(payload.designInfo.warnings.filter((warning) => warning.startsWith('Design issue')).length, 0, JSON.stringify(payload.designInfo.warnings));
+});
+
 test('FEAT-007 AC-030: a .fig file imports as an editable design', async () => {
   const { home, service, target } = await fixture();
   const created = await service.create(target, { type: 'design', title: 'Card', content: DESIGN, source: agent });

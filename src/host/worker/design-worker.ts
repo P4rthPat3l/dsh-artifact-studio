@@ -90,6 +90,7 @@ function descendants(graph: SceneGraph, page: SceneNode): SceneNode[] {
 /**
  * The highest design-lint severities, as the summary's warnings.
  * Info rules stay out: token adoption and structure hygiene are suggestions.
+ * min-text-size stays out too: mockups legitimately carry small labels as content.
  * A lint failure must never block saving, so any throw returns nothing.
  * @param graph the compiled graph.
  * @returns the warnings.
@@ -98,7 +99,7 @@ function lintWarnings(graph: SceneGraph): string[] {
   const LIMIT = 12;
   try {
     const result = createLinter({ preset: 'recommended' }).lintGraph(graph);
-    const relevant = result.messages.filter((message) => message.severity === 'error' || message.severity === 'warning');
+    const relevant = result.messages.filter((message) => (message.severity === 'error' || message.severity === 'warning') && message.ruleId !== 'min-text-size');
     const lines = relevant.slice(0, LIMIT).map((message) => `Design issue, ${message.nodePath.join(' / ')}: ${message.message}`);
     const rest = relevant.length - lines.length;
     return rest > 0 ? [...lines, `And ${rest} more design issues.`] : lines;
