@@ -306,13 +306,16 @@ test('FEAT-007 AC-012: unbundled fonts warn', async () => {
   assert.ok(payload.designInfo.warnings.some((warning) => warning.includes('Georgia')), JSON.stringify(payload.designInfo));
 });
 
-test('FEAT-007 AC-012b: the starter and the skill teach flex layout, not dir', async () => {
+test('FEAT-007 AC-012b: the starter and mockup brief teach flex layout, not dir', async () => {
   const { starterContent } = await import('../src/client/templates.ts');
-  const { ARTIFACT_DESIGN_SKILL } = await import('../dist/host/lib/skill.js');
+  const { service, target } = await fixture();
+  const { brief } = await service.brief(target, 'design', 'general');
   const starter = starterContent('design', 'Untitled design');
   assert.match(starter, /flex="col"/);
   assert.doesNotMatch(starter, /dir="/);
-  assert.match(ARTIFACT_DESIGN_SKILL.content, /Use .+flex.+not .+dir/);
+  assert.match(brief, /Use .+flex.+not .+dir/);
+  const example = brief.split('- Example: `')[1].split('`')[0];
+  assert.ok((await new DesignRenderer().inspect(example)).nodes >= 3, 'brief example compiles');
   const renderer = new DesignRenderer();
   const info = await renderer.inspect(starter);
   assert.ok(info.nodes >= 4);

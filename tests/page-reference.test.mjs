@@ -2,23 +2,25 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import { JSDOM } from 'jsdom';
-import { ARTIFACT_DESIGN_SKILL } from '../dist/host/lib/skill.js';
+import { composeBrief } from '../dist/host/lib/brief.js';
+import { BUILTIN_RECIPES } from '../dist/host/lib/recipes.js';
 import { DEFAULT_TOKENS, tokensToCss } from '../dist/contract.js';
 import { composePage, PAGE_CSP } from '../dist/render.js';
 import { checkPage } from '../dist/host/lib/checks.js';
 
 const reference = new URL('../examples/page-design-system.html', import.meta.url);
 
-test('DS-AC-005: registered skill teaches scenario structure, project-first styling, and bounded verification', async () => {
-  const content = ARTIFACT_DESIGN_SKILL.content;
-  for (const phrase of ['Architecture walkthrough', 'Feature walkthrough', 'UI proposal', 'Technical decision',
-    'Investigation report', 'Metrics dashboard', 'Inspect the project', 'one dataset', 'Never turn missing values into zero',
+test('DS-AC-005: selected page brief supplies styling and bounded verification without other format manuals', async () => {
+  const content = composeBrief({ type: 'page', recipe: { ...BUILTIN_RECIPES.find(recipe => recipe.id === 'dashboard'), source: 'builtin' },
+    layers: { workspace: { schemaVersion: 1, instructions: '', recipes: [] }, library: { schemaVersion: 1, instructions: '', recipes: [] } },
+    tokens: DEFAULT_TOKENS, tokenSource: 'default', siblings: [] });
+  for (const phrase of ['Metrics dashboard', 'Inspect the project', 'one dataset', 'Never turn missing values into zero',
     '380 and 700', 'both themes', 'keyboard focus', 'remain unverified', 'one confirmation pass',
-    'baseVersion', 'localStorage', 'Never switch', 'one update', 'no unpublished page-preview tool',
+    'localStorage', 'one update', 'no unpublished page-preview tool',
     ':root[data-artifact-theme="dark"] body', ':root[data-artifact-theme="auto"] body']) {
     assert.ok(content.includes(phrase), phrase);
   }
-  assert.ok(content.includes(reference.pathname), 'registered skill must expose the installed absolute reference path');
+  assert.ok(content.includes(reference.pathname), 'page brief must expose the installed absolute reference path');
   await fs.access(reference);
 });
 

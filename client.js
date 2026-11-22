@@ -661,6 +661,8 @@ body {
 .op-canvas { position: relative; flex: 1; min-width: 0; height: 100%; }
 .op-surface { width: 100%; height: 100%; }
 .op-bridge { display: none; }
+/* The engine's IME textarea hides itself with Tailwind classes, which this shell does not ship. */
+textarea[data-canvas-text-input] { position: fixed; left: 0; top: 0; width: 1px; height: 1px; margin: 0; border: 0; padding: 0; resize: none; overflow: hidden; opacity: 0; pointer-events: none; }
 
 /* Sheet editor: Harness chrome around an artifact-token grid. */
 .art-sheet { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--dsw-alias-bg-layer-1); }

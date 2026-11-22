@@ -338,6 +338,9 @@ export async function mountDesignCanvas(options: DesignCanvasOptions): Promise<D
 
   const applyMode = (next: CanvasMode): void => {
     if (mode.value === next) return;
+    // A text edit open over the canvas ends before the mode flips, so View
+    // never inherits an editing session the disabled input cannot drive.
+    if (editor.state.editingTextId !== null) editor.commitTextEdit();
     mode.value = next;
     editor.setTool(TOOLS.select);
     bridge.notify();

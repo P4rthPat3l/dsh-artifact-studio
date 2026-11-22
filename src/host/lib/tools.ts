@@ -30,15 +30,15 @@ interface TextBlock {
 }
 
 /** A JSON value, as tool outputs and presentation meta must be. */
-export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
+type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
 /** The calling agent: its id is the session id. */
-export interface ToolAgent {
+interface ToolAgent {
   readonly id: string;
 }
 
 /** The execution context the tool registry passes. */
-export interface ToolExec {
+interface ToolExec {
   readonly agent?: ToolAgent;
   readonly signal: AbortSignal;
 }
@@ -746,8 +746,8 @@ export function createTools(host: ToolHost): ToolDefinition[] {
   const brief: ToolDefinition = {
     name: 'artifact_brief',
     description: [
-      'Get the brief for a new artifact before artifact_create: the project conventions, the user\'s preferences, the recipe sections and rules, earlier artifacts to match, the design system, and for a page the component kit. Follow it, then pass the same recipe to artifact_create.',
-      'Call it without recipe to list the recipes for the type, choose the one that fits the reader and purpose, and call it again with that id. Also call it before restyling an artifact that has a recipe.',
+      'Get the selected type\'s authoring instructions, examples, quality checks, and saved conventions before artifact_create or a layout or styling update. Applicable briefs include recipe rules, earlier artifacts, design context, and the page kit.',
+      'For page, doc, and design, omit recipe to list compatible recipes, then call again with the chosen id and pass it to artifact_create. For sheet, call once without recipe; sheets do not use recipes. Current defaults do not replace an existing artifact\'s pinned settings.',
     ].join('\n'),
     parameters: {
       type: 'object',
@@ -755,7 +755,7 @@ export function createTools(host: ToolHost): ToolDefinition[] {
       required: ['type'],
       properties: {
         type: { type: 'string', enum: ['page', 'doc', 'design', 'sheet'] },
-        recipe: { type: 'string', description: 'A recipe id. Omit to list the recipes for this type.' },
+        recipe: { type: 'string', description: 'A recipe id for page, doc, or design. Omit to list compatible recipes. Always omit for sheet.' },
         ...DESIGN_SELECTION,
         scope: SCOPE_PARAM,
         workspaceId: WORKSPACE_PARAM,

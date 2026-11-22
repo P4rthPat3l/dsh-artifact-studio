@@ -1,5 +1,5 @@
 import { defineComponent, h, onBeforeUnmount, onMounted, ref } from 'vue';
-import { useCanvasContext, useCanvasInput, useEditor } from '@open-pencil/vue';
+import { useCanvasContext, useCanvasInput, useEditor, useTextEdit } from '@open-pencil/vue';
 import type { CanvasMode } from './entry.js';
 import { wheelZoom } from './zoom.js';
 
@@ -15,9 +15,11 @@ interface PanDrag {
  * The canvas element and its pointer and text input. The SDK's headless
  * CanvasSurface draws but does not wire input, so the editor shell owns it.
  * In View the engine's input is disabled and this surface keeps only click
- * selection and panning. Plain wheel panning stays with the engine's canvas
- * listener; Ctrl or Cmd wheel zooming is caught here first, because the engine
- * applies four times the scale of one notch.
+ * selection and panning; a double click never reaches the engine there,
+ * because the engine's dblclick handler ignores the enabled flag and would
+ * still rename or start a text edit. Plain wheel panning stays with the
+ * engine's canvas listener; Ctrl or Cmd wheel zooming is caught here first,
+ * because the engine applies four times the scale of one notch.
  */
 export const CanvasSurface = defineComponent({
   name: 'DesignCanvasSurface',
@@ -37,6 +39,7 @@ export const CanvasSurface = defineComponent({
       undefined,
       () => props.mode === 'edit',
     );
+    useTextEdit(context.canvasRef, editor, { isEnabled: () => props.mode === 'edit' });
     let pan: PanDrag | null = null;
     const host = ref<HTMLDivElement | null>(null);
 
@@ -101,11 +104,22 @@ export const CanvasSurface = defineComponent({
       pan = null;
     };
 
+    /**
+     * Keep double clicks from the engine outside Edit: the capture on the
+     * wrapper runs before the canvas target listeners, so a View double click
+     * can neither rename a label nor open a text edit.
+     */
+    const onDblClick = (event: MouseEvent): void => {
+      if (props.mode !== 'edit') event.stopPropagation();
+    };
+
     onMounted(() => {
       host.value?.addEventListener('wheel', onWheel, { capture: true, passive: false });
+      host.value?.addEventListener('dblclick', onDblClick, { capture: true });
     });
     onBeforeUnmount(() => {
       host.value?.removeEventListener('wheel', onWheel, true);
+      host.value?.removeEventListener('dblclick', onDblClick, true);
     });
 
     return () =>
@@ -119,9 +133,6 @@ export const CanvasSurface = defineComponent({
           onMousemove: onMouseMove,
           onMouseup: onMouseUp,
           onMouseleave: onMouseUp,
-          onDblclick: (event: MouseEvent) => {
-            if (props.mode === 'view') event.preventDefault();
-          },
         }),
       ]);
   },

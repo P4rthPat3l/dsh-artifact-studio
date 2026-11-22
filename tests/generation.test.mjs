@@ -12,6 +12,8 @@ import { BUILTIN_RECIPES } from '../dist/host/lib/recipes.js';
 import { KITS, KIT_REFERENCE, LATEST_KIT, declaredKit } from '../dist/kit.js';
 import { composePage, PAGE_CSP } from '../dist/render.js';
 import { DEFAULT_TOKENS, tokensToCss } from '../dist/contract.js';
+import { parseSheetWorkbook } from '../dist/sheet/model.js';
+import { checkSheetWorkbook } from '../dist/sheet/output.js';
 
 let base;
 let home;
@@ -46,6 +48,51 @@ function toolsFor(sessionId, svc = service()) {
 const codes = (warnings) => warnings.map((item) => item.split(':')[0]);
 
 const KIT_PAGE = (body, extra = '') => '<!doctype html><html><head><meta name="viewport" content="width=device-width"><meta name="artifact-kit" content="1">' + extra + '</head><body><main class="ak-page">' + body + '</main></body></html>';
+
+test('GEN-AC-024: selected briefs supply only their format guide and quality checks', async () => {
+  const { run } = toolsFor('ses-b');
+  const formats = [
+    ['page', '## Page authoring', '380 and 700', /OpenPencil Design JSX|## Document authoring|## The workbook/],
+    ['doc', '## Document authoring', 'claims against sources', /## Page authoring|OpenPencil Design JSX|## The workbook/],
+    ['design', '## Mockup authoring', 'text wrapping', /## Page authoring|## Document authoring|## The workbook/],
+    ['sheet', '## The workbook', 'independent calculation', /## Page authoring|## Document authoring|OpenPencil Design JSX/],
+  ];
+  for (const [type, heading, check, unrelated] of formats) {
+    const result = await run('artifact_brief', { type, ...(type === 'sheet' ? {} : { recipe: 'general' }) });
+    assert.ok(result.brief.includes(heading), type + ' authoring guide');
+    assert.ok(result.brief.includes(check), type + ' quality check');
+    assert.doesNotMatch(result.brief, unrelated);
+    assert.match(result.brief, /warnings.*(?:do not|does not|cannot).*correct/i);
+  }
+  const menu = await run('artifact_brief', { type: 'page' });
+  assert.doesNotMatch(menu.brief, /## Page authoring/);
+});
+
+test('GEN-AC-025: sheet guidance skips recipes and only page and document guidance offers rebase', async () => {
+  const { run } = toolsFor('ses-b');
+  const sheet = await run('artifact_brief', { type: 'sheet' });
+  assert.equal(sheet.recipe, null);
+  assert.match(sheet.brief, /Sheets do not use recipes/);
+  assert.match(sheet.brief, /no pinned generation snapshot/);
+  assert.match(sheet.brief, /bold, italic, underline, and strike/);
+  assert.match(sheet.brief, /align is left, center, or right/);
+  assert.doesNotMatch(sheet.brief, /Pass recipe|Choose a recipe|artifact_rebase/);
+  const workbook = parseSheetWorkbook(sheet.brief.split('```json\n')[1].split('```')[0]);
+  assert.deepEqual(checkSheetWorkbook(workbook), [], 'sheet example validates and evaluates without warnings');
+  assert.match((await run('artifact_brief', { type: 'sheet' })).brief, /independent calculation/);
+  const { byName } = toolsFor('ses-b');
+  assert.match(byName.artifact_brief.description, /sheets do not use recipes/);
+  await assert.rejects(run('artifact_brief', { type: 'sheet', recipe: 'general' }), error => error.code === 'artifact/unknown-recipe');
+  for (const type of ['page', 'doc']) {
+    const { brief } = await run('artifact_brief', { type, recipe: 'general' });
+    assert.match(brief, /artifact_rebase/);
+    assert.match(brief, /pins/);
+  }
+  const { brief } = await run('artifact_brief', { type: 'design', recipe: 'general' });
+  assert.match(brief, /no pinned generation snapshot/);
+  assert.match(brief, /restyle.*source/i);
+  assert.doesNotMatch(brief, /artifact_rebase/);
+});
 
 test('GEN-AC-001: the brief is deterministic and orders the layers by precedence', async () => {
   const { run } = toolsFor('ses-a');

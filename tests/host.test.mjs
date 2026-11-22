@@ -654,7 +654,7 @@ test('AC-070: the artifact-design skill registers and the tools load without the
   const [skill] = skills;
   assert.equal(skill.name, 'artifact-design');
   assert.ok(skill.description.length > 0 && skill.description.length < 300);
-  for (const topic of ['## Precedence', 'sandbox', '--artifact-font-display', 'color-scheme', '## Layout and type', 'baseVersion', 'edits']) {
+  for (const topic of ['## Precedence', 'sandbox', 'artifact_brief', 'Sheets do not use recipes', 'Only pages and documents pin', 'baseVersion', 'edits']) {
     assert.ok(skill.content.includes(topic), `skill covers ${topic}`);
   }
   const registered = [];
@@ -733,14 +733,17 @@ test('AC-073: dark tokens and the display font resolve and old files still load'
   assert.match(composePage('<p>x</p>', css, PAGE_CSP, 't', '', 'dark'), /<html><head>/);
 });
 
-test('AC-091: the skill and write tools tell the agent to check before saving and batch fixes into one update', () => {
+test('AC-091: shared skill and page brief retain preflight and batched save discipline', async () => {
   const skills = [];
   applySkill({ skills: { register: (skill) => { skills.push(skill); return () => {}; } } });
   const [skill] = skills;
   assert.match(skill.content, /## Check before you save/);
   assert.match(skill.content, /Finish the artifact before the first save/);
-  assert.match(skill.content, /render a scratch copy outside the artifact/);
-  assert.match(skill.content, /fix all of them in one \S*artifact_update\S*\. Never send one update per finding/);
+  const { run } = toolsFor('ses-a', wsA);
+  const { brief } = await run('artifact_brief', { type: 'page', recipe: 'general' });
+  assert.match(brief, /render a scratch copy outside the artifact/);
+  assert.match(skill.content, /fix all of them in one artifact_update/);
+  assert.match(skill.content, /Never send one update per finding/);
   assert.match(skill.content, /Do not run polish passes the user did not ask for/);
   assert.doesNotMatch(skill.content, /fix them in a follow-up update/);
   const { byName } = toolsFor('ses-a', wsA);
@@ -751,15 +754,18 @@ test('AC-091: the skill and write tools tell the agent to check before saving an
   }
 });
 
-test('FEAT-007 AC-068: a mockup request gets a design, and a failed design is reported, not redone as a page', () => {
+test('FEAT-007 AC-068: a mockup request gets a design, and a failed design is reported, not redone as a page', async () => {
   const skills = [];
   applySkill({ skills: { register: (skill) => { skills.push(skill); return () => {}; } } });
   const [skill] = skills;
-  assert.match(skill.content, /A request for a mockup or a wireframe always gets \S*design\S*, even when it shows a flow/);
+  assert.match(skill.content, /A request for a mockup or a wireframe always gets design, even when it shows a flow/);
   assert.match(skill.content, /If the user offers both, such as "a page or a mockup", make a mockup/);
   assert.match(skill.content, /Never title or describe a page as a mockup/);
-  assert.match(skill.content, /### When a design write fails/);
-  assert.match(skill.content, /Never switch to a \S*page\S* or a \S*doc\S* to work around a failed design/);
+  const { run } = toolsFor('ses-a', wsA);
+  const { brief } = await run('artifact_brief', { type: 'design', recipe: 'general' });
+  assert.match(brief, /### When a design write fails/);
+  assert.match(brief, /Stop and show the user the exact error/);
+  assert.match(skill.content, /Never switch to a page or a doc to work around a failed design/);
   assert.doesNotMatch(skill.content, /calculators, diagrams, prototypes\./);
   const { byName } = toolsFor('ses-a', wsA);
   const type = byName.artifact_create.parameters.properties.type.description;
