@@ -31,7 +31,6 @@
     "client.doc.js",
     "client.canvas.js",
     "client.sheet.js",
-    "client.board.js",
     "assets",
     "examples/page-design-system.html",
     "cordis.patch.yml",
@@ -79,7 +78,6 @@
     "marked": "^17.0.1"
   },
   "devDependencies": {
-    "@excalidraw/excalidraw": "^0.18.1",
     "@iconify-json/mdi": "1.2.3",
     "@open-pencil/design-jsx": "0.16.0",
     "@open-pencil/vue": "0.16.0",

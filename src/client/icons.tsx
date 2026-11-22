@@ -42,14 +42,6 @@ export const IconDoc = ({ size }: { size?: number }) => (
   </Glyph>
 );
 
-/** A pen drawing on a board: a whiteboard. */
-export const IconBoard = ({ size }: { size?: number }) => (
-  <Glyph size={size}>
-    <rect x="3.5" y="4.5" width="17" height="15" rx="2" />
-    <path d="M7 14.5c2.2-4.2 4.2-5.8 6-4.8 1.8 1 1.2 3.4-0.6 3.4-1.8 0-2.4-2.2-0.6-3.8 1.8-1.6 4.2-0.6 5.2 1.8" />
-  </Glyph>
-);
-
 /** A grid with a header row and column: a spreadsheet. */
 export const IconSheet = ({ size }: { size?: number }) => (
   <Glyph size={size}>

@@ -16,7 +16,6 @@ import { parseArtifactAddress, formatArtifactAddress, tokensToCss, DEFAULT_TOKEN
 import { composePage, PAGE_CSP } from '../dist/render.js';
 import { mergeTokens } from '../dist/host/lib/design-system.js';
 import { parseSheetWorkbook, serializeSheetWorkbook } from '../dist/sheet/index.js';
-import { parseBoardScene, starterBoard } from '../dist/board.js';
 import { unzipSync, strFromU8 } from 'fflate';
 
 let base;
@@ -664,7 +663,7 @@ test('AC-070: the artifact-design skill registers and the tools load without the
     workspaceRegistry: registry,
     workingDirectory: { ensure: async () => wsA },
   });
-  assert.equal(registered.length, 14);
+  assert.equal(registered.length, 13);
   assert.ok(registered.includes('artifact_brief') && registered.includes('artifact_guide_update'));
 });
 
@@ -932,97 +931,6 @@ test('SHEET-AC-008: a sheet cannot be rebased and list filters by its type', asy
   assert.ok(listed.items.some((item) => item.id === created.id));
   const pages = await svc.list(A, { type: 'page' });
   assert.ok(pages.items.every((item) => item.type === 'page'));
-  await fs.rm(storeHome('ws-a'), { recursive: true, force: true });
-});
-
-
-test('BOARD-AC-001: artifact_create stores a native whiteboard scene at version 1', async () => {
-  const svc = service();
-  const { run } = toolsFor('ses-a', wsA, svc);
-  const content = starterBoard('Launch plan');
-  const created = await run('artifact_create', { type: 'board', title: 'Launch board', content });
-  assert.equal(created.type, 'board');
-  assert.equal(created.version, 1);
-  assert.equal(created.generation, null);
-  assert.deepEqual(created.warnings, []);
-  const read = await svc.read(A, created.id);
-  assert.equal(read.manifest.contentFile, 'board.excalidraw');
-  const scene = parseBoardScene(read.content);
-  assert.equal(scene.elements.length, 7);
-  assert.ok(await exists(path.join(storeHome('ws-a'), created.id, 'content', 'board.excalidraw')));
-  await fs.rm(storeHome('ws-a'), { recursive: true, force: true });
-});
-
-test('BOARD-AC-002: invalid whiteboard content is refused before a directory is written', async () => {
-  const svc = service();
-  const { run } = toolsFor('ses-a', wsA, svc);
-  await fs.mkdir(storeHome('ws-a'), { recursive: true });
-  const before = (await fs.readdir(storeHome('ws-a'), { withFileTypes: true })).filter((entry) => entry.isDirectory()).map((entry) => entry.name);
-  await rejects(run('artifact_create', { type: 'board', title: 'Broken', content: '{"type":"excalidraw","version":2,"elements":[{"type":"embeddable","id":"x","x":0,"y":0,"width":10,"height":10}]}' }), 'artifact/invalid-board');
-  await rejects(run('artifact_create', { type: 'board', title: 'Broken', content: 'not json' }), 'artifact/invalid-board');
-  const after = (await fs.readdir(storeHome('ws-a'), { withFileTypes: true })).filter((entry) => entry.isDirectory()).map((entry) => entry.name);
-  assert.deepEqual(after, before);
-  await fs.rm(storeHome('ws-a'), { recursive: true, force: true });
-});
-
-test('BOARD-AC-003: artifact_board_update adds, updates, and deletes elements in one version', async () => {
-  const svc = service();
-  const { run } = toolsFor('ses-a', wsA, svc);
-  const created = await run('artifact_create', { type: 'board', title: 'Editable board', content: starterBoard('Editable') });
-  const current = parseBoardScene((await svc.read(A, created.id)).content);
-  const first = current.elements[0];
-  assert.ok(first);
-  const updated = await run('artifact_board_update', {
-    id: created.id,
-    baseVersion: 1,
-    operations: [
-      { op: 'add', elements: [
-        { type: 'rectangle', x: 40, y: 340, width: 180, height: 80, text: 'Ship', backgroundColor: '#ffec99' },
-        { type: 'arrow', x: 220, y: 380, points: [[0, 0], [40, 0]] },
-      ] },
-      { op: 'update', id: first.id, patch: { x: 110, text: 'Editable board v2' } },
-    ],
-  });
-  assert.equal(updated.version, 2);
-  assert.equal(updated.board.elements, 10);
-  assert.ok(updated.notes.length >= 2);
-  const scene = parseBoardScene((await svc.read(A, created.id)).content);
-  assert.equal(scene.elements[0].x, 110);
-  assert.equal(scene.elements[0].text, 'Editable board v2');
-  const shape = scene.elements.find((element) => element.type === 'rectangle' && element.y === 340);
-  assert.ok(shape);
-  const deleted = await run('artifact_board_update', { id: created.id, baseVersion: 2, operations: [{ op: 'delete', ids: [String(shape.id)] }] });
-  assert.equal(deleted.version, 3);
-  await rejects(run('artifact_board_update', { id: created.id, baseVersion: 1, operations: [{ op: 'clear' }] }), 'artifact/stale-version');
-  await fs.rm(storeHome('ws-a'), { recursive: true, force: true });
-});
-
-test('BOARD-AC-004: the read tool returns a content-free whiteboard summary', async () => {
-  const svc = service();
-  const { run } = toolsFor('ses-a', wsA, svc);
-  const created = await run('artifact_create', { type: 'board', title: 'Summary board', content: starterBoard('Summary') });
-  const read = await run('artifact_read', { id: created.id });
-  assert.equal(read.boardInfo.elements, 7);
-  assert.equal(read.boardInfo.types.text, 4);
-  assert.equal(read.boardInfo.files, 0);
-  assert.doesNotMatch(JSON.stringify(read.boardInfo), /Launch plan|Summary/);
-  await fs.rm(storeHome('ws-a'), { recursive: true, force: true });
-});
-
-test('BOARD-AC-005: a whiteboard exports the native scene and refuses print and rebase', async () => {
-  const svc = service();
-  const { run } = toolsFor('ses-a', wsA, svc);
-  const created = await run('artifact_create', { type: 'board', title: 'Export board', content: starterBoard('Export') });
-  const file = await svc.export(A, created.id, 'excalidraw');
-  assert.match(file.fileName, /\.excalidraw$/);
-  assert.equal(file.mediaType, 'application/vnd.excalidraw+json');
-  const scene = parseBoardScene(await fs.readFile(file.path, 'utf8'));
-  assert.equal(scene.type, 'excalidraw');
-  await rejects(svc.export(A, created.id, 'png'), 'artifact/unsupported-format');
-  await rejects(svc.printable(A, created.id), 'artifact/unsupported-format');
-  await rejects(svc.rebase(A, created.id, { baseVersion: 1, source: { origin: 'user', action: 'rebase' } }), 'artifact/unsupported-type');
-  const listed = await svc.list(A, { type: 'board' });
-  assert.ok(listed.items.some((item) => item.id === created.id));
   await fs.rm(storeHome('ws-a'), { recursive: true, force: true });
 });
 

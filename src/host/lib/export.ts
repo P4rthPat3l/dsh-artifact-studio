@@ -42,7 +42,6 @@ const MEDIA_TYPES: Readonly<Record<ExportFormat, string>> = {
   fig: 'application/octet-stream',
   csv: 'text/csv',
   xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  excalidraw: 'application/vnd.excalidraw+json',
 };
 
 /** The file extension of a format whose id is not its extension. */
@@ -483,13 +482,6 @@ export async function writeExport(
         supported: FORMATS_BY_TYPE.design,
       });
     }
-  } else if (manifest.type === 'board') {
-    if (format !== 'excalidraw') {
-      throw new ArtifactError('artifact/unsupported-format', 'A whiteboard exports as an .excalidraw file from the host.', {
-        supported: FORMATS_BY_TYPE.board,
-      });
-    }
-    data = Buffer.from(content, 'utf8');
   } else if (manifest.type === 'sheet') {
     let workbook: SheetWorkbook;
     try {

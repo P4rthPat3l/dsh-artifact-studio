@@ -6,7 +6,6 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { installDom, settle } from './dom.mjs';
 import { DEFAULT_TOKENS, COLOR_ROLES } from '../dist/contract.js';
-import { starterBoard } from '../dist/board.js';
 
 const require = createRequire(import.meta.url);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -18,7 +17,6 @@ let createRoot;
 let plugin;
 let chunk;
 let sheetChunk;
-let boardFake;
 let canvasFake;
 let blobs;
 
@@ -42,9 +40,6 @@ function emptyCanvasSnapshot() {
 
 const CANVAS_QUOTE = { name: 'Card', path: 'Card', type: 'FRAME', parentName: '', jsx: '<Frame w={320} p={24} bg="#ffffff" />' };
 
-/** What the fake whiteboard chunk does for the current test. */
-const boardDispatch = { mounts: [], images: [], flushed: 0 };
-
 /**
  * Evaluate a built client artifact the way the harness module loader does.
  * @param {string} name - the artifact file.
@@ -66,7 +61,6 @@ async function loadArtifact(name) {
   requireModule.async = async (file) => {
     if (file === './client.doc.js') return chunk;
     if (file === './client.sheet.js') return sheetChunk;
-    if (file === './client.board.js') return boardFake;
     if (file === './client.canvas.js' && canvasFake !== undefined) return canvasFake;
     throw new Error(`Unexpected chunk ${file}`);
   };
@@ -86,28 +80,7 @@ before(async () => {
   URL.revokeObjectURL = (url) => blobs.delete(url);
   React = require('react');
   ({ act } = require('react'));
-  ({ createRoot } = require('react-dom/client'));
-  boardFake = {
-    mountBoardEditor(options) {
-      const handle = {
-        json: options.content,
-        calls: { setContent: 0, setEditable: [], setAppearance: [] },
-        getJson() { return this.json; },
-        setContent(json) { this.calls.setContent += 1; this.json = json; boardDispatch.lastContent = json; },
-        setEditable(value) { this.calls.setEditable.push(value); },
-        setAppearance(dark) { this.calls.setAppearance.push(dark); },
-        createImage(format) {
-          boardDispatch.images.push(format);
-          return Promise.resolve({ blob: new Blob(['image'], { type: format === 'png' ? 'image/png' : 'image/svg+xml' }), extension: format });
-        },
-        flush() { boardDispatch.flushed += 1; },
-        destroy() { this.destroyed = true; },
-      };
-      boardDispatch.mounts.push({ options, handle });
-      return handle;
-    },
-  };
-  canvasFake = {
+  ({ createRoot } = require('react-dom/client'));  canvasFake = {
     async mountDesignCanvas(options) {
       canvasDispatch.attempts += 1;
       if (!canvasDispatch.enabled) throw new Error('The canvas chunk is not available in this test.');
@@ -202,10 +175,6 @@ beforeEach(() => {
   canvasDispatch.gate = null;
   canvasDispatch.fail = null;
   canvasDispatch.snapshot = null;
-  boardDispatch.mounts.length = 0;
-  boardDispatch.images.length = 0;
-  boardDispatch.flushed = 0;
-  boardDispatch.lastContent = null;
   canvasDispatch.quote = null;
 });
 
@@ -1065,10 +1034,9 @@ test('AC-089: creating from all projects targets the named project', async () =>
 
     await click(findButton(view, 'gallery.create'));
     const items = [...view.container.querySelectorAll('[role="menuitem"]')];
-    assert.equal(items.length, 5);
+    assert.equal(items.length, 4);
     assert.ok(items.some((item) => item.textContent.includes('type.design') || item.textContent.includes('gallery.newDesign')), 'the create menu has no design entry');
     assert.ok(items.some((item) => item.textContent.includes('gallery.newSheet')), 'the create menu has no sheet entry');
-    assert.ok(items.some((item) => item.textContent.includes('gallery.newBoard')), 'the create menu has no whiteboard entry');
     assert.ok(items.every((item) => item.textContent.includes('Work A')), 'the create menu did not name the target project');
     await click(items[0]);
     const create = host.calls.find((call) => call.endpoint === 'create');
@@ -1213,7 +1181,7 @@ test('AC-096: the right panel opens an artifact as a tab and creates in the work
     const opened = records.opened.length;
     await click(findButton(view, 'gallery.create'));
     const items = [...view.container.querySelectorAll('[role="menuitem"]')];
-    assert.equal(items.length, 5);
+    assert.equal(items.length, 4);
     assert.ok(items.every((item) => item.textContent.includes('Work A')), 'the create menu did not name the workspace');
     await click(items[1]);
     await act(async () => settle(120));
@@ -1349,10 +1317,10 @@ test('AC-023: locale dictionaries cover every used key', async () => {
     for (const match of text.matchAll(/\bt\(\s*'([a-zA-Z0-9.]+)'/g)) used.add(match[1]);
   }
   const dynamic = [
-    'scope.workspace', 'scope.library', 'type.page', 'type.doc', 'type.design', 'type.sheet', 'type.board',
-    'export.html', 'export.md', 'export.docx', 'export.png', 'export.svg', 'export.fig', 'export.csv', 'export.xlsx', 'export.excalidraw',
-    'create.untitledDesign', 'create.untitledSheet', 'create.untitledBoard', 'tab.manualSaveDesign',
-    'prompt.sheet', 'prompt.sheetText', 'prompt.board', 'prompt.boardText', 'gallery.newSheet', 'gallery.newBoard',
+    'scope.workspace', 'scope.library', 'type.page', 'type.doc', 'type.design', 'type.sheet',
+    'export.html', 'export.md', 'export.docx', 'export.png', 'export.svg', 'export.fig', 'export.csv', 'export.xlsx',
+    'create.untitledDesign', 'create.untitledSheet', 'tab.manualSaveDesign',
+    'prompt.sheet', 'prompt.sheetText', 'gallery.newSheet',
     'design.source.workspace', 'design.source.library', 'design.source.default',
     'design.color.primary', 'design.color.accent', 'design.color.surface', 'design.color.text', 'design.color.muted',
     'design.radius.sm', 'design.radius.md', 'design.radius.lg',
@@ -2788,80 +2756,6 @@ test('SHEET-AC-106: the artifact tab mounts the sheet editor and autosaves a cel
   assert.match(host.state.artifacts.get(id).content, /"A1": 42/);
   await view.unmount();
 });
-
-
-test('BOARD-AC-101: the artifact tab mounts a whiteboard and autosaves a scene change', async () => {
-  const host = fakeHost();
-  const id = 'art_ws_boardtab0001';
-  host.state.artifacts.set(id, { manifest: host.manifest(id, 'board', 'Launch board', 1), content: starterBoard('Launch') });
-  const { ctx, records } = stubContext(host);
-  plugin.apply(ctx);
-  const tab = slot(records, 'sidebar.right.pane.tab', 'dsh-artifact-studio/artifact');
-  const view = await render(tab.component, tabProps('dsh-resource://artifact/workspace/ws-a/' + id));
-  await act(async () => settle(160));
-  assert.equal(boardDispatch.mounts.length, 1, 'the whiteboard chunk did not mount');
-  const mounted = boardDispatch.mounts[0];
-  assert.equal(mounted.options.editable, true);
-  const changed = starterBoard('Changed board');
-  await act(async () => {
-    mounted.options.live.current.onChange(changed);
-    await settle(60);
-  });
-  await act(async () => settle(1500));
-  assert.equal(host.state.artifacts.get(id).manifest.version, 2);
-  assert.match(host.state.artifacts.get(id).content, /Changed board/);
-  await view.unmount();
-});
-
-test('BOARD-AC-102: the gallery renders a whiteboard cover and offers the board type', async () => {
-  const host = fakeHost();
-  host.state.artifacts.set('art_ws_boardcover01', { manifest: host.manifest('art_ws_boardcover01', 'board', 'Launch board', 1), content: starterBoard('Launch plan') });
-  const { ctx, records } = stubContext(host);
-  plugin.apply(ctx);
-  const view = await galleryView(records);
-  await act(async () => settle(180));
-  assert.ok(view.container.querySelector('.art-cover-board'), 'the whiteboard cover should render');
-  assert.match(view.container.textContent, /Launch plan/);
-  assert.match(view.container.textContent, /type.board/);
-  await click(findButton(view, 'gallery.create'));
-  const items = [...view.container.querySelectorAll('[role="menuitem"]')];
-  assert.ok(items.some((item) => item.textContent.includes('gallery.newBoard')), 'the create menu has no whiteboard entry');
-  await view.unmount();
-});
-
-test('BOARD-AC-103: a whiteboard card names the type and opens its tab', async () => {
-  const host = fakeHost();
-  const { ctx, records } = stubContext(host);
-  plugin.apply(ctx);
-  const card = slot(records, 'tool.call.toolview', 'artifact_create');
-  const meta = { kind: 'artifact', v: 1, id: 'art_ws_boardcard001', scope: 'workspace', type: 'board', title: 'Launch board', version: 1, workspaceId: 'ws-a' };
-  const view = await render(card.component, { t, phase: 'result', toolName: 'artifact_create', block: { isError: false, meta, content: [] } });
-  assert.match(view.container.textContent, /type.board/);
-  await click(view.container.querySelector('button'));
-  assert.deepEqual(records.opened, ['dsh-resource://artifact/workspace/ws-a/art_ws_boardcard001']);
-  await view.unmount();
-});
-
-test('BOARD-AC-104: the export menu renders a whiteboard image through the chunk', async () => {
-  const host = fakeHost();
-  const id = 'art_ws_boardexport01';
-  host.state.artifacts.set(id, { manifest: host.manifest(id, 'board', 'Export board', 1), content: starterBoard('Export') });
-  const { ctx, records } = stubContext(host);
-  plugin.apply(ctx);
-  const tab = slot(records, 'sidebar.right.pane.tab', 'dsh-artifact-studio/artifact');
-  const view = await render(tab.component, tabProps('dsh-resource://artifact/workspace/ws-a/' + id));
-  await act(async () => settle(160));
-  await click(findButton(view, 'tab.export'));
-  const png = [...view.container.querySelectorAll('[role="menuitem"]')].find((item) => item.textContent === 'export.png');
-  assert.ok(png, 'the export menu has no PNG entry');
-  await click(png);
-  await act(async () => settle(120));
-  assert.deepEqual(boardDispatch.images, ['png']);
-  assert.ok(boardDispatch.flushed >= 1, 'the export did not flush the whiteboard debounce');
-  await view.unmount();
-});
-
-
 test('SHEET-AC-107: a filled cell gets a readable default text color', async () => {
   const content = JSON.stringify({
     schemaVersion: 1,

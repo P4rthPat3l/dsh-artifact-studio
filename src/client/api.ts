@@ -281,8 +281,6 @@ export function errorKey(code: string | undefined): string {
       return 'error.unsupportedType';
     case 'artifact/invalid-sheet':
       return 'error.sheetInvalid';
-    case 'artifact/invalid-board':
-      return 'error.boardInvalid';
     default:
       return 'error.generic';
   }
@@ -308,22 +306,6 @@ export function designFailureMessage(error: unknown): string | undefined {
  */
 export function describeFailure(t: Translator, error: unknown): string {
   return designFailureMessage(error) ?? t(errorKey(codeOf(error)));
-}
-
-/**
- * Save an export in the browser as a download.
- * @param file the exported file.
- */
-export function downloadBlob(blob: Blob, fileName: string): void {
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = fileName;
-  anchor.rel = 'noopener';
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
 export function download(file: ExportedFile): void {

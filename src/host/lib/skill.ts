@@ -28,7 +28,7 @@ When the user says to always do something, remember a structure, or use a conven
 
 ## When to use an artifact
 
-Use \`artifact_create\` when the user asks for an artifact, an artifact page, an artifact doc, an artifact design, a spreadsheet, or a whiteboard. Pick \`page\` for an artifact page, \`doc\` for an artifact doc, \`design\` for an OpenPencil design, and \`sheet\` for a spreadsheet. Never write a file in the project instead. Write a project file only when the user asks for a file in the repo.
+Use \`artifact_create\` when the user asks for an artifact, an artifact page, an artifact doc, an artifact design, or a spreadsheet. Pick \`page\` for an artifact page, \`doc\` for an artifact doc, \`design\` for an OpenPencil design, and \`sheet\` for a spreadsheet. Never write a file in the project instead. Write a project file only when the user asks for a file in the repo.
 
 ## Precedence
 
@@ -49,7 +49,6 @@ An artifact belongs to the session's project unless the user opened or reference
 - \`page\` for anything visual or interactive: dashboards, one-pagers, explainers, calculators, diagrams, and clickable prototypes the user asks for as a page.
 - \`design\` for a layout the user will open on a canvas: UI mockups, wireframes, layout explorations, and screens that export as PNG, SVG, or a \`.fig\` document.
 - \`sheet\` for tabular work the user will edit as a spreadsheet: budgets, trackers, inventories, comparisons, and any grid whose cells hold numbers or formulas. Export is CSV or XLSX.
-- board for whiteboard work: flows, sketches, diagrams, and spatial maps the user will draw on. Export is a native .excalidraw scene, and the panel also exports PNG or SVG.
 
 A request for a mockup or a wireframe always gets \`design\`, even when it shows a flow. Draw each step of the flow as its own frame. If the user offers both, such as "a page or a mockup", make a mockup. Use \`page\` for a mockup only when the user asks for a page or for something clickable. Never title or describe a page as a mockup.
 
@@ -163,18 +162,6 @@ Formatting is per cell: bold, italic, underline, strike, left/center/right align
 
 A sheet exports as CSV (first sheet only) or XLSX (every sheet, with styles, formulas, and cached results). The user can also print it or save it as PDF from the panel. Before saving, check sheet names, header labels, units, and that every total has a formula.
 
-## Whiteboards
-
-A whiteboard is a native Excalidraw scene. Use artifact_create with type board when the user asks for a whiteboard, a diagram, a flow, a sketch, or a spatial map. Do not use a page for a diagram the user will draw on.
-
-Call artifact_brief with type board for the scene format and rules, then create the scene. The stored content is one .excalidraw object with type excalidraw, version 2, elements, appState, and files. Every element has an id, a type, x, y, width, and height. The agent can add rectangles, ellipses, diamonds, text, arrows, and lines through artifact_board_update.
-
-Edit with artifact_board_update, not by rewriting the JSON. Read the board first, then send one operations array with the current baseVersion: add shapes, text, arrows, or lines; update an element by id; delete ids; or clear. A shape with text produces a separate centered text element, so update both when you move or rename the shape.
-
-Use Excalifont and a small palette: dark ink on white, one accent fill, and one success or warning fill. Align boxes and arrows on a grid and leave space between groups. Keep labels short. Use a doc for long prose.
-
-A whiteboard exports as an .excalidraw file from artifact_export. The panel also exports the current board as PNG or SVG. The panel uses the real Excalidraw editor, so its toolbar and menus are Excalidraw's own interface; the host still owns the version, title, history, and export.
-
 ## Documents
 
 - Lead with the answer or the decision, then the detail.
@@ -210,7 +197,7 @@ Tell the user in one or two sentences what you made or changed. Do not repeat th
 export const ARTIFACT_DESIGN_SKILL: BundledSkill = {
   name: 'artifact-design',
   description:
-    'Author artifact pages, documents, spreadsheets, whiteboards, and mockups: pick a recipe, follow the brief, build from the kit, edit cells or board elements, save conventions, and save each version once.',
+    'Author artifact pages, documents, spreadsheets, and mockups: pick a recipe, follow the brief, build from the kit, edit cells, save conventions, and save each version once.',
   whenToUse: 'Load before artifact_create, when the user asks for an artifact, before an artifact_update that changes layout or styling, and when the user asks to remember an artifact convention.',
   source: 'bundled',
   content: CONTENT,

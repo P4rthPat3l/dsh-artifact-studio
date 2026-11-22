@@ -177,13 +177,6 @@ const CSS = `
 .art-cover-fallback { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; color: var(--dsw-alias-label-secondary); }
 .art-cover-fallback svg { width: 26px; height: 26px; opacity: .55; }
 .art-cover-design { display: block; width: 100%; height: 100%; object-fit: contain; background: var(--dsw-alias-bg-document-preview, var(--dsw-alias-bg-layer-2)); }
-.art-cover-board { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; padding: 10px; background: var(--dsw-alias-bg-base); overflow: hidden; }
-.art-cover-board-svg { width: 100%; height: 100%; }
-.art-board { position: relative; flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
-.art-board-mount { position: absolute; inset: 0; min-height: 0; outline: none; }
-.art-board-canvas { width: 100%; height: 100%; min-height: 0; }
-.art-board-canvas .excalidraw { width: 100%; height: 100%; }
-.art-board-error { display: flex; flex: 1; align-items: center; justify-content: center; padding: 24px; color: var(--dsw-alias-label-secondary); font-size: 12px; }
 .art-cover-sheet { display: flex; flex-direction: column; gap: 4px; height: 100%; padding: 10px 10px 8px; background: var(--dsw-alias-bg-base); overflow: hidden; }
 .art-cover-sheet-name { flex: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; font-weight: 600; color: var(--dsw-alias-label-secondary); }
 .art-cover-sheet-table { display: flex; flex-direction: column; border: .5px solid var(--dsw-alias-border-l1); border-radius: 4px; overflow: hidden; }

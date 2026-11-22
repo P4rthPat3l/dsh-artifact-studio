@@ -1,7 +1,6 @@
 import type { Manifest, Scope } from '../../contract.js';
 import { checkPage } from './checks.js';
 import { SheetError, applySheetOperations, checkSheetWorkbook, parseSheetWorkbook, serializeSheetWorkbook, sheetOverview } from '../../sheet/index.js';
-import { BoardError, applyBoardOperations, checkBoard, parseBoardScene, serializeBoardScene, summarizeBoard } from '../../board.js';
 import { MAX_INSTRUCTIONS } from './guide.js';
 import type { GuidePatch } from './guide.js';
 import type { ResolvedRecipe } from './recipes.js';
@@ -133,23 +132,6 @@ async function writtenWarnings(
       throw error;
     }
   }
-  if (type === 'board') {
-    const check = (text: string): string[] => {
-      try {
-        return checkBoard(parseBoardScene(text));
-      } catch {
-        return [];
-      }
-    };
-    if (content !== undefined) return check(content);
-    if (readEdited === undefined) return [];
-    try {
-      return check((await readEdited()).content);
-    } catch (error) {
-      if (error instanceof ArtifactError) return ['checks-unavailable: the version was saved, but its content could not be read for checks. Do not retry the write; read the saved version.'];
-      throw error;
-    }
-  }
   if (type !== 'page') return [];
   const options = recipe === undefined ? {} : { recipe };
   if (content !== undefined) return checkPage(content, options);
@@ -168,13 +150,6 @@ function warningsFor(type: string, content: string | undefined, recipe: Resolved
   if (type === 'sheet' && content !== undefined) {
     try {
       return checkSheetWorkbook(parseSheetWorkbook(content));
-    } catch {
-      return [];
-    }
-  }
-  if (type === 'board' && content !== undefined) {
-    try {
-      return checkBoard(parseBoardScene(content));
     } catch {
       return [];
     }
@@ -279,7 +254,7 @@ const SUMMARY_SCHEMA = {
   properties: {
     id: { type: 'string' },
     scope: { type: 'string', enum: ['workspace', 'library'] },
-    type: { type: 'string', enum: ['page', 'doc', 'design', 'sheet', 'board'] },
+    type: { type: 'string', enum: ['page', 'doc', 'design', 'sheet'] },
     title: { type: 'string' },
     version: { type: 'integer' },
     updatedAt: { type: 'string' },
@@ -328,9 +303,9 @@ export function createTools(host: ToolHost): ToolDefinition[] {
       additionalProperties: false,
       required: ['type', 'title', 'content'],
       properties: {
-        type: { type: 'string', enum: ['page', 'doc', 'design', 'sheet', 'board'], description: 'page for HTML, doc for Markdown, design for OpenPencil Design JSX, sheet for a JSON workbook, board for a native Excalidraw whiteboard scene. A mockup or wireframe is always design. For a design, load the artifact-design skill first: no imports, no HTML. If a design fails for a reason other than its source, report the error; never redo it as a page.' },
+        type: { type: 'string', enum: ['page', 'doc', 'design', 'sheet'], description: 'page for HTML, doc for Markdown, design for OpenPencil Design JSX, sheet for a JSON workbook. A mockup or wireframe is always design. For a design, load the artifact-design skill first: no imports, no HTML. If a design fails for a reason other than its source, report the error; never redo it as a page.' },
         title: { type: 'string', description: 'Short title, 1 to 120 characters.' },
-        content: { type: 'string', description: 'The full HTML document, Markdown text, Design JSX source, sheet workbook JSON, or Excalidraw scene JSON, up to 2 MiB.' },
+        content: { type: 'string', description: 'The full HTML document, Markdown text, Design JSX source, or sheet workbook JSON, up to 2 MiB.' },
         recipe: RECIPE_PARAM,
         ...DESIGN_SELECTION,
         scope: SCOPE_PARAM,
@@ -396,10 +371,6 @@ export function createTools(host: ToolHost): ToolDefinition[] {
             description: 'Per-sheet size and counts for a sheet artifact.',
             items: { type: 'object' },
           },
-          boardInfo: {
-            type: 'object',
-            description: 'Element and file counts plus visible bounds for a whiteboard.',
-          },
         },
       },
       render: (_args, value) => {
@@ -410,10 +381,6 @@ export function createTools(host: ToolHost): ToolDefinition[] {
         const sheetLine = sheetRows.length === 0
           ? ''
           : '\n\nSheets: ' + sheetRows.map((row) => String(row.name) + ' (' + String(row.rows) + ' x ' + String(row.columns) + ', ' + String(row.cells) + ' cells)').join('; ') + '.';
-        const boardInfo = record(fields.boardInfo ?? null);
-        const boardLine = boardInfo.elements === undefined
-          ? ''
-          : '\n\nBoard: ' + String(boardInfo.elements) + ' element(s), ' + String(boardInfo.files ?? 0) + ' file(s).';
         const summaryLine = info.nodes === undefined
           ? ''
           : `\n\nDesign: ${String(info.nodes)} nodes, ${String(info.pages)} page(s), fonts ${Array.isArray(info.fonts) && info.fonts.length > 0 ? info.fonts.map(String).join(', ') : 'none'}.`
@@ -421,7 +388,7 @@ export function createTools(host: ToolHost): ToolDefinition[] {
         return [
           {
             type: 'text',
-            text: `${line(artifact, 'Artifact')} Showing version ${String(fields.readVersion)}.${summaryLine}${sheetLine}${boardLine}\n\n${String(fields.content)}`,
+            text: `${line(artifact, 'Artifact')} Showing version ${String(fields.readVersion)}.${summaryLine}${sheetLine}\n\n${String(fields.content)}`,
           },
         ];
       },
@@ -442,13 +409,6 @@ export function createTools(host: ToolHost): ToolDefinition[] {
         ...(result.manifest.type === 'sheet'
           ? { sheetInfo: sheetOverview(parseSheetWorkbook(result.content)).map((item) => ({ name: item.name, rows: item.rows, columns: item.columns, cells: item.cells, formulas: item.formulas })) }
           : {}),
-        ...(result.manifest.type === 'board'
-          ? (() => {
-            const scene = parseBoardScene(result.content);
-            const summary = summarizeBoard(scene);
-            return { boardInfo: { elements: summary.elements, types: summary.types, files: summary.files, bounds: summary.bounds === null ? null : { ...summary.bounds } } };
-          })()
-          : {}),
       };
     },
   };
@@ -461,7 +421,6 @@ export function createTools(host: ToolHost): ToolDefinition[] {
       'A layout or styling change follows the artifact-design skill and the same precedence: the user\'s request, then saved conventions, then the recipe, then the design system, then your own choices. Send recipe to set or change it.',
       'For a design, send the complete Design JSX source as content and read it first if you did not write it; edits are applied and validated too, but a design rewrite is usually smaller as one content value.',
       'For a sheet, prefer artifact_sheet_update with cell operations; send the complete workbook JSON as content only when you rewrite most of it.',
-      'For a whiteboard, prefer artifact_board_update; send complete scene JSON only when you rewrite most of it.',
       'Each call writes a version the user sees. Put every fix for one request, including all returned warnings, into one update; never send one update per finding.',
     ].join('\n'),
     parameters: {
@@ -471,7 +430,7 @@ export function createTools(host: ToolHost): ToolDefinition[] {
       properties: {
         id: { type: 'string' },
         baseVersion: { type: 'integer', description: 'The version your change is based on.' },
-        content: { type: 'string', description: 'Complete replacement content. Use this or edits. For a design, send the complete Design JSX source; for a sheet, prefer artifact_sheet_update; for a whiteboard, prefer artifact_board_update.' },
+        content: { type: 'string', description: 'Complete replacement content. Use this or edits. For a design, send the complete Design JSX source; for a sheet, prefer artifact_sheet_update.' },
         edits: {
           type: 'array',
           description: 'Replace-once edits applied in order. Each oldText must occur exactly once.',
@@ -596,88 +555,6 @@ export function createTools(host: ToolHost): ToolDefinition[] {
     },
   };
 
-  const boardUpdate: ToolDefinition = {
-    name: 'artifact_board_update',
-    description: [
-      'Edit a whiteboard scene without rewriting the whole .excalidraw JSON. Read the artifact first when the user may have edited it, then send one operations array with the current baseVersion.',
-      'Operations run in order: add shapes, text, arrows, or lines; update one element by id; delete ids; or clear. A shape can carry a text label, which becomes a separate centered text element. The whole scene is validated before it is saved.',
-      'Use artifact_read for the scene and ids, and artifact_update when you rewrite most of the scene or change its title.',
-    ].join('\n'),
-    parameters: {
-      type: 'object',
-      additionalProperties: false,
-      required: ['id', 'baseVersion', 'operations'],
-      properties: {
-        id: { type: 'string', description: 'Whiteboard artifact id.' },
-        baseVersion: { type: 'integer', description: 'The version you read; a stale value is refused.' },
-        operations: {
-          type: 'array',
-          description: 'Ordered edits. add {op:"add",elements:[...]} with shape, text, arrow, or line inputs; update {op:"update",id,patch}; delete {op:"delete",ids}; clear {op:"clear"}.',
-          items: { type: 'object' },
-        },
-        workspaceId: WORKSPACE_PARAM,
-      },
-    },
-    output: {
-      schema: {
-        ...WRITE_SCHEMA,
-        properties: {
-          ...WRITE_SCHEMA.properties,
-          notes: { type: 'array', items: { type: 'string' } },
-          board: { type: 'object' },
-        },
-        required: [...WRITE_SCHEMA.required, 'notes', 'board'],
-      },
-      render: (_args, value) => {
-        const fields = record(value);
-        const notes = Array.isArray(fields.notes) ? fields.notes.map(String) : [];
-        const board = record(fields.board ?? {});
-        const boardLine = board.elements === undefined
-          ? ''
-          : '\nBoard: ' + String(board.elements) + ' element(s), ' + String(board.files ?? 0) + ' file(s).';
-        const noteLines = notes.length === 0 ? '' : '\n' + notes.map((note) => '- ' + note).join('\n');
-        return [{ type: 'text', text: writeText(value, 'Updated') + boardLine + noteLines }];
-      },
-      presentationMeta: (_args, value) => cardMeta(value),
-    },
-    async execute(args, exec) {
-      const fields = fieldsOf(args);
-      const id = requiredString(fields, 'id');
-      const target = await targetFor(host, exec, id.startsWith('art_lib_') ? 'library' : undefined, optionalString(fields, 'workspaceId'));
-      const current = await service.read(target, id);
-      if (current.manifest.type !== 'board') {
-        throw new ArtifactError('artifact/unsupported-type', 'artifact_board_update works only on whiteboard artifacts.', { type: current.manifest.type });
-      }
-      let applied;
-      try {
-        applied = applyBoardOperations(current.content, fields.operations);
-      } catch (error) {
-        if (error instanceof BoardError) {
-          throw new ArtifactError(error.code === 'board/operation' ? 'artifact/bad-request' : 'artifact/invalid-board', error.message, { message: error.message });
-        }
-        throw error;
-      }
-      const content = serializeBoardScene(applied.scene);
-      const manifest = await service.update(target, id, {
-        baseVersion: requiredInteger(fields, 'baseVersion'),
-        content,
-        source: { origin: 'agent', action: 'update', ...(exec.agent === undefined ? {} : { sessionId: exec.agent.id }) },
-      });
-      const boardSummary = summarizeBoard(applied.scene);
-      return {
-        ...summary(manifest, target),
-        warnings: checkBoard(applied.scene),
-        notes: applied.notes,
-        board: {
-          elements: boardSummary.elements,
-          types: { ...boardSummary.types },
-          files: boardSummary.files,
-          bounds: boardSummary.bounds === null ? null : { ...boardSummary.bounds },
-        },
-      };
-    },
-  };
-
   const list: ToolDefinition = {
     name: 'artifact_list',
     description: 'List artifacts in this project or the profile library, newest first, at most 50 per call. Pass workspaceId to list another project.',
@@ -687,7 +564,7 @@ export function createTools(host: ToolHost): ToolDefinition[] {
       properties: {
         scope: { type: 'string', enum: ['workspace', 'library'], description: 'Defaults to workspace.' },
         workspaceId: WORKSPACE_PARAM,
-        type: { type: 'string', enum: ['page', 'doc', 'design', 'sheet', 'board'] },
+        type: { type: 'string', enum: ['page', 'doc', 'design', 'sheet'] },
         query: { type: 'string', description: 'Title substring, case-insensitive.' },
         recipe: { type: 'string', description: 'Only artifacts that follow this recipe.' },
         offset: { type: 'integer' },
@@ -750,12 +627,12 @@ export function createTools(host: ToolHost): ToolDefinition[] {
   const exportTool: ToolDefinition = {
     name: 'artifact_export',
     description:
-      'Write an artifact to a standalone file and return its path. A page exports as html; a doc exports as md, docx, or printable html; a design exports as png, svg, .fig, a self-contained view-only html viewer, or a smaller html page with an svg scene and selectable text; a sheet exports as csv (first sheet) or xlsx (every sheet); a whiteboard exports as an .excalidraw scene.',
+      'Write an artifact to a standalone file and return its path. A page exports as html; a doc exports as md, docx, or printable html; a design exports as png, svg, .fig, a self-contained view-only html viewer, or a smaller html page with an svg scene and selectable text; a sheet exports as csv (first sheet) or xlsx (every sheet).',
     parameters: {
       type: 'object',
       additionalProperties: false,
       required: ['id', 'format'],
-      properties: { id: { type: 'string' }, format: { type: 'string', enum: ['html', 'md', 'docx', 'png', 'svg', 'fig', 'html-svg', 'csv', 'xlsx', 'excalidraw'] },
+      properties: { id: { type: 'string' }, format: { type: 'string', enum: ['html', 'md', 'docx', 'png', 'svg', 'fig', 'html-svg', 'csv', 'xlsx'] },
         version: { type: 'integer', minimum: 1, description: 'Saved version to export. Omit for the current version.' },
         workspaceId: WORKSPACE_PARAM },
     },
@@ -844,7 +721,7 @@ export function createTools(host: ToolHost): ToolDefinition[] {
       additionalProperties: false,
       required: ['type'],
       properties: {
-        type: { type: 'string', enum: ['page', 'doc', 'design', 'sheet', 'board'] },
+        type: { type: 'string', enum: ['page', 'doc', 'design', 'sheet'] },
         recipe: { type: 'string', description: 'A recipe id. Omit to list the recipes for this type.' },
         ...DESIGN_SELECTION,
         scope: SCOPE_PARAM,
@@ -952,5 +829,5 @@ export function createTools(host: ToolHost): ToolDefinition[] {
       return { ...summary(manifest, target), warnings: [] };
     },
   };
-  return [create, read, update, sheetUpdate, boardUpdate, list, remove, exportTool, designRead, designUpdate, brief, guideUpdate, designList, rebase];
+  return [create, read, update, sheetUpdate, list, remove, exportTool, designRead, designUpdate, brief, guideUpdate, designList, rebase];
 }

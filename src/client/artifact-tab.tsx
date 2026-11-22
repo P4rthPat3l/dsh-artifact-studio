@@ -22,7 +22,7 @@ import {
 import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives';
 import { FORMATS_BY_TYPE, formatArtifactAddress, parseArtifactAddress } from '../contract.js';
 import type { ArtifactAddress, ArtifactPayload, DesignSelection, ExportFormat, VersionEntry } from '../contract.js';
-import { api, codeOf, download, downloadBlob, errorKey } from './api.js';
+import { api, codeOf, download, errorKey } from './api.js';
 import type { CanvasSnapshot, DesignCanvasHandle, SelectedLayer } from './canvas/entry.js';
 import { DesignCanvasView } from './design-canvas-view.jsx';
 import { DesignInspector, layerGlyph, layerTypeLabel } from './design-inspector.jsx';
@@ -35,8 +35,6 @@ import type { InputActions, TabInfo, TabProps, Translator, UseTabInfo } from './
 import { HistoryPanel } from './history.jsx';
 import { announceListChange, announceVersion, notify, useAnnouncedVersion } from './store.js';
 import { PageFrame, SourceEditor } from './page-view.jsx';
-import { BoardView } from './board-view.jsx';
-import type { BoardEditorHandle } from './board/entry.js';
 import { SheetView } from './sheet-view.jsx';
 import { buildDesignQuote, buildReference, plainRequest, quoteText } from './review.js';
 import type { Quote } from './review.js';
@@ -326,7 +324,7 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
   useEffect(() => info?.tab.actions?.bindCommands({ refresh: () => guarded(reload) }), [info?.tab.actions, guarded, reload]);
 
   useEffect(() => {
-    if ((payload?.manifest.type !== 'doc' && payload?.manifest.type !== 'sheet' && payload?.manifest.type !== 'board') || draft === null || conflict || saving) return;
+    if ((payload?.manifest.type !== 'doc' && payload?.manifest.type !== 'sheet') || draft === null || conflict || saving) return;
     const timer = setTimeout(() => void model.save(), 1200);
     return () => clearTimeout(timer);
   }, [draft, conflict, saving, model, payload?.manifest.type]);
@@ -407,38 +405,8 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
     return model.getSnapshot().payload?.version ?? null;
   };
 
-  const boardHandleRef = useRef<BoardEditorHandle | null>(null);
-
-  /** A download name for a client-rendered board image. */
-  const boardImageName = (extension: string): string => {
-    const slug = (payload?.manifest.title ?? 'whiteboard').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'whiteboard';
-    const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..*$/, '').replace('T', '-');
-    return slug + '-v' + String(viewing?.version ?? payload?.version ?? 1) + '-' + stamp + '.' + extension;
-  };
-
-  const exportBoardImage = async (format: 'png' | 'svg'): Promise<void> => {
-    const handle = boardHandleRef.current;
-    if (handle === null) throw new Error(t('error.generic'));
-    handle.flush();
-    const image = await handle.createImage(format);
-    if (image === null) throw new Error(t('error.generic'));
-    const name = boardImageName(image.extension);
-    downloadBlob(image.blob, name);
-    notify(t('export.downloaded', { name }));
-  };
-
   const output = async (format: ExportFormat | 'print') => {
     if (busy) return;
-    if (format !== 'print' && payload?.manifest.type === 'board' && (format === 'png' || format === 'svg')) {
-      setBusy(true);
-      try {
-        const version = await resolveOutput();
-        if (version === null) return;
-        await exportBoardImage(format);
-      } catch (error) { notify(error instanceof Error && error.message !== '' ? error.message : t('error.generic')); }
-      finally { setBusy(false); }
-      return;
-    }
     setBusy(true);
     try {
       const version = await resolveOutput();
@@ -575,7 +543,7 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
   const tone = conflict || (failure !== undefined && !saving) ? 'error' : saving ? 'warn' : undefined;
   const identity = address.scope === 'workspace' ? workspaceName ?? address.workspaceId : t('scope.library');
   const showEditor = mode === 'source' && !readOnly && (editing || draft !== null);
-  const unpanelled = type === 'doc' || type === 'sheet' || type === 'board';
+  const unpanelled = type === 'doc' || type === 'sheet';
 
   const exportLabel = (format: ExportFormat): string => {
     if (type === 'design' && format === 'html') return t('export.mockupHtml');
@@ -584,11 +552,7 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
   };
   const exportEntries: MenuEntry[] = [
     ...FORMATS_BY_TYPE[type].map(format => ({ id: format, label: exportLabel(format) })),
-    ...(type === 'board' ? [
-      { id: 'png', label: t('export.png') },
-      { id: 'svg', label: t('export.svg') },
-    ] : []),
-    ...(type === 'design' || type === 'board' ? [] : [
+    ...(type === 'design' ? [] : [
       { type: 'separator' as const, id: 'export-gap' },
       { id: 'print', label: t('export.print') },
     ]),
@@ -600,7 +564,7 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
   };
   const moreEntries: MenuEntry[] = [
     ...(overlay ? [...exportEntries, { type: 'separator' as const, id: 'more-gap' }] : []),
-    ...(type === 'design' || type === 'sheet' || type === 'board' || readOnly ? [] : [{ id: 'rebase', label: t('generation.rebase'), disabled: busy || saving || conflict }]),
+    ...(type === 'design' || type === 'sheet' || readOnly ? [] : [{ id: 'rebase', label: t('generation.rebase'), disabled: busy || saving || conflict }]),
     { id: 'rename', label: t('tab.rename') },
     { id: 'reload', label: t('tab.reload') },
     { type: 'separator', id: 'danger-gap' },
@@ -679,7 +643,7 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
           </div>
         </div>
         <div className="art-actions art-editor-actions">
-          {type === 'doc' || type === 'sheet' || type === 'board' ? null : (
+          {type === 'doc' || type === 'sheet' ? null : (
             <SegmentedControl<Mode>
               id={'art-mode-' + id}
               className="art-segment"
@@ -702,7 +666,7 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
           {type === 'design' && mode === 'edit' && !readOnly ? (
             <IconButton label={t('canvas.inspector')} icon={<IconSlidersTwoOutlineRegular size={16} />} pressed={inspectorOpen} onClick={() => { if (inspectorOpen) setInspectorOpen(false); else { setHistoryOpen(false); setInspectorOpen(true); } }} />
           ) : null}
-          {draft === null || readOnly ? null : <IconButton label={t('tab.save')} icon={<IconSaveOutlineRegular size={16} />} disabled={conflict} onClick={() => { boardHandleRef.current?.flush(); void model.save(); }} />}
+          {draft === null || readOnly ? null : <IconButton label={t('tab.save')} icon={<IconSaveOutlineRegular size={16} />} disabled={conflict} onClick={() => void model.save()} />}
           <IconButton buttonRef={historyButton} label={t('tab.history')} icon={<IconClockOutlineRegular size={16} />} pressed={historyOpen} onClick={() => { if (historyOpen) closeHistory(); else openHistory(); }} />
           {overlay ? null : (
             <Menu
@@ -729,7 +693,7 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
           />
         </div>
       </header>
-      {type === 'design' || type === 'sheet' || type === 'board' ? null : <div className="art-bar"><span>{t(selectedPayload.generation ? 'generation.pinned' : 'generation.legacy')}{selectedPayload.generation?.system ? ': ' + t('design.revision', { name: selectedPayload.generation.system.name, revision: selectedPayload.generation.system.revision }) : ''}</span></div>}
+      {type === 'design' || type === 'sheet' ? null : <div className="art-bar"><span>{t(selectedPayload.generation ? 'generation.pinned' : 'generation.legacy')}{selectedPayload.generation?.system ? ': ' + t('design.revision', { name: selectedPayload.generation.system.name, revision: selectedPayload.generation.system.revision }) : ''}</span></div>}
       {rebasing ? <RebaseDialog t={t} where={where} onClose={() => setRebasing(false)} onApply={rebase} /> : null}
       {renaming ? <form className="art-inline-form" onSubmit={event => { event.preventDefault(); void rename(); }}>
         <input aria-label={t('tab.rename')} value={renameText} maxLength={120} autoFocus onChange={event => setRenameText(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') setRenaming(false); }} />
@@ -753,7 +717,7 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
           id={unpanelled ? undefined : 'art-mode-' + id + '-' + mode + '-panel'}
           aria-labelledby={unpanelled ? undefined : 'art-mode-' + id + '-' + mode}
         >
-          {(type === 'page' || type === 'sheet' || type === 'board') && selection !== null && !historyOpen ? <SelectionBar quote={selection.text} askLabel={t('agent.ask')} dismissLabel={t('tab.dismiss')} onAsk={() => void askAgent(selection)} onDismiss={() => setSelection(null)} /> : null}
+          {(type === 'page' || type === 'sheet') && selection !== null && !historyOpen ? <SelectionBar quote={selection.text} askLabel={t('agent.ask')} dismissLabel={t('tab.dismiss')} onAsk={() => void askAgent(selection)} onDismiss={() => setSelection(null)} /> : null}
           {type === 'design' && mode !== 'source' && !readOnly && canvasSelection[0] !== undefined ? (
             <LayerBar
               t={t}
@@ -767,9 +731,7 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
               onDismiss={() => canvasHandle?.clearSelection()}
             />
           ) : null}
-          {type === 'board' ? (
-            <BoardView content={text} revision={(viewing?.version ?? 0) + ':' + state.revision} editable={!readOnly && !conflict} label={payload.manifest.title} loadingLabel={t('empty.loading')} failedLabel={t('error.generic')} dark={dark} t={t} onChange={value => model.edit(value)} onSave={() => void model.save()} onSelectionText={reportSelection} onHandle={handle => { boardHandleRef.current = handle; }} />
-          ) : type === 'sheet' ? (
+          {type === 'sheet' ? (
             <SheetView content={text} revision={(viewing?.version ?? 0) + ':' + state.revision} editable={!readOnly && !conflict} label={payload.manifest.title} loadingLabel={t('empty.loading')} failedLabel={t('error.generic')} design={selectedPayload.design} dark={dark} t={t} onChange={value => model.edit(value)} onSave={() => void model.save()} onSelectionText={reportSelection} />
           ) : type === 'doc' ? (
             <DocView markdown={text} revision={(viewing?.version ?? 0) + ':' + state.revision} editable={!readOnly && !conflict} label={payload.manifest.title} loadingLabel={t('empty.loading')} failedLabel={t('error.generic')} design={selectedPayload.design} dark={dark} t={t} onChange={value => model.edit(value)} onSave={() => void model.save()} onSelectionText={reportSelection} selectionAction={selection === null ? null : <Button size="sm" variant="primary" icon={<IconSparkleRegular size={14} />} onMouseDown={event => event.preventDefault()} onClick={() => void askAgent(selection)}>{t('agent.ask')}</Button>} />
