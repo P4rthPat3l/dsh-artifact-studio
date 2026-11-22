@@ -1,4 +1,4 @@
-import { ARTIFACT_DESIGN_SKILL } from './lib/skill.js';
+import { ARTIFACT_DESIGN_SKILL, VISUAL_CODEBASE_WALKTHROUGH_SKILL } from './lib/skill.js';
 import type { BundledSkill } from './lib/skill.js';
 
 export const name = 'dsh-artifact-studio-skill';
@@ -11,10 +11,11 @@ export interface SkillHostContext {
 }
 
 /**
- * Register the artifact design skill. It is a separate plugin, so a
+ * Register the artifact skills. It is a separate plugin, so a
  * composition without the skill registry still loads the tools and the route.
  * @param ctx the plugin context.
  */
 export function apply(ctx: SkillHostContext): void {
   ctx.skills.register(ARTIFACT_DESIGN_SKILL);
+  ctx.skills.register(VISUAL_CODEBASE_WALKTHROUGH_SKILL);
 }
