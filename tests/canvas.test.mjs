@@ -11,6 +11,8 @@ import { SceneGraph } from '@open-pencil/scene-graph';
 import { designJSXRenderer } from '@open-pencil/core/design-jsx';
 import { selectionToJSX } from '@open-pencil/design-jsx';
 import { createDefaultEditorState, createEditor } from '@open-pencil/core/editor';
+import { initCanvasKit } from '@open-pencil/core/io/formats/raster';
+import { renderLayer } from '../src/client/canvas/layer-export.ts';
 import { reactive } from 'vue';
 
 const WORKSPACE_BASE = 'artifacts/workspaces';
@@ -172,6 +174,22 @@ test('FEAT-007 AC-019: a canvas save stores the serialization as a new version',
   const preview = await service.preview(target, manifest.id);
   assert.equal(preview.mediaType, 'image/png');
   assert.ok(preview.width > 0 && preview.height > 0);
+});
+
+test('FEAT-007 AC-069: one layer renders on its own from the live graph', async () => {
+  const source = '<Frame name="Wide" x={0} y={0} w={420} h={120} bg="#112233" /><Frame name="Tall" x={500} y={0} w={180} h={320} bg="#445566" /><Frame name="Empty" x={800} y={0} w={100} h={50} />';
+  const first = await compile(source);
+  const ck = await initCanvasKit();
+  const wide = await renderLayer(ck, first.graph, first.page.id, first.page.childIds[0], 'png');
+  const wideBytes = Buffer.from(wide.data);
+  assert.equal(wide.mediaType, 'image/png');
+  assert.deepEqual([wideBytes.readUInt32BE(16), wideBytes.readUInt32BE(20)], [420, 120]);
+  const empty = await renderLayer(ck, first.graph, first.page.id, first.page.childIds[2], 'png');
+  const emptyBytes = Buffer.from(empty.data);
+  assert.deepEqual([emptyBytes.readUInt32BE(16), emptyBytes.readUInt32BE(20)], [100, 50], 'the file keeps the layer box');
+  const tall = await renderLayer(ck, first.graph, first.page.id, first.page.childIds[1], 'svg');
+  assert.equal(tall.mediaType, 'image/svg+xml');
+  assert.match(new TextDecoder().decode(tall.data), /<svg[^>]*width="180"/);
 });
 
 test('FEAT-007 AC-026: the build emits a loader chunk and ships the engine assets', async () => {

@@ -21,7 +21,7 @@ let canvasFake;
 let blobs;
 
 /** What the fake canvas chunk does for the current test. */
-const canvasDispatch = { enabled: false, mounts: [], attempts: 0, gate: null, fail: null, snapshot: null, quote: null };
+const canvasDispatch = { enabled: false, mounts: [], attempts: 0, gate: null, fail: null, snapshot: null, quote: null, layerExport: null };
 
 /** A snapshot with no layers, matching an empty canvas. */
 function emptyCanvasSnapshot() {
@@ -150,6 +150,10 @@ before(async () => {
         preview(prop, value) { this.previews = [...(this.previews ?? []), [prop, value]]; },
         commit(prop, value, previous) { this.commits = [...(this.commits ?? []), [prop, value, previous]]; },
         quoteSelection() { return canvasDispatch.quote ?? CANVAS_QUOTE; },
+        async exportSelection(format) {
+          this.layerExports = [...(this.layerExports ?? []), format];
+          return canvasDispatch.layerExport ?? { data: '', mediaType: 'image/png', name: 'Layer' };
+        },
         destroy() { this.destroyed = true; },
       };
       canvasDispatch.mounts.push(handle);
@@ -176,6 +180,7 @@ beforeEach(() => {
   canvasDispatch.fail = null;
   canvasDispatch.snapshot = null;
   canvasDispatch.quote = null;
+  canvasDispatch.layerExport = null;
 });
 
 const DESIGN_INFO = {
@@ -2262,6 +2267,31 @@ test('FEAT-007 AC-047: a selected layer shows the layer bar', async () => {
     await click(bar.querySelector('[aria-label="tab.dismiss"]'));
     assert.equal(handle.cleared, 1, 'dismiss did not clear the selection');
   } finally { await view.unmount(); }
+});
+
+test('FEAT-007 AC-069: the layer bar downloads the selected layer on its own', async () => {
+  const { host, view } = await canvasFixture('06901');
+  const downloads = [];
+  window.HTMLAnchorElement.prototype.click = function anchorClick() { downloads.push(this.download); };
+  try {
+    const handle = canvasDispatch.mounts[0];
+    canvasDispatch.layerExport = { data: 'iVBORw0KGgo=', mediaType: 'image/png', name: 'Wide card' };
+    await act(async () => {
+      handle.emit({ ...handle.snapshot, selection: [{ id: 'n1', name: 'Wide card', type: 'FRAME', parentName: '' }] });
+      await settle(30);
+    });
+    const bar = view.container.querySelector('.art-layer-bar');
+    assert.ok(bar.querySelector('[aria-label="export.selection"]'), 'the layer bar has no export control');
+    await click(bar.querySelector('[aria-label="export.selection"]'));
+    const png = [...view.container.querySelectorAll('[role="menuitem"]')].find(item => item.textContent === 'export.png');
+    assert.ok(png, 'the export menu has no PNG entry');
+    await click(png);
+    assert.deepEqual(handle.layerExports, ['png'], 'the canvas did not export the layer');
+    assert.deepEqual(downloads, ['wide-card.png'], 'the download name does not carry the layer');
+    assert.equal(host.calls.some(call => call.endpoint === 'export'), false, 'a layer export reached the host');
+  } finally {
+    await view.unmount();
+  }
 });
 
 test('FEAT-007 AC-048: Edit with agent quotes the selected layer', async () => {

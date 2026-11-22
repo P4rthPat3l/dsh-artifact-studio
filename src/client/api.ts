@@ -308,7 +308,7 @@ export function describeFailure(t: Translator, error: unknown): string {
   return designFailureMessage(error) ?? t(errorKey(codeOf(error)));
 }
 
-export function download(file: ExportedFile): void {
+export function download(file: Pick<ExportedFile, 'data' | 'mediaType' | 'fileName'>): void {
   const binary = atob(file.data);
   const bytes = new Uint8Array(binary.length);
   for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);

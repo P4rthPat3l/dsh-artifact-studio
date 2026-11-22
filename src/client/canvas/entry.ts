@@ -12,6 +12,7 @@ import { CanvasRoot, LayerTreeRoot, provideEditor } from '@open-pencil/vue';
 import { bundledIconProvider } from '../../icon-set.js';
 import { createCanvasBridge } from './bridge.js';
 import type { SelectionMode } from './bridge.js';
+import { renderLayer } from './layer-export.js';
 import { CanvasSurface } from './surface.js';
 import { clampZoom } from './zoom.js';
 
@@ -119,6 +120,13 @@ export interface CanvasSnapshot {
   fit: boolean;
 }
 
+/** One layer exported from the canvas, base64 encoded for a download. */
+interface LayerFile {
+  data: string;
+  mediaType: string;
+  name: string;
+}
+
 /** What Edit with agent quotes for one selected layer. */
 export interface LayerQuote {
   name: string;
@@ -166,6 +174,7 @@ export interface DesignCanvasHandle {
   setFamily(family: string): void;
   setWeight(weight: number): void;
   quoteSelection(): LayerQuote | null;
+  exportSelection(format: 'png' | 'svg'): Promise<LayerFile>;
   destroy(): void;
 }
 
@@ -196,6 +205,20 @@ function assetUrl(file: string): string {
  */
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Base64 encode file bytes for a browser download.
+ * @param bytes the file bytes.
+ * @returns the base64 text.
+ */
+function base64Of(bytes: Uint8Array): string {
+  let binary = '';
+  const chunk = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunk));
+  }
+  return btoa(binary);
 }
 
 /**
@@ -491,6 +514,13 @@ export async function mountDesignCanvas(options: DesignCanvasOptions): Promise<D
         parentName,
         jsx: selectionToJSX([node.id], editor.graph) ?? '',
       };
+    },
+    async exportSelection(format: 'png' | 'svg'): Promise<LayerFile> {
+      const node = editor.getSelectedNodes()[0];
+      if (node === undefined) throw new Error('Select a layer to export it.');
+      const ck = await getCanvasKit({ locateFile: (file) => assetUrl(file) });
+      const rendered = await renderLayer(ck, editor.graph, editor.state.currentPageId, node.id, format);
+      return { data: base64Of(rendered.data), mediaType: rendered.mediaType, name: node.name };
     },
     destroy(): void {
       if (destroyed) return;

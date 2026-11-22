@@ -41,6 +41,22 @@ import type { Quote } from './review.js';
 import { RebaseDialog } from './rebase-dialog.jsx';
 import { useHarnessDark } from './theme.js';
 
+/**
+ * A download name from a layer name.
+ * @param name the layer name.
+ * @param format the file extension.
+ * @returns the file name.
+ */
+function layerFileName(name: string, format: 'png' | 'svg'): string {
+  const slug = name
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60);
+  return (slug || 'layer') + '.' + format;
+}
+
 /** A small icon-only control with the shared tooltip. */
 function IconButton({ label, icon, onClick, pressed, disabled, buttonRef }: {
   label: string;
@@ -81,18 +97,23 @@ function SelectionBar({ quote, askLabel, dismissLabel, onAsk, onDismiss }: {
 }
 
 /**
- * The bar over a design's canvas that turns a selected layer into an edit request.
- * @param props the layer and the two actions.
+ * The bar over a design's canvas that turns a selected layer into an edit request
+ * or its own PNG or SVG file.
+ * @param props the layer and the three actions.
  * @returns the bar.
  */
-function LayerBar({ t, layer, askLabel, dismissLabel, onAsk, onDismiss }: {
+function LayerBar({ t, layer, exportable, busy, askLabel, dismissLabel, onAsk, onExport, onDismiss }: {
   t: Translator;
   layer: SelectedLayer;
+  exportable: boolean;
+  busy: boolean;
   askLabel: string;
   dismissLabel: string;
   onAsk: () => void;
+  onExport(format: 'png' | 'svg'): void;
   onDismiss: () => void;
 }) {
+  const [menu, setMenu] = useState(false);
   const type = layerTypeLabel(t, layer.type);
   return (
     <div className="art-selection-bar art-layer-bar" role="toolbar" aria-label={askLabel}>
@@ -102,6 +123,28 @@ function LayerBar({ t, layer, askLabel, dismissLabel, onAsk, onDismiss }: {
         <span className="art-layer-bar-sub">{layer.parentName === '' ? type : t('layer.parentLine', { type, parent: layer.parentName })}</span>
       </span>
       <Button size="sm" variant="primary" className="art-ask" icon={<IconSparkleRegular size={14} />} onClick={onAsk}>{askLabel}</Button>
+      {exportable ? (
+        <Menu
+          open={menu}
+          onClose={() => setMenu(false)}
+          items={[
+            { id: 'png', label: t('export.png') },
+            { id: 'svg', label: t('export.svg') },
+          ]}
+          onSelect={(entry) => {
+            setMenu(false);
+            if (entry === 'png' || entry === 'svg') onExport(entry);
+          }}
+          align="end"
+          portal
+          autoFocus
+          anchor={
+            <Button size="sm" className="art-icon-button" aria-label={t('export.selection')} aria-haspopup="menu" aria-expanded={menu} disabled={busy} onClick={() => setMenu(value => !value)}>
+              <IconDownloadOutlineRegular size={14} />
+            </Button>
+          }
+        />
+      ) : null}
       <IconButton label={dismissLabel} icon={<IconCloseOutlineRegular size={14} />} onClick={onDismiss} />
     </div>
   );
@@ -422,6 +465,20 @@ const [warningsDismissed, setWarningsDismissed] = useState<string | null>(null);
     finally { setBusy(false); }
   };
 
+  /** Download the one selected layer from the canvas the user sees. */
+  const outputLayer = async (format: 'png' | 'svg') => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const file = await canvasHandle?.exportSelection(format);
+      if (file === undefined) return;
+      const fileName = layerFileName(file.name, format);
+      download({ data: file.data, mediaType: file.mediaType, fileName });
+      notify(t('export.downloaded', { name: fileName }));
+    } catch { notify(t('export.failed')); }
+    finally { setBusy(false); }
+  };
+
   const rebase = async (selection: DesignSelection) => {
     if (viewing !== null || conflict || busy) return;
     setBusy(true);
@@ -732,12 +789,15 @@ const [warningsDismissed, setWarningsDismissed] = useState<string | null>(null);
             <LayerBar
               t={t}
               layer={canvasSelection[0]}
+              exportable={canvasSelection.length === 1}
+              busy={busy}
               askLabel={t('agent.ask')}
               dismissLabel={t('tab.dismiss')}
               onAsk={() => {
                 const quote = canvasHandle?.quoteSelection();
                 if (quote !== null && quote !== undefined) void askAgent(buildDesignQuote(t, quote), 'agent.addedTruncatedDesign');
               }}
+              onExport={(format) => void outputLayer(format)}
               onDismiss={() => canvasHandle?.clearSelection()}
             />
           ) : null}
