@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Button } from '@deepseek-ai/dsh-client-ui-primitives';
+import { Button, TextShimmer } from '@deepseek-ai/dsh-client-ui-primitives';
 import type { PreviewResult } from '../contract.js';
 import { api, describeFailure } from './api.js';
 import type { Where } from './api.js';
@@ -41,11 +41,11 @@ export function DesignView({ t, where, id, version, title }: {
   }, [where.scope, where.workspaceId, id, version, attempt, t]);
 
   if (state.status === 'loading') {
-    return <div className="art-design-state" role="status" aria-busy="true">{t('preview.loading')}</div>;
+    return <div className="art-state" role="status" aria-busy="true"><TextShimmer active>{t('preview.loading')}</TextShimmer></div>;
   }
   if (state.status === 'failed') {
     return (
-      <div className="art-design-state" role="alert">
+      <div className="art-state" role="alert">
         <span className="art-design-error">{state.message}</span>
         <Button size="sm" variant="outline" onClick={() => setAttempt((value) => value + 1)}>{t('preview.retry')}</Button>
       </div>

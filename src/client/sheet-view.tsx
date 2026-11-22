@@ -1,3 +1,4 @@
+import { TextShimmer } from '@deepseek-ai/dsh-client-ui-primitives';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { tokenVariables } from '../contract.js';
@@ -12,7 +13,7 @@ let chunk: Promise<SheetChunk> | null = null;
  * engine, so it stays out of the main bundle until a sheet opens.
  * @returns the chunk.
  */
-export function loadSheetChunk(): Promise<SheetChunk> {
+function loadSheetChunk(): Promise<SheetChunk> {
   if (chunk === null) {
     const load = globalThis.__dshArtifactsRequireAsync;
     if (typeof load !== 'function') return Promise.reject(new Error('The sheet editor loader is unavailable.'));
@@ -113,8 +114,8 @@ export function SheetView(props: SheetViewProps) {
 
   return (
     <div className="art-sheet" style={style}>
-      {state === 'loading' ? <p className="art-note">{props.loadingLabel}</p> : null}
-      {state === 'failed' ? <p className="art-note">{props.failedLabel}</p> : null}
+      {state === 'loading' ? <div className="art-state" role="status"><TextShimmer active>{props.loadingLabel}</TextShimmer></div> : null}
+      {state === 'failed' ? <div className="art-state" role="alert">{props.failedLabel}</div> : null}
       <div className="art-sheet-mount" ref={mountRef} />
     </div>
   );

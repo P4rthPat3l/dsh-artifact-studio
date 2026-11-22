@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ClipboardEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react';
-import { Button, Menu, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives';
+import { Button, IconEllipsisOutlineRegular, IconPlusOutlineRegular, Menu, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives';
 import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives';
-import { SHEET_LIMITS, columnName, effectiveTextColor, formatCellRef, formatRangeRef, mergeStyle, parseCellRef, parseSheetWorkbook, rangeSize, serializeSheetWorkbook } from '../../sheet/model.js';
+import { SHEET_LIMITS, columnName, contrastRatio, effectiveTextColor, readableTextColor, formatCellRef, formatRangeRef, mergeStyle, parseCellRef, parseSheetWorkbook, rangeSize, serializeSheetWorkbook } from '../../sheet/model.js';
 import type { CellRange, NumberFormat, SheetCell, SheetData, SheetStyle, SheetStylePatch, SheetWorkbook } from '../../sheet/model.js';
 import { evaluateWorkbook } from '../../sheet/formula.js';
 import type { EvaluatedWorkbook } from '../../sheet/formula.js';
 import { selectionQuote } from '../../sheet/output.js';
+import { IconRedo, IconUndo } from '../icons.jsx';
 import { tokenVariables } from '../../contract.js';
 import type { SheetEditorHandle, SheetEditorOptions } from './entry.js';
 
@@ -266,17 +267,6 @@ function AlignGlyph({ align }: { align: 'left' | 'center' | 'right' }) {
   );
 }
 
-/** One SVG glyph for undo and redo. */
-function HistoryGlyph({ direction }: { direction: 'undo' | 'redo' }) {
-  return (
-    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      {direction === 'undo'
-        ? <path d="M4 6.5h5.5a3 3 0 0 1 0 6H7M4 6.5l2.5-2.5M4 6.5L6.5 9" />
-        : <path d="M12 6.5H6.5a3 3 0 0 0 0 6H9M12 6.5L9.5 4M12 6.5L9.5 9" />}
-    </svg>
-  );
-}
-
 const NUMBER_FORMATS = ['general', 'number', 'integer', 'currency', 'percent', 'date'] as const;
 
 /** Literal locale keys keep the coverage check able to find every visible string. */
@@ -311,6 +301,7 @@ export function SheetEditor({ options, register }: { options: SheetEditorOptions
   const [viewport, setViewport] = useState({ width: 640, height: 420 });
   const [editable, setEditable] = useState(options.editable);
   const [appearance, setAppearance] = useState<Appearance>({ design: options.design, dark: options.dark });
+  const [gridBackground, setGridBackground] = useState<string>();
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
   const [numberMenu, setNumberMenu] = useState(false);
@@ -340,6 +331,19 @@ export function SheetEditor({ options, register }: { options: SheetEditorOptions
     if (appearance.design === undefined) return {};
     return { ...tokenVariables(appearance.design, appearance.dark), colorScheme: appearance.dark ? 'dark' : 'light' };
   }, [appearance]);
+
+  useLayoutEffect(() => {
+    const element = viewportRef.current;
+    if (element === null) return;
+    const channels = getComputedStyle(element).backgroundColor.match(/^rgb\((\d+),\s*(\d+),\s*(\d+)\)$/);
+    if (channels !== null) setGridBackground('#' + channels.slice(1).map(channel => Number(channel).toString(16).padStart(2, '0')).join(''));
+  }, [appearance.dark]);
+
+  const panelTextColor = (style: SheetStyle | undefined): string | undefined => {
+    const color = effectiveTextColor(style);
+    if (style?.background !== undefined || color === undefined || gridBackground === undefined) return color;
+    return contrastRatio(color, gridBackground) >= 4.5 ? color : readableTextColor(gridBackground);
+  };
 
   const selectedDisplayStyle: CSSProperties = {
     left: widths.starts[range.column1] ?? 0,
@@ -804,7 +808,7 @@ export function SheetEditor({ options, register }: { options: SheetEditorOptions
         width: displayWidths.widths[columnIndex] ?? DEFAULT_COLUMN_WIDTH,
         height: ROW_HEIGHT,
       };
-      const textColor = effectiveTextColor(style);
+      const textColor = panelTextColor(style);
       if (textColor !== undefined) cellStyle.color = textColor;
       if (style?.background !== undefined) cellStyle.background = style.background;
       if (style?.bold === true) cellStyle.fontWeight = 600;
@@ -885,8 +889,8 @@ export function SheetEditor({ options, register }: { options: SheetEditorOptions
           />
         </div>
         <div className="art-sheet-formatbar">
-          <Tooltip label={t('sheet.undo')} side="bottom" portal><Button size="sm" variant="ghost" className="art-sheet-tool" aria-label={t('sheet.undo')} disabled={!editable || !canUndo} onClick={undo}><HistoryGlyph direction="undo" /></Button></Tooltip>
-          <Tooltip label={t('sheet.redo')} side="bottom" portal><Button size="sm" variant="ghost" className="art-sheet-tool" aria-label={t('sheet.redo')} disabled={!editable || !canRedo} onClick={redo}><HistoryGlyph direction="redo" /></Button></Tooltip>
+          <Tooltip label={t('sheet.undo')} side="bottom" portal><Button size="sm" variant="ghost" className="art-sheet-tool" aria-label={t('sheet.undo')} disabled={!editable || !canUndo} onClick={undo}><IconUndo size={16} /></Button></Tooltip>
+          <Tooltip label={t('sheet.redo')} side="bottom" portal><Button size="sm" variant="ghost" className="art-sheet-tool" aria-label={t('sheet.redo')} disabled={!editable || !canRedo} onClick={redo}><IconRedo size={16} /></Button></Tooltip>
           <span className="art-sheet-divider" aria-hidden="true" />
           <Button size="sm" variant="ghost" className="art-sheet-tool art-sheet-tool-text" aria-label={t('sheet.bold')} aria-pressed={activePressed('bold')} disabled={!editable} onClick={() => toggleFormat('bold')}><span style={{ fontWeight: 700 }}>B</span></Button>
           <Button size="sm" variant="ghost" className="art-sheet-tool art-sheet-tool-text" aria-label={t('sheet.italic')} aria-pressed={activePressed('italic')} disabled={!editable} onClick={() => toggleFormat('italic')}><span style={{ fontStyle: 'italic', fontFamily: 'serif' }}>I</span></Button>
@@ -915,7 +919,7 @@ export function SheetEditor({ options, register }: { options: SheetEditorOptions
           </label>
           <label className="art-sheet-color" title={t('sheet.textColor')}>
             <input type="color" aria-label={t('sheet.textColor')} value={activeStyle?.color ?? '#1f2933'} disabled={!editable} onChange={(event) => applyPatch({ color: event.target.value })} />
-            <span className="art-sheet-color-swatch art-sheet-color-letter" style={{ color: activeStyle?.color ?? 'currentColor' }} aria-hidden="true">A</span>
+            <span className="art-sheet-color-swatch art-sheet-color-letter" style={{ color: activeStyle?.color, background: activeStyle?.color === undefined ? undefined : readableTextColor(activeStyle.color) }} aria-hidden="true">A</span>
           </label>
         </div>
       </div>
@@ -975,7 +979,7 @@ export function SheetEditor({ options, register }: { options: SheetEditorOptions
                   fontWeight: editingStyle?.bold === true ? 600 : undefined,
                   fontStyle: editingStyle?.italic === true ? 'italic' : undefined,
                   background: editingStyle?.background,
-                  color: effectiveTextColor(editingStyle),
+                  color: panelTextColor(editingStyle),
                 }}
                 value={editing.draft}
                 spellCheck={false}
@@ -1037,7 +1041,7 @@ export function SheetEditor({ options, register }: { options: SheetEditorOptions
             </div>
           ))}
         </div>
-        {editable ? <Button size="sm" variant="ghost" className="art-sheet-add" aria-label={t('sheet.addSheet')} onClick={addSheet}>+</Button> : null}
+        {editable ? <Button size="sm" variant="ghost" className="art-sheet-add" aria-label={t('sheet.addSheet')} onClick={addSheet}><IconPlusOutlineRegular size={16} /></Button> : null}
         {editable ? (
           <Menu
             open={sheetMenu}
@@ -1052,7 +1056,7 @@ export function SheetEditor({ options, register }: { options: SheetEditorOptions
             align="end"
             portal
             autoFocus
-            anchor={<Button size="sm" variant="ghost" className="art-sheet-tab-more" aria-label={t('sheet.sheetActions')} aria-haspopup="menu" aria-expanded={sheetMenu} onClick={() => setSheetMenu((open) => !open)}><svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="8" r="1.2" /><circle cx="8" cy="8" r="1.2" /><circle cx="12.5" cy="8" r="1.2" /></svg></Button>}
+            anchor={<Button size="sm" variant="ghost" className="art-sheet-tab-more" aria-label={t('sheet.sheetActions')} aria-haspopup="menu" aria-expanded={sheetMenu} onClick={() => setSheetMenu((open) => !open)}><IconEllipsisOutlineRegular size={16} /></Button>}
           />
         ) : null}
       </div>

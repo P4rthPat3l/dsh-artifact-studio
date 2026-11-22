@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
-import { Button } from '@deepseek-ai/dsh-client-ui-primitives';
+import { Button, TextShimmer } from '@deepseek-ai/dsh-client-ui-primitives';
 import { tokenVariables } from '../contract.js';
 import type { DesignTokens } from '../contract.js';
 import type { Translator } from './harness.js';
@@ -13,7 +13,7 @@ let chunk: Promise<DocChunk> | null = null;
  * the main bundle until a document opens.
  * @returns the chunk.
  */
-export function loadDocChunk(): Promise<DocChunk> {
+function loadDocChunk(): Promise<DocChunk> {
   if (chunk === null) {
     const load = globalThis.__dshArtifactsRequireAsync;
     if (typeof load !== 'function') return Promise.reject(new Error('The document editor loader is unavailable.'));
@@ -202,9 +202,9 @@ export function DocView({ markdown, revision, editable, label, loadingLabel, fai
           {selectionAction}
         </div>
       )}
-      {state === 'loading' ? <p className="art-note">{loadingLabel}</p> : null}
-      {state === 'failed' ? <p className="art-note">{failedLabel}</p> : null}
-      <div className="art-docpage" style={style}>
+      {state === 'loading' ? <div className="art-state" role="status"><TextShimmer active>{loadingLabel}</TextShimmer></div> : null}
+      {state === 'failed' ? <div className="art-state" role="alert">{failedLabel}</div> : null}
+      <div className="art-docpage" style={style} hidden={state !== 'ready'}>
         <div className="art-doc-mount" ref={mountRef} />
       </div>
     </div>

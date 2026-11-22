@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import {
   Button,
+  TextShimmer,
+  Input,
+  IconSearchOutlineRegular,
   IconChevronLeftOutlineRegular,
   IconCopyOutlineRegular,
   IconPinFillRegular,
@@ -443,9 +446,9 @@ function ArtifactTile({ t, view, pinned, onOpen, showProject }: {
         </span>
       </button>
       <Tooltip label={pinLabel} side="left" portal>
-        <button type="button" className="art-tile-pin" aria-label={pinLabel} aria-pressed={pinned} onClick={() => togglePin(address)}>
+        <Button size="sm" className="art-tile-pin" aria-label={pinLabel} aria-pressed={pinned} onClick={() => togglePin(address)}>
           {pinned ? <IconPinFillRegular size={14} /> : <IconPinOutlineRegular size={14} />}
-        </button>
+        </Button>
       </Tooltip>
     </li>
   );
@@ -738,7 +741,7 @@ export function GalleryBody({ t, projects, scope, contextWorkspaceId, onScopeCha
             <label className="art-workspace">
               <span className="art-workspace-label">{t('scope.label')}</span>
               <select
-                className="art-workspace-select"
+                className="art-select art-workspace-select"
                 aria-label={t('scope.label')}
                 value={formatScope(scope)}
                 onChange={(event) => {
@@ -793,7 +796,8 @@ export function GalleryBody({ t, projects, scope, contextWorkspaceId, onScopeCha
         <div className="art-scroll">
           <div className="art-gallery">
             <div className="art-toolbar">
-              <input
+              <Input
+                icon={<IconSearchOutlineRegular size={16} />}
                 className="art-search"
                 type="search"
                 aria-label={t('gallery.searchLabel')}
@@ -811,9 +815,9 @@ export function GalleryBody({ t, projects, scope, contextWorkspaceId, onScopeCha
               />
             </div>
             <div role="tabpanel" id={typeId + '-' + (type ?? 'all') + '-panel'} aria-labelledby={typeId + '-' + (type ?? 'all')}>
-              {state.status === 'loading' ? <p className="art-note">{t('empty.loading')}</p> : null}
+              {state.status === 'loading' ? <div className="art-state" role="status"><TextShimmer active>{t('empty.loading')}</TextShimmer></div> : null}
               {state.status === 'failed' ? (
-                <div className="art-empty" role="alert">
+                <div className="art-state" role="alert">
                   <p className="art-empty-title">{t(errorKey(state.code))}</p>
                   <Button size="sm" variant="outline" onClick={() => setLocalChanges((value) => value + 1)}>{t('action.retry')}</Button>
                 </div>

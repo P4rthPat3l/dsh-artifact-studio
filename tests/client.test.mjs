@@ -2213,6 +2213,11 @@ test('FEAT-007 AC-046: Edit mode adds the tools and opens the inspector', async 
     assert.equal(byLabel(view, 'canvas.undo').disabled, true, 'Undo is enabled with no history');
     assert.equal(byLabel(view, 'canvas.redo').disabled, true, 'Redo is enabled with no history');
     assert.equal(drawerLabel(view), 'canvas.inspector', 'Edit did not open the inspector');
+    const selected = view.container.querySelector('.art-inspector-tabs [aria-selected="true"]');
+    const panel = view.container.querySelector('.art-inspector[role="tabpanel"]');
+    assert.equal(selected.getAttribute('aria-controls'), panel.id);
+    assert.equal(panel.getAttribute('aria-labelledby'), selected.id);
+    assert.notEqual(panel.id, selected.id);
     await click(byLabel(view, 'canvas.frame'));
     assert.equal(handle.tool, 'frame', 'the frame tool did not reach the handle');
     await act(async () => { handle.emit({ ...handle.snapshot, canUndo: true }); await settle(20); });
@@ -2590,7 +2595,7 @@ test('FEAT-007 AC-064: Narrow panels keep the header controls', async () => {
   assert.match(css, /\.art-canvas-dock \{[^}]*position: absolute;/s);
   assert.match(css, /@container \(max-width: 600px\) \{[\s\S]*?\.art-canvas-dock \{/s);
   assert.match(css, /@container \(max-width: 600px\) \{[\s\S]*?\.art-layer-bar \{/s);
-  assert.match(css, /\.art-editor-header \{[^}]*flex-wrap: wrap;/s);
+  assert.match(css, /@container \(max-width: 600px\) \{[\s\S]*?\.art-editor-header \{ flex-wrap: wrap;/s);
   assert.doesNotMatch(css, /\.art-canvas-toolbar/);
 });
 
@@ -2789,3 +2794,34 @@ test('SHEET-AC-107: a filled cell gets a readable default text color', async () 
   }
 });
 
+
+test('SHEET-AC-108: unfilled colored cells remain readable after a theme switch without changing stored styles', async () => {
+  const skin = document.createElement('style');
+  skin.textContent = '.art-sheet-gridwrap { background-color: rgb(255, 255, 255); } body[data-sheet-test-dark] .art-sheet-gridwrap { background-color: rgb(21, 21, 23); }';
+  document.head.appendChild(skin);
+  const content = JSON.stringify({ schemaVersion: 1, sheets: [{ name: 'Theme', cells: {
+    A1: { value: 'Dark ink', style: { color: '#0f1115', bold: true } },
+    B1: { value: 'Light ink', style: { color: '#ffffff' } },
+    C1: { value: 'Fixed fill', style: { color: '#0f1115', background: '#ffffff' } },
+  } }] });
+  const { element, handle } = await mountSheet(content);
+  const saved = handle.getJson();
+  try {
+    assert.equal(element.querySelector('[data-cell="A1"]').style.color, 'rgb(15, 17, 21)');
+    assert.equal(element.querySelector('[data-cell="B1"]').style.color, 'rgb(31, 41, 51)');
+    await act(async () => {
+      document.body.setAttribute('data-sheet-test-dark', '');
+      handle.setAppearance(undefined, true);
+    });
+    assert.equal(element.querySelector('[data-cell="A1"]').style.color, 'rgb(255, 255, 255)');
+    assert.equal(element.querySelector('[data-cell="B1"]').style.color, 'rgb(255, 255, 255)');
+    assert.equal(element.querySelector('[data-cell="C1"]').style.color, 'rgb(15, 17, 21)');
+    assert.equal(element.querySelector('[aria-label="sheet.bold"]').getAttribute('aria-pressed'), 'true');
+    assert.equal(handle.getJson(), saved);
+  } finally {
+    await act(async () => handle.destroy());
+    element.remove();
+    skin.remove();
+    document.body.removeAttribute('data-sheet-test-dark');
+  }
+});

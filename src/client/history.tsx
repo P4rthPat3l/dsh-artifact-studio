@@ -1,3 +1,4 @@
+import { Tag, TextShimmer } from '@deepseek-ai/dsh-client-ui-primitives';
 import type { VersionEntry } from '../contract.js';
 import type { Translator } from './harness.js';
 import { relativeTime } from './locale.js';
@@ -38,7 +39,7 @@ function describe(t: Translator, entry: VersionEntry): string {
 export function HistoryPanel({ t, versions, failed, current, selected, onSelect }: HistoryPanelProps) {
   return (
     <div className="art-history-body">
-      {versions === null ? <p className="art-note">{t('empty.loading')}</p> : null}
+      {versions === null ? <p className="art-note" role="status"><TextShimmer active>{t('empty.loading')}</TextShimmer></p> : null}
       {failed ? <p className="art-note">{t('error.generic')}</p> : null}
       {!failed && versions !== null && versions.length <= 1 ? <p className="art-note">{t('history.empty')}</p> : null}
       {versions?.map((entry) => (
@@ -51,7 +52,7 @@ export function HistoryPanel({ t, versions, failed, current, selected, onSelect 
         >
           <span className="art-version-top">
             <span>{t('tab.versionOf', { version: entry.version })}</span>
-            {entry.version === current ? <span className="art-badge">{t('history.current')}</span> : null}
+            {entry.version === current ? <Tag tone="neutral">{t('history.current')}</Tag> : null}
           </span>
           <span className="art-version-sub">{describe(t, entry)}</span>
         </button>

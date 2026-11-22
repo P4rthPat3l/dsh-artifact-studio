@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Menu, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives';
+import { Button, Menu, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives';
 import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives';
 import { formatArtifactAddress } from '../contract.js';
 import type { Manifest } from '../contract.js';
@@ -23,7 +23,7 @@ export const STARTERS = ['dashboard', 'explainer', 'report', 'brief', 'sheet'] a
  * @param sessionId the conversation.
  * @returns at most the menu limit.
  */
-export function recentForSession(items: readonly Manifest[], sessionId: string): Manifest[] {
+function recentForSession(items: readonly Manifest[], sessionId: string): Manifest[] {
   const own = items.filter((item) => item.source.sessionId === sessionId);
   const rest = items.filter((item) => item.source.sessionId !== sessionId);
   return [...own, ...rest].slice(0, RECENT_LIMIT);
@@ -95,9 +95,9 @@ export function ComposerButton(props: SessionSlotProps) {
       autoFocus
       anchor={
         <Tooltip label={t('composer.label')} side="top" portal>
-          <button type="button" className="art-composer" aria-label={t('composer.label')} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+          <Button size="sm" className="art-composer" aria-label={t('composer.label')} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
             <IconArtifacts />
-          </button>
+          </Button>
         </Tooltip>
       }
     />

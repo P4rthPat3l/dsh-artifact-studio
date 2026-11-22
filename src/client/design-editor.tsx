@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Button } from '@deepseek-ai/dsh-client-ui-primitives';
+import { Button, Input, TextShimmer } from '@deepseek-ai/dsh-client-ui-primitives';
 import { COLOR_ROLES, tokensToCss } from '../contract.js';
 import type { DesignCatalog, DesignTokens, ResolvedDesignSystem, Scope, TokenColors } from '../contract.js';
 import type { Where } from './api.js';
@@ -73,8 +73,8 @@ export function DesignEditor({ t, workspaceId, workspaceTitle }: DesignEditorPro
 
   const css = useMemo(() => (tokens === null ? '' : tokensToCss(tokens)), [tokens]);
 
-  if (failed) return <p className="art-note">{t('error.generic')}</p>;
-  if (resolved === null || tokens === null) return <p className="art-note">{t('empty.loading')}</p>;
+  if (failed) return <div className="art-state" role="alert">{t('error.generic')}</div>;
+  if (resolved === null || tokens === null) return <div className="art-state" role="status"><TextShimmer active>{t('empty.loading')}</TextShimmer></div>;
 
   const saveTo = async (scope: Scope, copy = false) => {
     setBusy(true);
@@ -139,7 +139,7 @@ export function DesignEditor({ t, workspaceId, workspaceTitle }: DesignEditorPro
   return (
     <div className="art-design">
       <label className="art-field">{t('design.system')}
-        <select value={selected} disabled={busy} onChange={event => void select(event.target.value)}>
+        <select className="art-select" value={selected} disabled={busy} onChange={event => void select(event.target.value)}>
           <option value="">{t('design.defaultChoice')}</option>
           {catalog?.systems.map(system => <option key={system.id} value={system.id}>{t('design.revision', { name: system.name, revision: system.revision })}</option>)}
         </select>
@@ -158,14 +158,14 @@ export function DesignEditor({ t, workspaceId, workspaceTitle }: DesignEditorPro
       </p>
       <div className="art-design-group">
         <h3>{t('design.preview')}</h3>
-        <div className="art-design-preview" style={{ height: 150, display: 'flex' }}>
+        <div className="art-token-preview">
           <PageFrame content={PREVIEW(t)} designCss={css} title={tokens.name} frameTitle={t('design.preview')} dark={dark} />
         </div>
       </div>
       <fieldset disabled={busy} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
       <label className="art-field">
         {t('design.name')}
-        <input type="text" value={tokens.name} maxLength={80} onChange={(event) => setTokens({ ...tokens, name: event.target.value })} />
+        <Input type="text" value={tokens.name} maxLength={80} onChange={(event) => setTokens({ ...tokens, name: event.target.value })} />
       </label>
       {(['colors', 'colorsDark'] as const).map((set) => (
         <div key={set} className="art-design-group">
@@ -186,7 +186,7 @@ export function DesignEditor({ t, workspaceId, workspaceTitle }: DesignEditorPro
                   />
                   <span className="art-swatch-text">
                     {t(`design.color.${key}`)}
-                    <input
+                    <Input
                       type="text"
                       aria-label={t(`design.color.${key}`) + ' ' + t(set === 'colors' ? 'design.colors' : 'design.colorsDark') + ' CSS'}
                       value={tokens[set][key]}
@@ -203,7 +203,7 @@ export function DesignEditor({ t, workspaceId, workspaceTitle }: DesignEditorPro
         <h3>{t('design.type')}</h3>
         <label className="art-field">
           {t('design.font')}
-          <input
+          <Input
             type="text"
             value={tokens.typography.fontFamily}
             onChange={(event) => setTokens({ ...tokens, typography: { ...tokens.typography, fontFamily: event.target.value } })}
@@ -211,7 +211,7 @@ export function DesignEditor({ t, workspaceId, workspaceTitle }: DesignEditorPro
         </label>
         <label className="art-field">
           {t('design.display')}
-          <input
+          <Input
             type="text"
             value={tokens.typography.displayFamily}
             onChange={(event) => setTokens({ ...tokens, typography: { ...tokens.typography, displayFamily: event.target.value } })}
@@ -219,7 +219,7 @@ export function DesignEditor({ t, workspaceId, workspaceTitle }: DesignEditorPro
         </label>
         <label className="art-field">
           {t('design.mono')}
-          <input
+          <Input
             type="text"
             value={tokens.typography.monoFamily}
             onChange={(event) => setTokens({ ...tokens, typography: { ...tokens.typography, monoFamily: event.target.value } })}
@@ -232,7 +232,7 @@ export function DesignEditor({ t, workspaceId, workspaceTitle }: DesignEditorPro
           {RADIUS_KEYS.map((key) => (
             <label key={key}>
               {t(`design.radius.${key}`)}
-              <input
+              <Input
                 type="number"
                 min={0}
                 max={64}

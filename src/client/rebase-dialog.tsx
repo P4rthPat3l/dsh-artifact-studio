@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Button, Modal } from '@deepseek-ai/dsh-client-ui-primitives';
+import { Button, Modal, TextShimmer } from '@deepseek-ai/dsh-client-ui-primitives';
 import type { DesignSelection, DesignSystemRef, ResolvedDesignSystem } from '../contract.js';
 import { api, codeOf, errorKey } from './api.js';
 import type { Where } from './api.js';
@@ -43,14 +43,16 @@ export function RebaseDialog({ t, where, onClose, onApply }: {
     } catch (error) { setFailure(t(errorKey(codeOf(error)))); }
     finally { setBusy(false); }
   };
-  return <Modal open onClose={() => { if (!busy) onClose(); }} title={t('generation.confirm')}>
+  return <Modal open onClose={() => { if (!busy) onClose(); }} title={t('generation.confirm')} closeLabel={t('dialog.close')} footer={<>
+    <Button variant="outline" disabled={busy} onClick={onClose}>{t('create.cancel')}</Button>
+    <Button variant="primary" disabled={busy || preview === null || systems === null || failure !== null} onClick={() => void apply()}>{t('generation.apply')}</Button>
+  </>}>
     <p className="art-note">{t('generation.explain')}</p>
-    <label className="art-field">{t('design.system')}<select disabled={busy || systems === null} value={choice} onChange={event => setChoice(event.target.value)}>
+    <label className="art-field">{t('design.system')}<select className="art-select" disabled={busy || systems === null} value={choice} onChange={event => setChoice(event.target.value)}>
       <option value="">{t('design.defaultChoice')}</option>
       {systems?.map(system => <option key={system.scope + system.id} value={system.scope + ':' + system.id}>{system.scope === 'workspace' ? t('scope.workspace') : t('scope.library')}: {t('design.revision', { name: system.name, revision: system.revision })}</option>)}
     </select></label>
-    {preview ? <p className="art-note">{preview.system ? t('design.revision', { name: preview.system.name, revision: preview.system.revision }) : preview.tokens.name}</p> : <p role="status">{t('empty.loading')}</p>}
-    {failure ? <div role="alert"><p>{failure}</p><Button size="sm" disabled={busy} onClick={() => setAttempt(value => value + 1)}>{t('action.retry')}</Button></div> : null}
-    <div className="art-design-actions"><Button size="sm" disabled={busy} onClick={onClose}>{t('create.cancel')}</Button><Button size="sm" variant="primary" disabled={busy || preview === null || systems === null || failure !== null} onClick={() => void apply()}>{t('generation.apply')}</Button></div>
+    {preview ? <p className="art-note">{preview.system ? t('design.revision', { name: preview.system.name, revision: preview.system.revision }) : preview.tokens.name}</p> : <p className="art-note" role="status"><TextShimmer active>{t('empty.loading')}</TextShimmer></p>}
+    {failure ? <div role="alert"><p className="art-modal-error">{failure}</p><Button variant="outline" size="sm" disabled={busy} onClick={() => setAttempt(value => value + 1)}>{t('action.retry')}</Button></div> : null}
   </Modal>;
 }

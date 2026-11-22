@@ -66,27 +66,14 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
   }
   export function Toast(props: ToastProps): ReactElement;
 
+  export function Tag(props: { tone?: 'neutral'; children?: ReactNode }): ReactElement;
+
   export interface SegmentedOption<V extends string> {
     value: V;
     label: string;
     disabled?: boolean;
     title?: string;
   }
-  export interface SegmentedTabItem<V extends string> {
-    value: V;
-    label: string;
-    id: string;
-    panelId: string;
-  }
-  export function SegmentedTabs<V extends string>(props: {
-    items: readonly SegmentedTabItem<V>[];
-    value: V;
-    onChange: (value: V) => void;
-    label: string;
-    className?: string;
-    size?: 'sm' | 'md';
-  }): ReactElement;
-
   export interface ZoomControlsHandle {
     showZoom(zoom: number | undefined): void;
   }

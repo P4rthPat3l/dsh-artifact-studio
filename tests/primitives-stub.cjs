@@ -55,7 +55,7 @@ function Toast({ text }) {
 
 function SegmentedControl({ id, value, options, onChange, label, className }) {
   return h('div', { role: 'tablist', 'aria-label': label, className }, options.map((option) => h('button', {
-    key: option.value, id: `${id}-${option.value}`, type: 'button', role: 'tab', 'aria-selected': option.value === value,
+    key: option.value, id: `${id}-${option.value}`, type: 'button', role: 'tab', 'aria-controls': `${id}-${option.value}-panel`, 'aria-selected': option.value === value,
     disabled: option.disabled, onClick: () => { if (option.value !== value) onChange(option.value); },
   }, option.label)));
 }
@@ -68,15 +68,12 @@ function TextShimmer({ children, className, active }) {
   return h('span', { className, 'data-shimmer': active ? '' : undefined }, children);
 }
 
-function StateDot({ state }) {
-  return h('span', { 'aria-hidden': 'true', 'data-state': state });
+function Tag({ tone, children }) {
+  return h('span', { 'data-tone': tone }, children);
 }
 
-function SegmentedTabs({ items, value, onChange, label, className, size = 'md' }) {
-  return h('div', { role: 'tablist', 'aria-label': label, className, 'data-size': size }, items.map((item) => h('button', {
-    key: item.value, id: item.id, type: 'button', role: 'tab', 'aria-controls': item.panelId,
-    'aria-selected': item.value === value, onClick: () => onChange(item.value),
-  }, item.label)));
+function StateDot({ state }) {
+  return h('span', { 'aria-hidden': 'true', 'data-state': state });
 }
 
 const ZoomControls = React.forwardRef(function ZoomControls({ zoom, fit, className, labels, visible, onZoom, onActiveChange }, ref) {
@@ -111,7 +108,7 @@ const icon = (name) => function Icon({ size, className }) {
 };
 
 module.exports = {
-  Button, Tooltip, Menu, Modal, Toast, SegmentedControl, SegmentedTabs, ZoomControls, Switch, Input, CodeBlock, TextShimmer, StateDot,
+  Button, Tooltip, Menu, Modal, Toast, Tag, SegmentedControl, ZoomControls, Switch, Input, CodeBlock, TextShimmer, StateDot,
   IconChevronLeftOutlineRegular: icon('IconChevronLeftOutlineRegular'),
   IconChevronDownOutlineRegular: icon('IconChevronDownOutlineRegular'),
   IconChevronRightOutlineRegular: icon('IconChevronRightOutlineRegular'),

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
   Button,
+  TextShimmer,
   Tooltip,
   ZoomControls,
 } from '@deepseek-ai/dsh-client-ui-primitives';
@@ -175,7 +176,7 @@ export function DesignCanvasView({ t, source, revision, title, mode, onChange, o
       <div className="art-canvas-stage">
         <div className="art-canvas-mount" ref={mountRef} role="application" aria-label={title} tabIndex={0} hidden={state.status === 'failed'} data-ready={ready ? '1' : undefined} />
         {ready ? null : <div className="art-canvas-fallback">{fallback}</div>}
-        {state.status === 'loading' ? <div className="art-canvas-opening" role="status">{t('canvas.opening')}</div> : null}
+        {state.status === 'loading' ? <div className="art-canvas-opening" role="status"><TextShimmer active>{t('canvas.opening')}</TextShimmer></div> : null}
         {ready && snapshot !== null && snapshot.rows.length === 0 ? <p className="art-canvas-empty">{t('canvas.empty')}</p> : null}
         {ready ? (
           <div className="art-canvas-dock" role="toolbar" aria-label={t('canvas.toolbar')}>

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { KeyboardEvent, ReactNode } from 'react';
 import {
+  Button,
   IconChevronDownOutlineRegular,
   IconChevronRightOutlineRegular,
   Input,
@@ -264,8 +265,8 @@ function LayersPanel({ t, handle, snapshot }: { t: Translator; handle: DesignCan
           onDoubleClick={() => startRename(row)}
         >
           {row.hasChildren ? (
-            <button
-              type="button"
+            <Button
+              size="sm"
               className="art-layer-caret"
               aria-label={t(row.expanded ? 'panel.collapse' : 'panel.expand')}
               onClick={(event) => {
@@ -274,11 +275,11 @@ function LayersPanel({ t, handle, snapshot }: { t: Translator; handle: DesignCan
               }}
             >
               {row.expanded ? <IconChevronDownOutlineRegular size={12} /> : <IconChevronRightOutlineRegular size={12} />}
-            </button>
+            </Button>
           ) : <span className="art-layer-caret" aria-hidden="true" />}
           <span className="art-layer-icon" aria-hidden="true">{layerGlyph(row.type)}</span>
           {renaming === row.id ? (
-            <input
+            <Input
               className="art-layer-rename"
               aria-label={t('panel.rename')}
               autoFocus
@@ -300,8 +301,8 @@ function LayersPanel({ t, handle, snapshot }: { t: Translator; handle: DesignCan
             <span className="art-layer-name" title={row.name}>{row.name}</span>
           )}
           <span className="art-layer-actions">
-            <button
-              type="button"
+            <Button
+              size="sm"
               className="art-layer-action"
               aria-label={t(row.visible ? 'panel.hide' : 'panel.show')}
               aria-pressed={!row.visible}
@@ -311,9 +312,9 @@ function LayersPanel({ t, handle, snapshot }: { t: Translator; handle: DesignCan
               }}
             >
               {row.visible ? <IconEye size={13} /> : <IconEyeOff size={13} />}
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              size="sm"
               className="art-layer-action"
               aria-label={t(row.locked ? 'panel.unlock' : 'panel.lock')}
               aria-pressed={row.locked}
@@ -323,7 +324,7 @@ function LayersPanel({ t, handle, snapshot }: { t: Translator; handle: DesignCan
               }}
             >
               {row.locked ? <IconLock size={13} /> : <IconLockOpen size={13} />}
-            </button>
+            </Button>
           </span>
         </div>
       ))}
@@ -380,13 +381,13 @@ function PropertiesPanel({ t, handle, snapshot }: { t: Translator; handle: Desig
           <div className="art-inspector-grid">
             <label className="art-inspector-field">
               <span className="art-inspector-field-label">{t('panel.family')}</span>
-              <select className="art-inspector-select" aria-label={t('panel.family')} value={properties.text.family} onChange={(event) => handle.setFamily(event.target.value)}>
+              <select className="art-select art-inspector-select" aria-label={t('panel.family')} value={properties.text.family} onChange={(event) => handle.setFamily(event.target.value)}>
                 {FAMILIES.map((family) => <option key={family} value={family}>{family}</option>)}
               </select>
             </label>
             <label className="art-inspector-field">
               <span className="art-inspector-field-label">{t('panel.weight')}</span>
-              <select className="art-inspector-select" aria-label={t('panel.weight')} value={String(properties.text.weight)} onChange={(event) => handle.setWeight(Number(event.target.value))}>
+              <select className="art-select art-inspector-select" aria-label={t('panel.weight')} value={String(properties.text.weight)} onChange={(event) => handle.setWeight(Number(event.target.value))}>
                 {WEIGHTS.map((weight) => <option key={weight} value={String(weight)}>{String(weight)}</option>)}
               </select>
             </label>

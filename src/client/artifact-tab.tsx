@@ -3,6 +3,7 @@ import type { ReactNode, Ref } from 'react';
 import {
   Button,
   CodeBlock,
+  Input,
   IconChevronDownOutlineRegular,
   IconChevronLeftOutlineRegular,
   IconClockOutlineRegular,
@@ -16,7 +17,6 @@ import {
   Menu,
   Modal,
   SegmentedControl,
-  SegmentedTabs,
   Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives';
@@ -156,7 +156,7 @@ function DrawerShell({ label, closeLabel, overlay, onClose, head, children }: {
             return;
           }
           if (event.key !== 'Tab' || !overlay) return;
-          const focusable = [...(ref.current?.querySelectorAll<HTMLElement>('button:not(:disabled)') ?? [])];
+          const focusable = [...(ref.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]') ?? [])];
           const first = focusable[0];
           const last = focusable[focusable.length - 1];
           if (first === undefined || last === undefined) return;
@@ -632,13 +632,14 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
                 portal
                 autoFocus
                 anchor={
-                  <button type="button" className="art-version-button" aria-label={t('tab.versionPicker')} aria-haspopup="menu" aria-expanded={menu === 'version'} onClick={() => void openVersionMenu()}>
+                  <Button size="sm" className="art-version-button" aria-label={t('tab.versionPicker')} aria-haspopup="menu" aria-expanded={menu === 'version'} onClick={() => void openVersionMenu()}>
                     {t('gallery.version', { version })}<IconChevronDownOutlineRegular size={12} />
-                  </button>
+                  </Button>
                 }
               />
               <span className="art-meta-dot" aria-hidden="true">·</span>
               <span className="art-save-status" data-tone={tone} aria-live="polite">{status}</span>
+              {type === 'design' || type === 'sheet' ? null : <span className="art-generation" title={selectedPayload.generation?.system ? t('design.revision', { name: selectedPayload.generation.system.name, revision: selectedPayload.generation.system.revision }) : undefined}> · {t(selectedPayload.generation ? 'generation.pinned' : 'generation.legacy')}</span>}
             </div>
           </div>
         </div>
@@ -693,14 +694,13 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
           />
         </div>
       </header>
-      {type === 'design' || type === 'sheet' ? null : <div className="art-bar"><span>{t(selectedPayload.generation ? 'generation.pinned' : 'generation.legacy')}{selectedPayload.generation?.system ? ': ' + t('design.revision', { name: selectedPayload.generation.system.name, revision: selectedPayload.generation.system.revision }) : ''}</span></div>}
       {rebasing ? <RebaseDialog t={t} where={where} onClose={() => setRebasing(false)} onApply={rebase} /> : null}
       {renaming ? <form className="art-inline-form" onSubmit={event => { event.preventDefault(); void rename(); }}>
-        <input aria-label={t('tab.rename')} value={renameText} maxLength={120} autoFocus onChange={event => setRenameText(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') setRenaming(false); }} />
+        <Input aria-label={t('tab.rename')} value={renameText} maxLength={120} autoFocus onChange={event => setRenameText(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') setRenaming(false); }} />
         <Button type="submit" size="sm" variant="primary" disabled={saving || conflict}>{t('tab.save')}</Button>
         <Button size="sm" variant="outline" onClick={() => setRenaming(false)}>{t('create.cancel')}</Button>
       </form> : null}
-      {updateNotice === null ? null : <div className="art-bar" role="status"><span>{t('tab.agentUpdate', { version: updateNotice })}</span><span className="art-bar-actions"><Button size="sm" variant="outline" onClick={() => { setUpdateNotice(null); openHistory(); }}>{t('tab.viewHistory')}</Button><Button size="sm" onClick={() => setUpdateNotice(null)}>{t('tab.dismiss')}</Button></span></div>}
+      {updateNotice === null ? null : <div className="art-bar" role="status"><span>{t('tab.agentUpdate', { version: updateNotice })}</span><span className="art-bar-actions"><Button size="sm" variant="outline" onClick={() => { setUpdateNotice(null); openHistory(); }}>{t('tab.viewHistory')}</Button><Button size="sm" variant="outline" onClick={() => setUpdateNotice(null)}>{t('tab.dismiss')}</Button></span></div>}
       {conflict ? <div className="art-bar" data-tone="warn" role="alert"><span className="art-bar-text"><strong>{t('tab.conflictTitle')}</strong><span>{t('tab.conflictHint')}</span></span><span className="art-bar-actions"><Button size="sm" variant="outline" onClick={() => void copy(draft ?? '', 'action.copied')}>{t('tab.copyDraft')}</Button><Button size="sm" variant="outline" onClick={() => guarded(reload)}>{t('tab.discardReload')}</Button></span></div> : null}
       {!conflict && failure !== undefined ? <div className="art-bar" data-tone="error" role="alert"><span>{failureMessage ?? t(errorKey(failure))}</span><Button size="sm" variant="outline" onClick={() => void model.save()}>{t('action.retry')}</Button></div> : null}
       {viewing === null ? null : <div className="art-bar" role="status"><span>{t('tab.viewingOld', { version: viewing.version, current: payload.version })}</span><span className="art-bar-actions"><Button size="sm" variant="outline" onClick={() => { ++historySequence.current; setHistoryLoading(false); setViewing(null); setSelection(null); }}>{t('tab.backToCurrent')}</Button><Button size="sm" variant="outline" disabled={busy} onClick={() => void restore()}>{t('tab.restoreThis')}</Button></span></div>}
@@ -773,21 +773,21 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
             overlay={overlay}
             onClose={historyOpen ? closeHistory : closeInspector}
             head={!historyOpen ? (
-              <SegmentedTabs<InspectorTab>
+              <SegmentedControl<InspectorTab>
+                id={'art-inspector-' + id}
                 className="art-inspector-tabs"
-                items={[
-                  { value: 'layers', label: t('panel.layers'), id: 'art-inspector-' + id + '-layers-tab', panelId: 'art-inspector-' + id + '-layers' },
-                  { value: 'properties', label: t('panel.properties'), id: 'art-inspector-' + id + '-properties-tab', panelId: 'art-inspector-' + id + '-properties' },
+                options={[
+                  { value: 'layers', label: t('panel.layers') },
+                  { value: 'properties', label: t('panel.properties') },
                 ]}
                 value={inspectorTab}
                 onChange={setInspectorTab}
                 label={t('canvas.inspectorTabs')}
-                size="sm"
               />
             ) : undefined}
           >
             {historyOpen ? <HistoryPanel t={t} versions={versions} failed={historyFailed} current={payload.version} selected={viewing?.version ?? payload.version} onSelect={version => void selectVersion(version)} /> : (
-              <div className="art-inspector" role="tabpanel" id={'art-inspector-' + id + '-' + inspectorTab} aria-labelledby={'art-inspector-' + id + '-' + inspectorTab + '-tab'}>
+              <div className="art-inspector" role="tabpanel" id={'art-inspector-' + id + '-' + inspectorTab + '-panel'} aria-labelledby={'art-inspector-' + id + '-' + inspectorTab}>
                 <DesignInspector t={t} handle={canvasHandle} snapshot={canvasSnapshot} tab={inspectorTab} />
               </div>
             )}
