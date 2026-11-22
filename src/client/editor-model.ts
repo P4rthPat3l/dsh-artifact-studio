@@ -157,6 +157,15 @@ export class EditorModel {
     this.publish({ payload: { ...previous, manifest, content, version: manifest.version }, draft, conflict: false, loading: false });
     rememberTitle(manifest.id, manifest.title);
     announceVersion(manifest.id, manifest.version);
+    // The update endpoint does not answer the design summary, so the lint bar
+    // refetches it after every saved design. A quiet refresh: no loading state,
+    // and it never lands over typing because the draft is null on this path.
+    if (manifest.type === 'design' && this.state.draft === null) {
+      void api.get(this.where, this.address.id).then((payload) => {
+        if (this.state.draft !== null || payload.version !== manifest.version) return;
+        this.publish({ payload, revision: this.state.revision + 1 });
+      }).catch(() => undefined);
+    }
     announceListChange();
   }
 }

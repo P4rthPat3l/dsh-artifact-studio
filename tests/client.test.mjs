@@ -1980,6 +1980,29 @@ test('AC-085: starter prompts name the artifact type', async () => {
   } finally { await view.unmount(); }
 });
 
+test('FEAT-007 AC-028b: the design tab shows saved lint warnings and dismisses them', async () => {
+  const host = fakeHost();
+  const id = 'art_ws_design02801';
+  host.state.artifacts.set(id, { manifest: host.manifest(id, 'design', 'Card', 1), content: DESIGN_SOURCE, designInfo: { ...DESIGN_INFO, warnings: ['Design issue, Card: Contrast ratio 1.2:1 is below WCAG AA'] } });
+  const { ctx, records } = stubContext(host);
+  plugin.apply(ctx);
+  const tab = slot(records, 'sidebar.right.pane.tab', 'dsh-artifact-studio/artifact');
+  const view = await render(tab.component, tabProps('dsh-resource://artifact/workspace/ws-a/' + id));
+  try {
+    await act(async () => { await settle(40); });
+    const bar = view.container.querySelector('[role="note"][data-tone="warn"]');
+    assert.ok(bar, 'the design warnings bar did not render');
+    assert.match(bar.textContent, /tab\.designWarnings/);
+    assert.match(bar.textContent, /version=1/);
+    assert.match(bar.textContent, /Contrast ratio 1\.2:1/);
+    const barButtons = [...bar.querySelectorAll('button')];
+    assert.equal(barButtons.length, 1, 'the warnings bar carries one action');
+    await click(barButtons[0]);
+    await act(async () => { await settle(40); });
+    assert.equal(view.container.querySelector('[role="note"][data-tone="warn"]'), null, 'the dismissed bar returned');
+  } finally { await view.unmount(); }
+});
+
 test('FEAT-007 AC-014: a design tab shows the rendered preview and its source', async () => {
   const host = fakeHost();
   const id = 'art_ws_design01401';

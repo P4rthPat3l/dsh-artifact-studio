@@ -6,12 +6,24 @@ import {
   IconChevronRightOutlineRegular,
   Input,
   Switch,
+  Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import type { CanvasSnapshot, DesignCanvasHandle, LayerRowView, PropertyKey } from './canvas/entry.js';
+import { COLOR_ROLES } from '../contract.js';
+import type { TokenColors } from '../contract.js';
 import type { Translator } from './harness.js';
 import {
+  IconAlignBottom,
+  IconAlignCenterX,
+  IconAlignLeft,
+  IconAlignMiddle,
+  IconAlignRight,
+  IconAlignTop,
+  IconBackward,
+  IconDuplicate,
   IconEye,
   IconEyeOff,
+  IconForward,
   IconLayerFrame,
   IconLayerGroup,
   IconLayerShape,
@@ -332,8 +344,89 @@ function LayersPanel({ t, handle, snapshot }: { t: Translator; handle: DesignCan
   );
 }
 
+/** The hex shape the color inputs accept and show. */
+const HEX_COLOR = /^#[0-9a-f]{6}$/;
+
+/**
+ * One fill or stroke color: a picker plus a typed hex entry. The text field
+ * previews while typing and commits one final color on blur.
+ */
+function ColorField({ t, label, hex, onInput, onCommit }: {
+  t: Translator;
+  label: string;
+  hex: string | null;
+  onInput(hex: string): void;
+  onCommit(hex: string): void;
+}) {
+  const [draft, setDraft] = useState('');
+  const focused = useRef(false);
+  const first = useRef<string | null>(null);
+  const lastInput = useRef<string | null>(null);
+  const shown = hex ?? '';
+  const value = focused.current ? draft : shown;
+  const parse = (text: string): string | null => {
+    const next = text.trim().toLowerCase();
+    return HEX_COLOR.test(next) ? next : null;
+  };
+  useEffect(() => { if (!focused.current) setDraft(''); }, [hex]);
+  return (
+    <label className="art-inspector-field">
+      <span className="art-inspector-field-label">{label}</span>
+      <input
+        type="color"
+        className="art-inspector-color"
+        aria-label={label}
+        value={hex !== null && HEX_COLOR.test(hex) ? hex : '#000000'}
+        disabled={hex === null}
+        onFocus={() => { first.current = hex; }}
+        onInput={(event) => {
+          const next = event.currentTarget.value.toLowerCase();
+          lastInput.current = next;
+          onInput(next);
+        }}
+        onChange={(event) => {
+          const next = event.currentTarget.value.toLowerCase();
+          lastInput.current = next;
+          onCommit(next);
+        }}
+      />
+      <Input
+        className="art-inspector-input"
+        aria-label={label + ' CSS'}
+        type="text"
+        value={value}
+        placeholder={hex === null ? t('panel.mixed') : undefined}
+        onFocus={() => { focused.current = true; first.current = hex; lastInput.current = null; setDraft(''); }}
+        onChange={(event) => {
+          setDraft(event.target.value);
+          const next = parse(event.target.value);
+          if (next !== null) { lastInput.current = next; onInput(next); }
+        }}
+        onBlur={() => {
+          focused.current = false;
+          const next = parse(draft) ?? lastInput.current;
+          setDraft('');
+          if (next !== null) onCommit(next);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            event.currentTarget.blur();
+          } else if (event.key === 'Escape') {
+            setDraft('');
+            const revert = first.current;
+            lastInput.current = null;
+            if (revert !== null) onCommit(revert);
+            event.currentTarget.blur();
+          }
+        }}
+      />
+    </label>
+  );
+}
+
 /** The Properties tab: geometry, appearance, and text for the selection. */
-function PropertiesPanel({ t, handle, snapshot }: { t: Translator; handle: DesignCanvasHandle; snapshot: CanvasSnapshot }) {
+function PropertiesPanel({ t, handle, snapshot, palette }: { t: Translator; handle: DesignCanvasHandle; snapshot: CanvasSnapshot; palette: TokenColors | null }) {
   const properties = snapshot.properties;
   if (properties.ids.length === 0) return <p className="art-inspector-empty">{t('panel.selectLayerHint')}</p>;
   const number = (key: PropertyKey, label: string, value: number | null, extra: { min?: number; max?: number; step?: number } = {}) => (
@@ -347,6 +440,14 @@ function PropertiesPanel({ t, handle, snapshot }: { t: Translator; handle: Desig
       onCommit={(next, previous) => handle.commit(key, next, previous)}
     />
   );
+  const action = (label: string, icon: ReactNode, disabled: boolean, onClick: () => void) => (
+    <Tooltip label={t(label)} side="top" portal>
+      <Button size="sm" className="art-inspector-action" aria-label={t(label)} disabled={disabled} onClick={onClick}>
+        {icon}
+      </Button>
+    </Tooltip>
+  );
+  const alignCount = (axis: 'horizontal' | 'vertical') => (next: 'min' | 'center' | 'max') => handle.alignSelection(axis, next);
   return (
     <div className="art-inspector-properties">
       <div className="art-inspector-node">
@@ -354,6 +455,49 @@ function PropertiesPanel({ t, handle, snapshot }: { t: Translator; handle: Desig
         <span className="art-inspector-node-name" title={properties.name ?? ''}>{properties.name}</span>
         <span className="art-inspector-node-type">{layerTypeLabel(t, properties.type ?? '')}</span>
       </div>
+      <div className="art-inspector-actions" role="toolbar" aria-label={t('panel.layerActions')}>
+        {action('panel.duplicate', <IconDuplicate size={14} />, properties.ids.length === 0, () => handle.duplicateSelection())}
+        {action('panel.forward', <IconForward size={14} />, properties.ids.length === 0, () => handle.changeOrder('forward'))}
+        {action('panel.backward', <IconBackward size={14} />, properties.ids.length === 0, () => handle.changeOrder('backward'))}
+      </div>
+      {properties.ids.length < 2 ? null : (
+        <div className="art-inspector-actions" role="toolbar" aria-label={t('panel.align')}>
+          {action('panel.alignLeft', <IconAlignLeft size={14} />, false, () => alignCount('horizontal')('min'))}
+          {action('panel.alignCenterX', <IconAlignCenterX size={14} />, false, () => alignCount('horizontal')('center'))}
+          {action('panel.alignRight', <IconAlignRight size={14} />, false, () => alignCount('horizontal')('max'))}
+          {action('panel.alignTop', <IconAlignTop size={14} />, false, () => alignCount('vertical')('min'))}
+          {action('panel.alignMiddle', <IconAlignMiddle size={14} />, false, () => alignCount('vertical')('center'))}
+          {action('panel.alignBottom', <IconAlignBottom size={14} />, false, () => alignCount('vertical')('max'))}
+        </div>
+      )}
+      {(['fill', 'stroke'] as const).map((kind) => (
+        <section key={kind} className="art-inspector-group">
+          <h3 className="art-inspector-heading">{t(kind === 'fill' ? 'panel.fill' : 'panel.stroke')}</h3>
+          <ColorField
+            t={t}
+            label={t(kind === 'fill' ? 'panel.fill' : 'panel.stroke')}
+            hex={kind === 'fill' ? properties.fill : properties.stroke}
+            onInput={(value) => handle.setColor(kind, value, false)}
+            onCommit={(value) => handle.setColor(kind, value, true)}
+          />
+          <div className="art-inspector-swatches">
+            {COLOR_ROLES.map((role) => {
+              const value = palette?.[role];
+              return value === undefined || !HEX_COLOR.test(value) ? null : (
+                <button
+                  key={role}
+                  type="button"
+                  className="art-inspector-swatch"
+                  style={{ background: value }}
+                  title={t(`design.color.${role}`)}
+                  aria-label={t(`design.color.${role}`)}
+                  onClick={() => handle.setColor(kind, value, true)}
+                />
+              );
+            })}
+          </div>
+        </section>
+      ))}
       <section className="art-inspector-group">
         <h3 className="art-inspector-heading">{t('panel.positionSize')}</h3>
         <div className="art-inspector-grid">
@@ -406,14 +550,15 @@ function PropertiesPanel({ t, handle, snapshot }: { t: Translator; handle: Desig
  * @param props the translator, handle, snapshot, and active tab.
  * @returns the panel.
  */
-export function DesignInspector({ t, handle, snapshot, tab }: {
+export function DesignInspector({ t, handle, snapshot, tab, palette }: {
   t: Translator;
   handle: DesignCanvasHandle | null;
   snapshot: CanvasSnapshot | null;
   tab: InspectorTab;
+  palette: TokenColors | null;
 }) {
   if (handle === null || snapshot === null) return <p className="art-inspector-empty">{t('canvas.opening')}</p>;
   return tab === 'layers'
     ? <LayersPanel t={t} handle={handle} snapshot={snapshot} />
-    : <PropertiesPanel t={t} handle={handle} snapshot={snapshot} />;
+    : <PropertiesPanel t={t} handle={handle} snapshot={snapshot} palette={palette} />;
 }

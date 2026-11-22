@@ -663,8 +663,8 @@ test('AC-070: the artifact-design skill registers and the tools load without the
     workspaceRegistry: registry,
     workingDirectory: { ensure: async () => wsA },
   });
-  assert.equal(registered.length, 13);
-  assert.ok(registered.includes('artifact_brief') && registered.includes('artifact_guide_update'));
+  assert.equal(registered.length, 14);
+  assert.ok(registered.includes('artifact_brief') && registered.includes('artifact_guide_update') && registered.includes('artifact_import'));
 });
 
 test('AC-071: write tool descriptions name the skill and the precedence rule', () => {

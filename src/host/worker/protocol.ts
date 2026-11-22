@@ -1,7 +1,7 @@
 import type { DesignInfo } from '../../contract.js';
 
 /** Actions the host can ask the renderer to perform. */
-export type WorkerAction = 'inspect' | 'preview' | 'export';
+export type WorkerAction = 'inspect' | 'preview' | 'export' | 'import-fig';
 
 /** Formats a design export can produce. */
 export type WorkerFormat = 'png' | 'svg' | 'fig' | 'html-svg';
@@ -15,6 +15,8 @@ export interface WorkerRequest {
   /** Longest side of a preview, in pixels. Zero means the design's own size. */
   maxSide?: number;
   format?: WorkerFormat;
+  /** Base64 .fig file bytes for an import. The host read the file; the child sees no filesystem. */
+  bytes?: string;
 }
 
 /** One successful answer. */
@@ -25,6 +27,8 @@ export interface WorkerSuccess {
   data?: string;
   width?: number;
   height?: number;
+  /** The stored Design JSX an import produced. */
+  source?: string;
 }
 
 /** One failed answer, with a stable artifact error code. */

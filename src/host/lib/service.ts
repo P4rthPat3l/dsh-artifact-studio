@@ -20,6 +20,7 @@ import type {
   VersionSource,
 } from '../../contract.js';
 import { DesignRenderer, PREVIEW_MAX_SIDE } from './design-render.js';
+import type { ImportedFig } from './design-render.js';
 import { clearWorkspaceDesignSystem, saveDesignSystem } from './design-system.js';
 import { resolveSystem, saveSystem, listSystems, setSystemDefault } from './design-catalog.js';
 import { generationHash, generationSummary } from './generation.js';
@@ -67,6 +68,9 @@ function canonicalSheet(content: string): string {
     });
   }
 }
+
+/** The largest .fig file an import reads, in bytes. */
+const FIG_IMPORT_MAX_BYTES = 128 * 1024 * 1024;
 
 /**
  * One facade over the store, the scope roots, the design system, the design
@@ -405,6 +409,30 @@ export class ArtifactService {
     const manifest = await this.store.update(root, id, { ...input, content: next, edits: undefined });
     await this.writeInfo(root, id, next, info);
     return manifest;
+  }
+
+  /**
+   * Import a .fig file as a new design. The file's first page with elements
+   * becomes the stored mockup; later pages are named in warnings. The host
+   * reads the file, and the renderer child never touches the filesystem.
+   * @param target the caller's context.
+   * @param input the path, optional title, and write source.
+   * @returns the new manifest.
+   */
+  async importDesign(target: Target, input: { path: string; title?: string; source: VersionSource }): Promise<Manifest> {
+    let bytes: Buffer;
+    try {
+      bytes = await fs.readFile(input.path);
+    } catch (error) {
+      throw new ArtifactError('artifact/bad-request', `The .fig file was not readable: ${error instanceof Error ? error.message : String(error)}`, { path: input.path });
+    }
+    if (bytes.byteLength > FIG_IMPORT_MAX_BYTES) {
+      throw new ArtifactError('artifact/bad-request', 'The .fig file is too large; imports accept up to 128 MB.', { path: input.path });
+    }
+    const imported: ImportedFig = await this.designs.importFig(bytes);
+    const name = path.basename(input.path).replace(/\.(fig|pen)$/i, '');
+    const title = input.title ?? (name === '' ? 'Imported design' : name);
+    return this.create(target, { type: 'design', title, content: imported.source, source: input.source });
   }
 
   /**

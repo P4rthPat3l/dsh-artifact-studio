@@ -128,6 +128,113 @@ export const IconText = ({ size }: { size?: number }) => (
   </Glyph>
 );
 
+/** A rectangle shape. */
+export const IconRectangle = ({ size }: { size?: number }) => (
+  <Glyph size={size}>
+    <rect x="4.5" y="6" width="15" height="12" rx="1.5" />
+  </Glyph>
+);
+
+/** An ellipse shape. */
+export const IconEllipse = ({ size }: { size?: number }) => (
+  <Glyph size={size}>
+    <ellipse cx="12" cy="12" rx="7.5" ry="6" />
+  </Glyph>
+);
+
+/** A line shape. */
+export const IconLine = ({ size }: { size?: number }) => (
+  <Glyph size={size}>
+    <path d="M4.5 19.5l15-15" />
+  </Glyph>
+);
+
+/** A pen: bezier vector drawing. */
+export const IconPen = ({ size }: { size?: number }) => (
+  <Glyph size={size}>
+    <path d="M12 19.5C8.5 19.5 6 17.3 6 14.3 6 9.9 12 3.5 12 3.5s6 6.4 6 10.8c0 3-2.5 5.2-6 5.2Z" />
+    <circle cx="12" cy="14.5" r="1.6" />
+  </Glyph>
+);
+
+/** Two copies offset: duplicate. */
+export const IconDuplicate = ({ size }: { size?: number }) => (
+  <Glyph size={size}>
+    <rect x="8.5" y="8.5" width="11" height="11" rx="2" />
+    <path d="M15.5 4.5h-8a3 3 0 0 0-3 3v8" />
+  </Glyph>
+);
+
+/** A raised box: bring forward. */
+export const IconForward = ({ size }: { size?: number }) => (
+  <Glyph size={size}>
+    <rect x="9.5" y="9.5" width="10" height="10" rx="1.5" fill="currentColor" stroke="none" />
+    <path d="M7.5 7.5h10M7.5 7.5v10M4.5 13v-6a2 2 0 0 1 2-2h6" />
+  </Glyph>
+);
+
+/** A lowered box: send backward. */
+export const IconBackward = ({ size }: { size?: number }) => (
+  <Glyph size={size}>
+    <rect x="4.5" y="4.5" width="10" height="10" rx="1.5" />
+    <path d="M16.5 9.5h-6" />
+  </Glyph>
+);
+
+/** Two boxes against a left rail: align left. */
+export const IconAlignLeft = ({ size }: { size?: number }) => (
+  <Glyph size={size}>
+    <rect x="5.5" y="5.5" width="10" height="5.5" rx="1" />
+    <rect x="5.5" y="14.5" width="6" height="5.5" rx="1" />
+    <path d="M3.5 3.5v17" />
+  </Glyph>
+);
+
+/** Two boxes against a center rail: align horizontally. */
+export const IconAlignCenterX = ({ size }: { size?: number }) => (
+  <Glyph size={size}>
+    <rect x="6.5" y="5.5" width="9" height="5.5" rx="1" />
+    <rect x="9" y="14.5" width="4" height="5.5" rx="1" />
+    <path d="M11 3.5v17" strokeDasharray="3 2" />
+  </Glyph>
+);
+
+/** Two boxes against a right rail: align right. */
+export const IconAlignRight = ({ size }: { size?: number }) => (
+  <Glyph size={size}>
+    <rect x="8.5" y="5.5" width="10" height="5.5" rx="1" />
+    <rect x="12.5" y="14.5" width="6" height="5.5" rx="1" />
+    <path d="M20.5 3.5v17" />
+  </Glyph>
+);
+
+/** Two boxes against a top rail: align top. */
+export const IconAlignTop = ({ size }: { size?: number }) => (
+  <Glyph size={size}>
+    <rect x="5.5" y="5.5" width="5.5" height="10" rx="1" />
+    <rect x="14.5" y="5.5" width="5.5" height="6" rx="1" />
+    <path d="M3.5 3.5h17" />
+  </Glyph>
+);
+
+/** Two boxes against a middle rail: align vertically. */
+export const IconAlignMiddle = ({ size }: { size?: number }) => (
+  <Glyph size={size}>
+    <rect x="5.5" y="6.5" width="5.5" height="9" rx="1" />
+    <rect x="14.5" y="9" width="5.5" height="4" rx="1" />
+    <path d="M3.5 11h17" strokeDasharray="3 2" />
+  </Glyph>
+);
+
+/** Two boxes against a bottom rail: align bottom. */
+export const IconAlignBottom = ({ size }: { size?: number }) => (
+  <Glyph size={size}>
+    <rect x="5.5" y="8.5" width="5.5" height="10" rx="1" />
+    <rect x="14.5" y="12.5" width="5.5" height="6" rx="1" />
+    <path d="M3.5 20.5h17" />
+  </Glyph>
+);
+
 /** A counter-clockwise arrow: undo. */
 export const IconUndo = ({ size }: { size?: number }) => (
   <Glyph size={size}>

@@ -4,9 +4,11 @@ import { SceneGraph } from '@open-pencil/scene-graph';
 import type { SceneNode } from '@open-pencil/scene-graph';
 import { designJSXRenderer } from '@open-pencil/core/design-jsx';
 import { fontManager } from '@open-pencil/core/text';
+import { createLinter } from '@open-pencil/core/lint';
 import { computeContentBounds, headlessRenderNodes } from '@open-pencil/core/io/formats/raster';
 import { renderNodesToSVG } from '@open-pencil/core/io/formats/svg';
-import { exportFigFile } from '@open-pencil/core/io/formats/fig';
+import { exportFigFile, parseFigFile } from '@open-pencil/core/io/formats/fig';
+import { selectionToJSX } from '@open-pencil/design-jsx';
 import type { DesignInfo } from '../../contract.js';
 import { bundledIconProvider } from '../../icon-set.js';
 import { buildPageModel } from './page-model.js';
@@ -86,6 +88,26 @@ function descendants(graph: SceneGraph, page: SceneNode): SceneNode[] {
 }
 
 /**
+ * The highest design-lint severities, as the summary's warnings.
+ * Info rules stay out: token adoption and structure hygiene are suggestions.
+ * A lint failure must never block saving, so any throw returns nothing.
+ * @param graph the compiled graph.
+ * @returns the warnings.
+ */
+function lintWarnings(graph: SceneGraph): string[] {
+  const LIMIT = 12;
+  try {
+    const result = createLinter({ preset: 'recommended' }).lintGraph(graph);
+    const relevant = result.messages.filter((message) => message.severity === 'error' || message.severity === 'warning');
+    const lines = relevant.slice(0, LIMIT).map((message) => `Design issue, ${message.nodePath.join(' / ')}: ${message.message}`);
+    const rest = relevant.length - lines.length;
+    return rest > 0 ? [...lines, `And ${rest} more design issues.`] : lines;
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Count the design's nodes, record its types and fonts, and warn about
  * families the engine cannot load.
  * @param graph the graph.
@@ -105,7 +127,43 @@ function summarize(graph: SceneGraph, page: SceneNode): DesignInfo {
   const warnings = sorted
     .filter((family) => !BUNDLED_FONTS.has(family))
     .map((family) => `Font "${family}" is not bundled. The preview substitutes a default face.`);
-  return { pages: graph.getPages().length, nodes: nodes.length, types, fonts: sorted, warnings };
+  return { pages: graph.getPages().length, nodes: nodes.length, types, fonts: sorted, warnings: [...warnings, ...lintWarnings(graph)] };
+}
+
+/**
+ * Convert a .fig file into stored Design JSX: the first page that holds elements,
+ * serialized like the panel's own save path. Non-empty pages after it are named
+ * in warnings, because the stored mockup keeps one page.
+ * @param bytes64 the base64 file bytes the host read.
+ * @returns the response.
+ */
+async function handleImport(bytes64: string): Promise<WorkerResponse> {
+  const bytes = Buffer.from(bytes64, 'base64');
+  if (bytes.byteLength === 0) {
+    return { ok: false, code: 'artifact/bad-request', message: 'The import received no .fig bytes.' };
+  }
+  const view = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  let graph: SceneGraph;
+  try {
+    graph = await parseFigFile(view, { populate: 'all' });
+  } catch (error) {
+    return { ok: false, code: 'artifact/bad-request', message: 'The file is not a readable .fig document: ' + messageOf(error) };
+  }
+  const pages = graph.getPages();
+  const page = pages.find((candidate) => candidate.childIds.length > 0);
+  if (page === undefined) {
+    return { ok: false, code: 'artifact/bad-request', message: 'The file has no page with elements. Draw the mockup in Figma before exporting it.' };
+  }
+  const source = selectionToJSX(page.childIds, graph);
+  if (source === null) {
+    return { ok: false, code: 'artifact/design-render-failed', message: 'The design produced no source.' };
+  }
+  const info = summarize(graph, page);
+  const skipped = pages.filter((candidate) => candidate !== page && candidate.childIds.length > 0).length;
+  if (skipped > 0) {
+    info.warnings.push(`The file holds ${skipped} more page${skipped === 1 ? '' : 's'}; only "${page.name}" was imported.`);
+  }
+  return { ok: true, info, source };
 }
 
 /**
@@ -140,11 +198,12 @@ async function renderPng(compiled: Compiled, maxSide: number): Promise<Uint8Arra
 
 /**
  * Answer one request.
- * @param source the Design JSX source.
+ * @param source the Design JSX source, or the empty string on an import.
  * @param request the request.
  * @returns the response.
  */
 async function handle(source: string, request: WorkerRequest): Promise<WorkerResponse> {
+  if (request.action === 'import-fig') return handleImport(request.bytes ?? '');
   let compiled: Compiled;
   try {
     compiled = await compile(source);
@@ -209,7 +268,7 @@ async function readRequest(): Promise<WorkerRequest> {
   const fields: Record<string, unknown> = { ...parsed };
   if (typeof fields.nonce !== 'string' || fields.nonce === '') throw new Error('The design request has no nonce.');
   if (typeof fields.source !== 'string') throw new Error('The design request has no source.');
-  if (fields.action !== 'inspect' && fields.action !== 'preview' && fields.action !== 'export') {
+  if (fields.action !== 'inspect' && fields.action !== 'preview' && fields.action !== 'export' && fields.action !== 'import-fig') {
     throw new Error('The design request has an unknown action.');
   }
   return {
@@ -218,6 +277,7 @@ async function readRequest(): Promise<WorkerRequest> {
     source: fields.source,
     ...(typeof fields.maxSide === 'number' ? { maxSide: fields.maxSide } : {}),
     ...(fields.format === 'png' || fields.format === 'svg' || fields.format === 'fig' || fields.format === 'html-svg' ? { format: fields.format } : {}),
+    ...(typeof fields.bytes === 'string' ? { bytes: fields.bytes } : {}),
   };
 }
 

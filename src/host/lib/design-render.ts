@@ -128,6 +128,12 @@ export interface RenderedExport {
   mediaType: string;
 }
 
+/** One .fig import: the stored Design JSX source and its summary. */
+export interface ImportedFig {
+  source: string;
+  info: DesignInfo;
+}
+
 /**
  * Runs Design JSX in a separate, sandboxed Node process. Every call compiles
  * and renders from scratch; the caller caches what it needs.
@@ -177,6 +183,20 @@ export class DesignRenderer {
       throw new ArtifactError('artifact/design-render-failed', 'The design renderer returned no file.');
     }
     return { bytes: Buffer.from(response.data, 'base64'), mediaType: response.mediaType };
+  }
+
+  /**
+   * Convert a .fig file the host already read into stored Design JSX. The child
+   * never touches the filesystem, so the host passes the bytes.
+   * @param bytes the .fig file bytes.
+   * @returns the source and its summary.
+   */
+  async importFig(bytes: Buffer): Promise<ImportedFig> {
+    const response = await this.request('', { action: 'import-fig', bytes: bytes.toString('base64') });
+    if (typeof response.source !== 'string') {
+      throw new ArtifactError('artifact/design-render-failed', 'The design renderer returned no source.');
+    }
+    return { source: response.source, info: response.info };
   }
 
   /**

@@ -224,6 +224,7 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
   const [canvasSnapshot, setCanvasSnapshot] = useState<CanvasSnapshot | null>(null);
   const [canvasSelection, setCanvasSelection] = useState<SelectedLayer[]>([]);
   const [canvasFailure, setCanvasFailure] = useState<string | null>(null);
+const [warningsDismissed, setWarningsDismissed] = useState<string | null>(null);
   const [canvasAttempt, setCanvasAttempt] = useState(0);
   const [overlay, setOverlay] = useState(false);
   const [versions, setVersions] = useState<VersionEntry[] | null>(null);
@@ -710,6 +711,15 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
           <span className="art-bar-actions"><Button size="sm" variant="outline" onClick={() => { setCanvasFailure(null); setCanvasAttempt(value => value + 1); }}>{t('action.retry')}</Button></span>
         </div>
       )}
+      {type !== 'design' || readOnly || mode === 'source' ? null : (() => {
+        const designWarnings = (payload.designInfo?.warnings ?? []).filter(Boolean);
+        return designWarnings.length === 0 || warningsDismissed === id + ':' + String(payload.version) ? null : (
+          <div className="art-bar" data-tone="warn" role="note">
+            <span className="art-bar-text"><strong>{t('tab.designWarnings', { version: payload.version })}</strong><span>{designWarnings.join(' · ')}</span></span>
+            <span className="art-bar-actions"><Button size="sm" variant="outline" onClick={() => setWarningsDismissed(id + ':' + String(payload.version))}>{t('tab.dismiss')}</Button></span>
+          </div>
+        );
+      })()}
       <div className="art-body">
         <div
           className="art-stage"
@@ -788,7 +798,7 @@ function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inp
           >
             {historyOpen ? <HistoryPanel t={t} versions={versions} failed={historyFailed} current={payload.version} selected={viewing?.version ?? payload.version} onSelect={version => void selectVersion(version)} /> : (
               <div className="art-inspector" role="tabpanel" id={'art-inspector-' + id + '-' + inspectorTab + '-panel'} aria-labelledby={'art-inspector-' + id + '-' + inspectorTab}>
-                <DesignInspector t={t} handle={canvasHandle} snapshot={canvasSnapshot} tab={inspectorTab} />
+                <DesignInspector t={t} handle={canvasHandle} snapshot={canvasSnapshot} tab={inspectorTab} palette={dark ? selectedPayload.design.colorsDark : selectedPayload.design.colors} />
               </div>
             )}
           </DrawerShell>

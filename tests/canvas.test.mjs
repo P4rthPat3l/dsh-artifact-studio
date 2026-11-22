@@ -10,6 +10,8 @@ import { DesignRenderer } from '../dist/host/lib/design-render.js';
 import { SceneGraph } from '@open-pencil/scene-graph';
 import { designJSXRenderer } from '@open-pencil/core/design-jsx';
 import { selectionToJSX } from '@open-pencil/design-jsx';
+import { createDefaultEditorState, createEditor } from '@open-pencil/core/editor';
+import { reactive } from 'vue';
 
 const WORKSPACE_BASE = 'artifacts/workspaces';
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -76,6 +78,86 @@ test('FEAT-007 AC-024: the engine serializes a page to JSX that compiles to the 
   assert.equal(second.nodes, first.nodes);
   assert.equal(second.graph.getPages().length, first.graph.getPages().length);
   assert.equal(selectionToJSX(second.page.childIds, second.graph), serialized);
+});
+
+test('FEAT-007 AC-024: the engine registers the shape and pen tools the dock exposes', async () => {
+  const first = await compile(DESIGN);
+  const editor = createEditor({
+    graph: first.graph,
+    state: reactive(createDefaultEditorState(first.page.id)),
+    getViewportSize: () => ({ width: 800, height: 600 }),
+  });
+  try {
+    for (const tool of ['RECTANGLE', 'ELLIPSE', 'LINE', 'PEN']) {
+      editor.setTool(tool);
+      assert.equal(editor.state.activeTool, tool, tool);
+    }
+  } finally {
+    editor.dispose();
+  }
+});
+
+test('FEAT-007 AC-025: duplicate, z-order, and align mutate the compiled design', async () => {
+  const source = '<Frame name="A" w={100} h={50} x={10} y={10} bg="#111111" /><Frame name="B" w={100} h={50} x={70} y={40} bg="#222222" /><Frame name="C" w={100} h={50} x={30} y={70} bg="#333333" />';
+  const first = await compile(source);
+  const editor = createEditor({
+    graph: first.graph,
+    state: reactive(createDefaultEditorState(first.page.id)),
+    getViewportSize: () => ({ width: 800, height: 600 }),
+  });
+  try {
+    const ids = [...first.page.childIds];
+    editor.select([ids[0]]);
+    editor.duplicateSelected();
+    const afterDup = [...editor.state.selectedIds];
+    assert.notEqual(afterDup[0], ids[0], 'the duplicate selected the copy');
+    assert.equal(editor.graph.getNode(afterDup[0]).name, 'A');
+    const two = [ids[1], ids[2]];
+    editor.select(two);
+    editor.alignNodes(two, 'horizontal', 'min');
+    const x1 = editor.graph.getNode(two[0]).x;
+    const x2 = editor.graph.getNode(two[1]).x;
+    assert.equal(Math.round(x1), Math.round(x2), 'both frames moved to the shared x');
+    editor.select([ids[1]]);
+    const order = () => [...first.page.childIds];
+    const beforeIndex = order().indexOf(ids[1]);
+    editor.bringForward();
+    assert.equal(order().indexOf(ids[1]), beforeIndex + 1, 'B moved one rank forward');
+    editor.undo.undo();
+    assert.equal(order().indexOf(ids[1]), beforeIndex, 'undo restored the previous order');
+  } finally {
+    editor.dispose();
+  }
+});
+test('FEAT-007 AC-027: a color preview commits with one undo step to the original paint', async () => {
+  const first = await compile('<Frame name="Card" w={120} h={80} bg="#111111" />');
+  const editor = createEditor({
+    graph: first.graph,
+    state: reactive(createDefaultEditorState(first.page.id)),
+    getViewportSize: () => ({ width: 800, height: 600 }),
+  });
+  try {
+    const id = first.page.childIds[0];
+    editor.select([id]);
+    const hexOf = () => {
+      const fill = editor.graph.getNode(id).fills[0];
+      return '#' + [fill.color.r, fill.color.g, fill.color.b].map((channel) => Math.round(channel * 255).toString(16).padStart(2, '0')).join('');
+    };
+    assert.equal(hexOf(), '#111111');
+    // Preview writes go through updateNode without an undo entry.
+    const node = editor.graph.getNode(id);
+    const originalFills = [...node.fills];
+    const previewed = [...node.fills];
+    previewed[0] = { ...previewed[0], color: { ...previewed[0].color, r: 0x2a / 255, g: 0x2a / 255, b: 0x2a / 255 } };
+    editor.updateNode(id, { fills: previewed });
+    assert.equal(hexOf(), '#2a2a2a');
+    // Commit captures the pre-preview paints through commitNodeUpdate, so one undo reverts.
+    editor.commitNodeUpdate(id, { fills: originalFills }, 'Change fill');
+    editor.undo.undo();
+    assert.equal(hexOf(), '#111111');
+  } finally {
+    editor.dispose();
+  }
 });
 
 test('FEAT-007 AC-019: a canvas save stores the serialization as a new version', async () => {

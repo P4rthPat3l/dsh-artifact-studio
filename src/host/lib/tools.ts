@@ -649,6 +649,39 @@ export function createTools(host: ToolHost): ToolDefinition[] {
     },
   };
 
+  const importTool: ToolDefinition = {
+    name: 'artifact_import',
+    description:
+      'Import a Figma .fig file as a new design the user calls a mockup. The file\'s first page with elements becomes the editable Design JSX source; later pages are skipped and named in warnings. Pass the absolute file path the user named. Use it when the user points at a .fig file instead of asking for a fresh mockup.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['path'],
+      properties: {
+        path: { type: 'string', description: 'Absolute path of the .fig file to read.' },
+        title: { type: 'string', description: 'Short title, 1 to 120 characters. Defaults to the file name.' },
+        ...DESIGN_SELECTION,
+        scope: SCOPE_PARAM,
+        workspaceId: WORKSPACE_PARAM,
+      },
+    },
+    output: {
+      schema: { type: 'object', additionalProperties: false, required: [...WRITE_SCHEMA.required, 'warnings'], properties: { ...WRITE_SCHEMA.properties, warnings: { type: 'array', items: { type: 'string' } } } },
+      render: (_args, value) => [{ type: 'text', text: writeText(value, 'Imported') }],
+      presentationMeta: (_args, value) => cardMeta(value),
+    },
+    async execute(args, exec) {
+      const fields = fieldsOf(args);
+      const target = await targetFor(host, exec, optionalScope(fields), optionalString(fields, 'workspaceId'));
+      const manifest = await service.importDesign(target, {
+        path: requiredString(fields, 'path'),
+        title: optionalString(fields, 'title'),
+        source: { origin: 'agent', action: 'create', ...(exec.agent === undefined ? {} : { sessionId: exec.agent.id }) },
+      });
+      const warnings = (await service.read(target, manifest.id)).designInfo?.warnings ?? [];
+      return { ...summary(manifest, target), warnings };
+    },
+  };
   const designRead: ToolDefinition = {
     name: 'design_system_read',
     description:
@@ -829,5 +862,5 @@ export function createTools(host: ToolHost): ToolDefinition[] {
       return { ...summary(manifest, target), warnings: [] };
     },
   };
-  return [create, read, update, sheetUpdate, list, remove, exportTool, designRead, designUpdate, brief, guideUpdate, designList, rebase];
+  return [create, read, update, sheetUpdate, list, remove, importTool, exportTool, designRead, designUpdate, brief, guideUpdate, designList, rebase];
 }

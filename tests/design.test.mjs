@@ -76,6 +76,63 @@ function dirOf(home, id) {
   return path.join(home, WORKSPACE_BASE, 'ws-a', id);
 }
 
+test('FEAT-007 AC-028: a low-contrast design returns lint warnings', async () => {
+  const { service, target } = await fixture();
+  const manifest = await service.create(target, { type: 'design', title: 'Dim', content: '<Frame name="Card" w={120} h={60} bg="#000000"><Text color="#000000" size={14}>Hidden</Text></Frame>', source: agent });
+  const payload = await service.read(target, manifest.id);
+  assert.ok(payload.designInfo !== undefined);
+  assert.ok(payload.designInfo.warnings.some((warning) => /contrast/i.test(warning)), JSON.stringify(payload.designInfo.warnings));
+});
+
+test('FEAT-007 AC-029: a well-formed design carries no lint warnings', async () => {
+  const { service, target } = await fixture();
+  const manifest = await service.create(target, { type: 'design', title: 'Card', content: DESIGN, source: agent });
+  const payload = await service.read(target, manifest.id);
+  assert.ok(payload.designInfo !== undefined);
+  assert.equal(payload.designInfo.warnings.filter((warning) => warning.startsWith('Design issue')).length, 0, JSON.stringify(payload.designInfo.warnings));
+});
+
+test('FEAT-007 AC-030: a .fig file imports as an editable design', async () => {
+  const { home, service, target } = await fixture();
+  const created = await service.create(target, { type: 'design', title: 'Card', content: DESIGN, source: agent });
+  const fig = await service.export(target, created.id, 'fig');
+  assert.equal(fig.mediaType, 'application/octet-stream');
+  const figPath = path.join(home, 'card.fig');
+  await fs.writeFile(figPath, Buffer.from(fig.data, 'base64'));
+  const manifest = await service.importDesign(target, { path: figPath, source: agent });
+  assert.equal(manifest.type, 'design');
+  assert.equal(manifest.title, 'card');
+  const payload = await service.read(target, manifest.id);
+  assert.match(payload.content, /<Frame/);
+  assert.ok((payload.designInfo?.nodes ?? 0) > 0);
+});
+
+test('FEAT-007 AC-031: a missing .fig path is refused', async () => {
+  const { service, target } = await fixture();
+  await assert.rejects(
+    service.importDesign(target, { path: path.join(base, 'absent.fig'), source: agent }),
+    (error) => error.code === 'artifact/bad-request',
+  );
+});
+
+test('FEAT-007 AC-030b: the import tool turns a .fig path into an artifact', async () => {
+  const { home, service, target } = await fixture();
+  const created = await service.create(target, { type: 'design', title: 'Card', content: DESIGN, source: agent });
+  const fig = await service.export(target, created.id, 'fig');
+  const figPath = path.join(home, 'card.fig');
+  await fs.writeFile(figPath, Buffer.from(fig.data, 'base64'));
+  const tools = createTools({ service, registry, workingDirectory: { ensure: async () => path.join(base, 'project-a') } });
+  const byName = Object.fromEntries(tools.map((tool) => [tool.name, tool]));
+  const exec = { agent: { id: 'ses-a' }, signal: new AbortController().signal };
+  const value = await byName.artifact_import.execute({ path: figPath }, exec);
+  assert.equal(value.type, 'design');
+  assert.equal(value.title, 'card');
+  assert.equal(value.scope, 'workspace');
+  assert.ok(Array.isArray(value.warnings), 'the import tool returns its warnings array');
+  const payload = await service.read(target, String(value.id));
+  assert.match(payload.content, /<Frame/);
+});
+
 test('FEAT-007 AC-001: create stores Design JSX and returns its summary', async () => {
   const { service, target } = await fixture();
   const manifest = await service.create(target, { type: 'design', title: 'Card', content: DESIGN, source: agent });
