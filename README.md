@@ -1,108 +1,266 @@
-# Artifacts for DeepSeek Harness
+# Artifact Studio
 
-The agent creates pages, documents, spreadsheets, whiteboards, and OpenPencil designs as versioned files, and you open them beside the chat. It works offline with no account and no hosted service.
+![Artifact Studio banner](https://raw.githubusercontent.com/P4rthPat3l/dsh-artifact-studio/master/docs/images/banner.png)
 
-## What it does
+[![npm version](https://img.shields.io/npm/v/dsh-artifact-studio)](https://www.npmjs.com/package/dsh-artifact-studio)
+[![license](https://img.shields.io/npm/l/dsh-artifact-studio)](LICENSE)
 
-- Fourteen agent tools and two bundled skills: `artifact_create`, `artifact_read`, `artifact_update`, `artifact_sheet_update`, `artifact_board_update`, `artifact_list`, `artifact_delete`, `artifact_export`, `design_system_read`, `design_system_update`, `artifact_brief`, `artifact_guide_update`, `design_system_list`, and `artifact_rebase`.
-- Five artifact types. A page is a self-contained HTML document rendered in a sandboxed frame with no network. A doc is Markdown edited in a Tiptap rich-text editor. A sheet is a JSON workbook edited in a grid: cells hold values or Excel formulas, the host computes formula results for export and print, and the agent edits cells with `artifact_sheet_update`. A whiteboard is a native Excalidraw scene edited in the panel, with PNG and SVG export from the editor and a .excalidraw export from the host. A design, shown in the UI as a mockup, is OpenPencil Design JSX: the host compiles it and renders a PNG preview, and the panel opens it on a canvas.
-- Design previews run in a separate child process with Node's permission model: no network, no file writes, no child processes, and a 20 s deadline. The canvas loads the same engine in the browser from a local asset route. Icons come from the bundled Material Design Icons set, and Inter, Roboto, and Noto Naskh Arabic ship with the package.
-- A mockup opens in View: the canvas fills the panel with no toolbar, a floating zoom dock, and click selection. Edit adds select, hand, frame, and text tools, undo, and redo, and opens a React inspector in the right drawer with the layer tree and the selection's position, size, rotation, radius, opacity, visibility, and text properties. Selecting a layer shows a bar that turns it into an agent request with the layer name, path, and JSX. Edits become a draft and Save writes a new version of the Design JSX. A version opened from History stays a read-only PNG. Gallery tiles show the saved PNG for visible mockups.
-- Two storage scopes. Workspace artifacts live in `$DSH_HOME/artifacts/workspaces/<workspaceId>/`, keyed by the registered workspace, so the project folder stays clean. Library artifacts live in `$DSH_HOME/artifacts/v1/`, and every project can see them. A request that starts from another project's artifact names that project's workspace id, and the agent can pass it as `workspaceId`; without it, tools stay in the session's project.
-- Every save creates a version. You can preview an older version and restore it, which adds a new version.
-- A save is refused when someone else saved first, so neither the agent nor you can silently overwrite the other.
-- Pages export as HTML. Docs export as Markdown, Word, or HTML. Sheets export as CSV (first sheet) or XLSX (every sheet with styles, formulas, and cached results). Whiteboards export as .excalidraw, and the panel exports the current board as PNG or SVG. You can print a page, doc, or sheet or save it as a PDF from the print dialog. Mockups export as PNG, SVG, or a `.fig` document that opens in OpenPencil.
-- Named design systems live in each scope with immutable revisions. Every saved Page or Document version pins the tokens, system identity, recipe, and kit it was made with, so editing text never silently restyles it. `artifact_rebase` is the explicit way to adopt newer settings. Light and dark palettes include page, raised, border, control, paired action/text, focus, and status roles. Existing saved palettes retain their colors; missing neutral and action roles follow their saved brand.
-- The left sidebar opens the Artifacts page with one scope selector for all projects, one project, or the library. Artifacts open as tabs beside the chat. Back preserves gallery search, the scope and type filters, paging, and scroll.
-- The right panel's guide offers an Artifacts page for the current project. It reuses the same search, type filter, pins, design system, and create menu as the left page, fixed to that project, and opens each artifact as its own tab so several stay open at once.
-- A bundled `artifact-design` skill teaches project-first styling, task-specific structure, truthful data, accessibility, and checks before saving. The packaged [page reference](<examples/page-design-system.html>) supplies reusable patterns rendered with injected tokens. The skill provides its installed path. Page writes return warnings for network URLs, browser storage, fixed widths over 960 pixels, and pages that ignore the design tokens.
-- The bundled `visual-codebase-walkthrough` skill traces one real execution path, data flow, state transition, or change impact. It defaults to a Page with diagrams, guided steps, selectable code excerpts, and visible source evidence. Ask, "Visually trace what happens when I save a mockup, including stale-version rejection." Explicit Mockup requests still use the canvas. The skill does not add live source navigation or automatic repository indexing.
-- The interface uses the Harness's own components and follows its light and dark theme. A page follows dark mode when it declares `<meta name="color-scheme" content="light dark">`.
-- Reload and Back ask whether to save, discard, or cancel when edits are pending. Multiple views share a draft and serialize saves. Draft recovery stays in window memory until saved or discarded. It does not survive a browser restart.
-- Export saves current edits first and uses that exact version. History exports and prints the selected saved version. A failed save stops output.
-- Edit with agent saves pending edits, then puts your selection and a reference to the artifact, its workspace, and its saved version into this conversation's message box. You finish the sentence and send it. Selections work in documents, in sheet cells and ranges, in the page preview, and in page code. The full Artifacts page has no conversation, so it copies the same text.
-- The gallery shows page covers, document excerpts, spreadsheet previews, and whiteboard thumbnails, a pinned group, and one recently updated grid with full artifact names. An empty project offers starter prompts. The header version picker lists versions and opens History.
-- When the agent publishes a newer version, an open clean tab reloads and names the new version. A dirty tab keeps its conflict bar instead.
-- Documents render on a page styled by the design tokens, so the editor matches the export. Formatting controls appear over a selection. Sheets render in a virtualized grid with a formula bar, cell formatting, sheet tabs, undo, and TSV copy and paste; the toolbar edits the selected range and sheets autosave after a change. Whiteboards render in the real Excalidraw editor with its own toolbar; the host still owns the version, title, history, and native export. Page code opens read-only with highlighting; Edit code switches to the editor, which saves with Save or Ctrl/Cmd+S. Documents autosave after typing.
-- The chat shows a card for each create and update, and opens the artifact when the agent writes it in a live turn. The composer button lists this project's recent artifacts, starter prompts, and All artifacts.
+Versioned pages, documents, spreadsheets, and mockups the agent writes and you edit beside the chat.
+
+Artifact Studio is a plugin for the DeepSeek Harness Web app. The agent creates an artifact as a file on your machine, and you open it in a panel beside the conversation to read, edit, compare versions, and export. Artifacts need no account and no hosted service.
+
+## Contents
+
+- [Install](#install)
+- [Quick start](#quick-start)
+- [Artifact types](#artifact-types)
+- [Agent tools](#agent-tools)
+- [Versions and drafts](#versions-and-drafts)
+- [Design systems and briefs](#design-systems-and-briefs)
+- [Storage](#storage)
+- [Editing in the panel](#editing-in-the-panel)
+- [Privacy and security](#privacy-and-security)
+- [Limits](#limits)
+- [Troubleshooting](#troubleshooting)
+- [Develop](#develop)
+- [Credits](#credits)
+- [License](#license)
 
 ## Install
 
-The npm package name is `dsh-artifact-studio`. Add it to the current DSH profile with the plugin manager, then reload the window.
+Add the package to the Web profile. The profile flag is required.
 
 ```bash
 dsh plugin --profile web add dsh-artifact-studio
 ```
 
-For a local checkout, install the bundle at `/home/parth/Production/dsh-artifacts` instead.
+Reload the Harness window after the command, and restart DeepSeek Harness if the Artifacts row does not appear. The package ships a bundle patch that adds three plugin entries: the panel and its local route, the fifteen agent tools, and the bundled skills.
+
+A local checkout needs a link and a build:
+
+```bash
+npm install
+npm run build
+dsh plugin --profile web add link:/absolute/path/to/dsh-artifact-studio
+```
+
+Rebuild and restart the Web profile after a source change, then reload the window. See [Develop](#develop) for the checks.
+
+## Quick start
+
+1. Open a session in any workspace.
+2. Ask for the artifact you want. For example: "Create an artifact page that compares our three pricing tiers and recommends one."
+3. The reply includes a card for the new artifact. Select the card to open it in a tab.
+4. Edit in the panel, or ask the agent for a change. Export from the header.
+
+The Artifacts row in the left sidebar opens the full page: search, a scope selector for all projects, one project, or the library, type filters, covers, and pins. The New artifact button creates one from a starter template. The Artifacts guide in the right panel shows the same list for the current project, and each card opens its own tab. The Artifacts button in the composer lists recent artifacts and starter prompts.
+
+![The Artifacts page scoped to one project](https://raw.githubusercontent.com/P4rthPat3l/dsh-artifact-studio/master/docs/images/gallery.png)
+
+The screenshots use a sample checkout project. Its numbers and names are illustrative.
+
+## Artifact types
+
+| Type | Stored as | Edited in | Exports |
+| --- | --- | --- | --- |
+| Page | `content/index.html` | Sandboxed HTML preview and code editor | HTML |
+| Document | `content/document.md` | Rich text editor | Markdown, Word, HTML |
+| Spreadsheet | `content/sheet.json` | Grid with a formula bar | CSV, XLSX |
+| Mockup | `content/design.jsx` | Canvas with inspector | PNG, SVG, .fig, HTML viewer, HTML with text |
+
+### Pages
+
+A page is one HTML document. It renders in a sandbox with scripts allowed and every network request blocked, so inline every style, script, and image. Preview renders the page and Code edits it. Save or Ctrl/Cmd+S writes a version. A page that declares `<meta name="color-scheme" content="light dark">` follows the Harness dark theme; without the meta it keeps its light colors.
+
+A page write returns warnings for a network URL, a browser storage API, a fixed width over 960 pixels, a missing viewport meta, a literal color or font, and a page that uses no design tokens. Warnings describe the source and do not block the save.
+
+![A page artifact open in the panel](https://raw.githubusercontent.com/P4rthPat3l/dsh-artifact-studio/master/docs/images/page.png)
+
+### Documents
+
+A document is Markdown edited in a rich text editor. It autosaves about a second after a change, and formatting controls appear over a selection. The editor uses the same design tokens as the export, so the page matches the Word or HTML copy. Export as Markdown, Word, or HTML, or print it.
+
+![A document artifact with its toolbar](https://raw.githubusercontent.com/P4rthPat3l/dsh-artifact-studio/master/docs/images/doc.png)
+
+### Spreadsheets
+
+A spreadsheet is one JSON workbook with cell values, styles, and Excel formulas. The panel edits it in a virtualized grid with a formula bar, a formatting toolbar, sheet tabs, merged cells, wrapped text, and undo. Changes autosave.
+
+The panel, CSV, XLSX, and print copies share one evaluator, so a value is the same everywhere. The canonical workbook shape is documented in `src/sheet/model.ts`. A formula that fails is stored and shown as `#NAME?`, `#REF!`, `#DIV/0!`, `#VALUE!`, `#N/A`, or `#CYCLE!`. CSV exports one sheet, the first unless the agent names another. XLSX exports every sheet with styles, formulas, and cached results.
+
+![A spreadsheet artifact with its formula bar](https://raw.githubusercontent.com/P4rthPat3l/dsh-artifact-studio/master/docs/images/sheet.png)
+
+### Mockups
+
+A mockup is stored as type `design`. It is OpenPencil Design JSX: frames, text, shapes, gradients, and bundled Material Design Icons. The host compiles it in a child process and saves a PNG preview.
+
+View is the default mode and does not change the document. Edit adds the select, hand, shape, frame, and text tools plus undo, and opens an inspector with the layer tree and the selected layer's position, size, rotation, radius, opacity, visibility, and text properties. Selecting a layer turns it into an agent request. Edits stay a draft until Save. A version opened from History shows its saved PNG and is read only.
+
+Exports are PNG, SVG, a `.fig` file for OpenPencil or Figma, a self-contained HTML viewer, and a smaller HTML page with the engine SVG and selectable HTML text.
+
+![A mockup on the canvas with the zoom dock](https://raw.githubusercontent.com/P4rthPat3l/dsh-artifact-studio/master/docs/images/mockup.png)
+
+## Agent tools
+
+Tools read and write the same files the panel uses. They default to the session's workspace. Pass `workspaceId` to address another registered workspace; library artifacts take no workspace id.
+
+| Tool | What it does |
+| --- | --- |
+| `artifact_create` | Create a page, document, spreadsheet, or mockup. |
+| `artifact_read` | Read content or one saved version, a mockup outline, or spreadsheet values. |
+| `artifact_update` | Save a new version with replace-once edits or complete content. |
+| `artifact_patch` | Replace one mockup layer in place. |
+| `artifact_sheet_update` | Apply cell, range, row, column, and sheet operations. |
+| `artifact_list` | List artifacts in a project or the library. |
+| `artifact_export` | Write a standalone file in one supported format. |
+| `artifact_import` | Import a `.fig` file as a mockup. |
+| `artifact_delete` | Move an artifact to the trash. |
+| `artifact_preview` | Render a mockup and return the image to the model. |
+| `artifact_brief` | Read the authoring brief and compatible recipes for one type. |
+| `artifact_guide_update` | Save project conventions or a recipe. |
+| `artifact_rebase` | Adopt newer design settings for a page or document. |
+| `design_system_read` | Read the resolved tokens and where they come from. |
+| `design_system_update` | Change tokens or a named system. |
+| `design_system_list` | List named systems, the default, and the catalog revision. |
+
+Fifteen tools are always registered. `artifact_preview` appears only when the profile mounts durable image storage and model routes.
+
+### Bundled skills
+
+The skill plugin registers three skills, and the Harness loads one when a task matches it.
+
+| Skill | Use |
+| --- | --- |
+| `artifact-design` | Choose a type, load its brief, and follow its checks before saving. |
+| `visual-codebase-walkthrough` | Trace a real code path, data flow, or change impact as a page with diagrams and source excerpts. |
+| `visual-feature-flow` | Turn a requirement or UI change into a mockup of the real screens with numbered annotations. |
+
+## Versions and drafts
+
+- Every save creates a version. Restoring an old version appends a new one and leaves history intact.
+- Writes use compare-and-set. `artifact_update` and `artifact_sheet_update` take a `baseVersion`, and a stale one is refused, so a save never overwrites a newer version.
+- The store keeps the 50 newest versions and 20 MiB of version history per artifact, then prunes older versions.
+- A page or document version pins its design tokens, system revision, recipe, and page kit when used. Editing text never restyles the artifact. `artifact_rebase` adopts current settings and appends a version. Mockups and spreadsheets have no pinned snapshot.
+- Documents and spreadsheets autosave. Pages and mockups save from the header. A draft lives in window memory, shared by every tab open on that artifact, and does not survive a browser restart.
+- Reload and Back ask to save, discard, or cancel when a draft is pending.
+- When the agent saves a newer version, a clean tab reloads and names it. A tab with unsaved edits shows a conflict bar instead.
+- History previews any saved version. Export and print use the selected version and never fall back to the latest.
+
+## Design systems and briefs
+
+Each project and the library keep design tokens. Named design systems live in one scope with immutable revisions and a default for new artifacts. A revision save is compare-and-set on the catalog, and a stale revision is refused. The tools are `design_system_read`, `design_system_update`, and `design_system_list`.
+
+Tokens become CSS variables that pages and documents inherit, with light and dark values. A page follows dark mode only through its `color-scheme` meta. A mockup uses literal colors and fonts, so changing the tokens does not restyle it.
+
+Recipes define the content structure for one intent. `artifact_brief` lists compatible recipes, then merges project conventions, user preferences, recipe rules, design context, and relevant earlier artifacts. A recipe id replaces the complete wider definition. Invalid guide or catalog files fail the read and stay on disk for manual repair.
+
+Pages can opt into the shared kit with `<meta name="artifact-kit" content="1">` and the `ak-` classes it injects. A kit version fixes component definitions. Colors still come from the version's pinned tokens. The packaged [page reference](examples/page-design-system.html) shows the token patterns for a page without the kit.
+
+## Storage
+
+```text
+$DSH_HOME/artifacts/
+  workspaces/<workspaceId>/<artifact id>/
+  v1/<artifact id>/                  library artifacts
+  <scope>/.trash/                    deleted artifacts, kept 7 days
+```
+
+An artifact directory holds `artifact.json`, `content/`, and `versions/<n>/`. A mockup adds `preview/<sha256>.png` with a JSON summary. Tool exports land in `exports/`. Named design systems live in `<scope>/design-systems/index.json` with immutable `<system id>/<n>.json` revisions.
+
+A workspace artifact is visible only in its registered workspace. A library artifact is visible in every project. The agent addresses another workspace by `workspaceId`, which must resolve through the workspace registry before any path is built.
+
+The artifact menu copies or moves a workspace artifact to another registered workspace. A copy writes a new artifact under a new id with the same version history. A move follows the artifact to its destination and keeps the source in the workspace trash for 7 days.
+
+A write takes an exclusive `.write-lock` file beside the artifact directory and is serialized per artifact in the process. A lock left by a crash is removed by hand after confirming no process is writing.
+
+## Editing in the panel
+
+The header carries the title, project, version picker, save status, history, and export. Pages and mockups add a mode switch. The more menu renames or deletes an artifact, and copies or moves a workspace one. Delete sends it to the trash.
+
+Edit with agent saves pending edits, then places the selected text and a reference to the artifact, its workspace, and its saved version in the message box. You finish the sentence and send it. Selections work in documents, spreadsheet cells and ranges, the page preview, and page code. The full Artifacts page has no conversation, so it copies the same text instead.
+
+Several tabs can show one artifact. They share the draft and serialize saves. The right panel guide opens the project list without leaving the conversation.
+
+## Privacy and security
+
+- Every artifact is a local file under `$DSH_HOME`. The plugin sends no telemetry and needs no account.
+- A page preview runs with `sandbox="allow-scripts"` and no `allow-same-origin`, under a CSP that blocks network requests. Browser storage APIs throw.
+- Mockup compilation runs in a separate Node process under the permission model: it reads only the plugin package and its installed modules, with no network, no file writes, and no child processes. A 20 second deadline stops a hung source.
+- The canvas engine, icon set, and fonts are served from a fixed list of local assets. Artifact content is never served from that route, and rendering an artifact makes no network request.
+- Gallery covers are scriptless, opaque-origin frames with scripts and inline handlers stripped.
+- A selection quoted from a page preview is accepted only when the message comes from that frame.
+- Library artifacts are shared across projects. Workspace artifacts stay in their workspace.
+
+## Limits
+
+| Item | Limit |
+| --- | --- |
+| Content per version | 2 MiB |
+| Versions per artifact | 50 newest, 20 MiB of history |
+| Title | 120 characters |
+| List page | 50 artifacts per call |
+| Sheets per workbook | 20 |
+| Rows and columns per sheet | 5,000 rows, 100 columns |
+| Cells and formulas per artifact | 20,000 cells, 5,000 formulas |
+| Cells in a print copy | 20,000 per sheet |
+| Mockup render | 20 seconds |
+| `.fig` import | 128 MiB |
+| Mockup preview | 1,600 pixels on the long side |
+
+## Troubleshooting
+
+| Symptom | What to do |
+| --- | --- |
+| `dsh plugin add` fails with a usage error | Add the profile: `dsh plugin --profile web add ...` |
+| The agent has no artifact tools | Reload the window, then restart DeepSeek Harness if they are still missing. The profile must load `dsh-artifact-studio/tools`. |
+| `artifact_preview` is missing | The profile needs image storage and model routes. Every other tool works without it. |
+| A save is refused as stale | Another view or the agent saved first. Read the artifact again and reapply the change. |
+| A mockup save fails | The message names a compile or validation problem in the Design JSX. Fix the source. If the renderer stopped, that is a plugin fault, so report the error. |
+| A read fails as corrupt | A saved version or its generation snapshot cannot be read. Restore an earlier version or export before editing. |
+| Writes fail after a crash | A `.write-lock` file was left beside the artifact. Confirm no Harness process is writing, then delete it by hand. |
+| The full test suite is killed | It builds and runs every suite. Run one file, such as `node --test tests/sheet.test.mjs`, or run the full suite on a larger machine. |
 
 ## Develop
 
 ```bash
+npm install
 npm run typecheck   # host and client
-npm test            # build, then host, client, and package tests
+npm run lint
+npm run build
+node --test tests/sheet.test.mjs
 ```
 
-Sources are TypeScript in `src/`. `npm run build` compiles the host into `dist/`, bundles `client.js` plus the lazy `client.doc.js`, `client.sheet.js`, `client.board.js`, and `client.canvas.js`, and copies the canvas engine and its assets into `assets/`. Do not edit the built files.
+`npm run build` compiles the host into `dist/`, bundles `client.js` with the lazy `client.doc.js`, `client.sheet.js`, and `client.canvas.js`, and copies the canvas engine and its assets into `assets/`. Do not edit the built files.
 
-## Intent-aware generation
+`npm test` builds, then runs every suite in `tests/`. It is memory heavy and can be killed by the OS on a small machine.
 
-Call artifact_brief with a type to discover recipes, then with a recipe to get conventions, preferences, content sections, relevant earlier artifacts, and type-specific design guidance. Pass that recipe when creating an artifact. Use artifact_guide_update only when the user asks to save a convention or reusable structure. Workspace guides apply to a project; library guides apply across projects. A recipe ID replaces the complete wider definition.
+Source layout:
 
-New pages can opt into the shared component kit:
+- `src/host/` holds the local route, the tools, the artifact service and store, the exporters, and the design worker.
+- `src/client/` holds the panel, the gallery, the editor models, and the three lazy chunks.
+- `src/sheet/` holds the workbook model, operations, formula evaluation, and views shared by the host and the panel.
+- `src/contract.ts` and `src/render.ts` are shared by both halves.
+- `scripts/build.mjs` builds the bundles. `tests/` holds the suites and the optional browser checks.
 
-~~~html
-<meta name="artifact-kit" content="1">
-<main class="ak-page">
-  <header class="ak-header"><h1>Title</h1><p class="ak-lede">Summary</p></header>
-  <section class="ak-section" data-section="summary"><h2>Summary</h2><p>Content</p></section>
-</main>
-~~~
+A live check renders the running Web GUI in headless Chromium and prints console errors, page errors, and a screenshot:
 
-The renderer injects kit CSS and switch behavior after its tokens. Export includes those resources. Legacy pages remain unchanged. Diagnostics are advisory, not proof of quality or a publication gate. Invalid guide files are preserved and require manual repair.
+```bash
+npm run webcheck -- --path / --out .scratch/web-check/home.png
+```
 
-A kit version preserves component definitions, not current token values. Updating a design system can still change an old artifact. Multiple named systems, immutable generation snapshots, and approved-example management remain planned. Recipe metadata stays current when older content is restored.
+It needs a running Web profile at `$DSH_WEB_URL`, an installed Playwright and Chrome, and the profile's browser-session credential in `$DSH_HOME`. It installs nothing and prints no secret.
 
-The optional [browser check](<tests/generation-browser.mjs>) uses the [synthetic fixture](<tests/fixtures/generation.html>) and an already installed Playwright module and Chrome executable:
+Runtime dependencies are MIT. Build-time dependencies bundled into a client chunk are MIT, Apache-2.0, or BSD-3-Clause, and each ships in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). [AGENTS.md](AGENTS.md) records the package facts a new contributor needs, and [DESIGN.md](DESIGN.md) covers the panel chrome.
 
-~~~bash
-node tests/generation-browser.mjs /absolute/path/to/playwright/index.mjs /absolute/path/to/chrome
-~~~
+## Credits
 
-It installs nothing and checks 380, 700, and 1280 pixel widths in both themes, keyboard switching, focus, overflow, print panels, and network use. It does not verify the authenticated Harness GUI or compare golden screenshots.
+- DeepSeek Harness and its UI primitives.
+- OpenPencil and CanvasKit for the mockup engine and renderer.
+- Tiptap for document editing.
+- fast-formula-parser and fflate for spreadsheets.
+- docx and marked for exports.
+- Material Design Icons, Inter, Roboto, and Noto Naskh Arabic for the bundled assets.
 
-## Sheets
+## License
 
-A sheet artifact stores one JSON workbook in `content/sheet.json`:
-
-~~~json
-{
-  "schemaVersion": 1,
-  "sheets": [
-    {
-      "name": "Budget",
-      "cells": { "A1": "Item", "B1": "Cost", "B2": 1200, "B4": "=SUM(B2:B3)" },
-      "columnWidths": { "A": 160 }
-    }
-  ]
-}
-~~~
-
-A plain string, number, or boolean is a cell value. A string that starts with "=" is a formula, and `{ "value": "=literal" }` stores text that starts with "=". A styled cell adds a `style` object with bold, italic, underline, strike, align, color, background, and numberFormat (general, number, integer, currency, percent, or date). A fill without a readable text color gets an automatic dark or white text color in the panel, print, and XLSX. An explicit pair below 4.5:1 returns a warning. The grid surface uses the DeepSeek Harness tokens, while cell fills and text colors remain artifact content. The agent reads a sheet and edits it with `artifact_sheet_update` operations: set, write, clear, format, add-sheet, rename-sheet, delete-sheet, and set-column-width. A stale base version is refused, and each accepted call writes one version.
-
-Formulas are Excel syntax and run through the bundled fast-formula-parser, with circular-reference detection and Excel-like error propagation for top-level aggregates. A formula that fails is stored and shown as #NAME?, #REF!, #DIV/0!, #VALUE!, #N/A, or #CYCLE!, and the write returns a warning. The panel and the host share one evaluator, so a cell, a CSV row, an XLSX cached result, and a print copy show the same value. XLSX output uses fflate for the OOXML package.
-
-## Whiteboards
-
-A whiteboard artifact stores a native Excalidraw scene in `content/board.excalidraw`. The panel opens the real Excalidraw editor, so the toolbar, hand-drawn shapes, arrows, text, and the canvas behave the way they do at excalidraw.com. The host still owns the artifact title, saved version, history, gallery entry, and the native file export.
-
-The scene is a normal `.excalidraw` object with `type`, `version`, `source`, `elements`, `appState`, and `files`. Each element has an `id`, a `type`, and geometry. The agent creates a board with `artifact_create` type `board` and edits it with `artifact_board_update`: add rectangle, ellipse, diamond, text, arrow, or line elements; update one element by id; delete ids; or clear. A shape can carry a text label, which is stored as a separate centered text element.
-
-The agent can use Excalifont and the usual Excalidraw colors and fills. Embedded pages and iframes are refused, images must be inline data URLs, and the scene is limited to 2 MiB. The whiteboard chunk loads only when a board opens. Its Excalidraw fonts and font-subset worker are served from the local `/artifacts-whiteboard/` route, so a board works offline and no font request leaves the machine.
-
-A board exports as `.excalidraw` from the artifact header. The header also exports the current board as PNG or SVG through Excalidraw in the browser. The panel uses Excalidraw's own localized interface for the editor itself; the plugin's chrome and all other artifact types continue to use the Harness primitives and the plugin locale.
-## Named systems and pinned versions
-
-Each project and the library keep a catalog of named design systems. A new artifact pins the design, recipe, and kit it was generated with; later edits keep them. Choosing a newer design is an explicit rebase that appends a version and leaves the content alone. History, preview, print, and export render a saved version with its own tokens, and a version saved before pinning existed is marked as live.
-
-Recipes, guides, and the brief work as described above. Invalid guide or catalog data is reported rather than silently replaced; a crashed writer leaves a lock file that must be removed by hand after confirming no writer is running.
+MIT. See [LICENSE](LICENSE).
