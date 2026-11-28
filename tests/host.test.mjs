@@ -732,7 +732,7 @@ test('FEAT-010: the feature-flow skill requires full screens with page URLs and 
   assert.match(skill.content, /### Client review layout/);
   assert.match(skill.content, /draw both as Option A and Option B/);
   assert.match(skill.content, /Never write that the team will test, check, or confirm something later/);
-  assert.match(skill.content, /Text wraps only when the Text has a numeric width/);
+  assert.match(skill.content, /Text wraps at the width its frame offers/);
 });
 
 test('AC-071: write tool descriptions name the skill and the precedence rule', () => {

@@ -211,10 +211,12 @@ test('FEAT-007 AC-005: preview returns a PNG and caches it by content hash', asy
   const second = await service.preview(target, created.id);
   assert.equal(second.data, first.data);
   assert.equal(renderer.previewCalls, 1, 'the second preview rendered again');
-  const key = created.contentHash.replace('sha256:', '');
   const names = await fs.readdir(path.join(dirOf(home, created.id), 'preview'));
-  assert.ok(names.includes(key + '.png'), names.join(','));
-  assert.ok(names.includes(key + '.json'), names.join(','));
+  const images = names.filter((name) => name.endsWith('.png'));
+  const metas = names.filter((name) => name.endsWith('.json'));
+  assert.equal(images.length, 1, names.join(','));
+  assert.equal(metas.length, 1, names.join(','));
+  assert.equal(images[0]?.replace(/\.png$/, ''), metas[0]?.replace(/\.json$/, ''), 'the image and its summary share one key');
 });
 
 test('FEAT-007 AC-005b: the route dispatches preview', async () => {
@@ -326,7 +328,7 @@ test('FEAT-007 AC-012b: the starter and mockup brief teach flex layout, not dir'
   assert.doesNotMatch(starter, /dir="/);
   assert.match(brief, /`flex` turns on auto layout/);
   assert.match(brief, /`lineHeight` is a line height in pixels/);
-  assert.match(brief, /wraps only when it has a numeric/);
+  assert.match(brief, /wraps at the width its frame offers/);
   const example = brief.split('- Example: `')[1].split('`')[0];
   assert.ok((await new DesignRenderer().inspect(example)).nodes >= 3, 'brief example compiles');
   const renderer = new DesignRenderer();
@@ -524,11 +526,23 @@ test('FEAT-007 AC-078: layout problems are warned, never refused', async () => {
   const narrow = await service.create(target, {
     type: 'design',
     title: 'Narrow',
-    content: '<Frame name="Narrow" w={160} p={16} flex="col" bg="#ffffff"><Text size={16} color="#111111">Self-contained HTML that renders in a sandbox, exported as HTML.</Text></Frame>',
+    content: '<Frame name="Narrow" w={160} p={16} flex="col" bg="#ffffff"><Text size={16} color="#111111" w={400}>Self-contained HTML that renders in a sandbox, exported as HTML.</Text></Frame>',
     source: agent,
   });
   const narrowInfo = (await service.read(target, narrow.id)).designInfo;
   assert.ok(narrowInfo.warnings.some((warning) => /leaves its frame/.test(warning)), JSON.stringify(narrowInfo.warnings));
+});
+
+test('FEAT-007 AC-081: text that fits is measured, not estimated, so it reports no overflow', async () => {
+  const { service, target } = await fixture();
+  const source = '<Frame name="Card" w={330} p={24} bg="#ffffff" flex="col" gap={10}><Text size={14} color="#61666b">Excel formulas, exported as CSV or XLSX.</Text></Frame>';
+  const created = await service.create(target, { type: 'design', title: 'Fits', content: source, source: agent });
+  const info = (await service.read(target, created.id)).designInfo;
+  assert.equal(
+    info.warnings.some((warning) => /leaves its frame/.test(warning)),
+    false,
+    JSON.stringify(info.warnings),
+  );
 });
 
 test('FEAT-007 AC-079: a family the package does not ship draws in Inter', async () => {

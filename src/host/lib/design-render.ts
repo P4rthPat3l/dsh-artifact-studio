@@ -20,6 +20,12 @@ const MAX_CONCURRENT = 2;
 /** Longest side of a preview image. */
 export const PREVIEW_MAX_SIDE = 1600;
 
+/**
+ * Bumped when the worker's layout or paint changes, so a cached preview or
+ * summary from an older render cannot outlive it. The cache paths carry it.
+ */
+export const DESIGN_RENDER_VERSION = 2;
+
 const WORKER = fileURLToPath(new URL('../worker/design-worker.js', import.meta.url));
 const PLUGIN_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 const resolveFrom = createRequire(import.meta.url);

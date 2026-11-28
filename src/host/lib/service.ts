@@ -20,7 +20,7 @@ import type {
   VersionEntry,
   VersionSource,
 } from '../../contract.js';
-import { DesignRenderer, PREVIEW_MAX_SIDE } from './design-render.js';
+import { DESIGN_RENDER_VERSION, DesignRenderer, PREVIEW_MAX_SIDE } from './design-render.js';
 import type { ImportedFig } from './design-render.js';
 import { clearWorkspaceDesignSystem, saveDesignSystem } from './design-system.js';
 import { resolveSystem, saveSystem, listSystems, setSystemDefault } from './design-catalog.js';
@@ -617,7 +617,7 @@ export class ArtifactService {
    */
   private previewPaths(root: ScopeRoot, id: string, content: string): PreviewPaths {
     const dir = path.join(root.root, id, 'preview');
-    const key = hashOf(content).slice('sha256:'.length);
+    const key = hashOf(`v${String(DESIGN_RENDER_VERSION)}\n${content}`).slice('sha256:'.length);
     return { dir, png: path.join(dir, `${key}.png`), meta: path.join(dir, `${key}.json`) };
   }
 

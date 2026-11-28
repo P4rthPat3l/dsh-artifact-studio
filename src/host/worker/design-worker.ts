@@ -5,11 +5,12 @@ import type { SceneNode } from '@open-pencil/scene-graph';
 import { designJSXRenderer } from '@open-pencil/core/design-jsx';
 import { fontManager } from '@open-pencil/core/text';
 import { createLinter } from '@open-pencil/core/lint';
-import { computeContentBounds, headlessRenderNodes } from '@open-pencil/core/io/formats/raster';
+import { computeContentBounds, headlessRenderNodes, initCanvasKit } from '@open-pencil/core/io/formats/raster';
+import { SkiaRenderer } from '@open-pencil/core/canvas';
 import { renderNodesToSVG } from '@open-pencil/core/io/formats/svg';
 import { exportFigFile, parseFigFile } from '@open-pencil/core/io/formats/fig';
 import { selectionToJSX } from '@open-pencil/design-jsx';
-import { layoutAuthoredNodes } from '@open-pencil/core/layout';
+import { installTextMeasurer, layoutAuthoredNodes } from '@open-pencil/core/layout';
 import type { DesignInfo, DesignOutlineRow } from '../../contract.js';
 import { BUNDLED_FAMILIES, aliasUnbundledFamilies } from '../../fonts.js';
 import { bundledIconProvider } from '../../icon-set.js';
@@ -34,6 +35,25 @@ async function loadExtraFonts(): Promise<void> {
     copy.set(bytes);
     fontManager.markLoaded('Roboto', style, copy.buffer);
   }
+}
+
+/**
+ * Lay text out with the renderer's own measurements. The engine cannot parse its
+ * fonts through Node's module shape, so without a measurer every text box is
+ * 0.6 × font size per character. That reports a correct mockup as overflowed and
+ * gives every preview the wrong text height, while the panel, which measures with
+ * CanvasKit, disagrees.
+ */
+async function installLayoutMeasurer(): Promise<void> {
+  const canvasKit = await initCanvasKit();
+  const surface = canvasKit.MakeSurface(1, 1);
+  if (surface === null) throw new Error('The design renderer could not create a surface.');
+  const renderer = new SkiaRenderer(canvasKit, surface);
+  renderer.viewportWidth = 1;
+  renderer.viewportHeight = 1;
+  renderer.dpr = 1;
+  await renderer.loadFonts();
+  installTextMeasurer((node, maxWidth) => renderer.measureTextNode(node, maxWidth));
 }
 
 /**
@@ -577,6 +597,7 @@ async function readRequest(): Promise<WorkerRequest> {
 }
 
 await loadExtraFonts();
+await installLayoutMeasurer();
 const request = await readRequest();
 const response = await handle(request.source, request);
 process.stdout.write(request.nonce + JSON.stringify(response) + '\n', () => process.exit(0));
