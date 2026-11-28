@@ -262,7 +262,7 @@ function writeText(value: JsonValue, verb: string): string {
 
 /**
  * The outline lines the model reads: one row per layer with its id, type, and
- * name, children indented one level.
+ * name, with children indented below their parent.
  * @param rows the outline rows.
  * @returns the text.
  */
@@ -273,7 +273,7 @@ function outlineText(rows: readonly JsonValue[]): string {
       const row = record(item);
       const children = Array.isArray(row.children) ? row.children : [];
       lines.push(`${'  '.repeat(depth)}- ${String(row.path)} ${String(row.type)} "${String(row.name)}"${children.length === 0 ? '' : ` (${String(children.length)} children)`}`);
-      if (depth < 1) walk(children, depth + 1);
+      walk(children, depth + 1);
     }
   };
   walk(rows, 0);
@@ -1065,7 +1065,7 @@ export function createPreviewTool(host: ToolHost, services: PreviewServices): To
     description: [
       'Render design content and return the image beside the result, so you can check the visual result yourself: layout, spacing, alignment, contrast, clipping, and that every requested state exists.',
       'Pass the complete content and no id to check a draft before its first save; that writes no version. Pass an id and optionally a version to render a saved design.',
-      'Pass path from the artifact_read outline to render one frame, component, or layer on its own at its own size, so a large canvas is not downscaled.',
+      'Use the whole-board preview for orientation. Pass path from the artifact_read outline to review one screen at a time. Oversized previews are marked as downscaled.',
       'The calling model route must accept image input; the tool refuses on routes that cannot see images.',
     ].join('\n'),
     parameters: {
@@ -1091,6 +1091,7 @@ export function createPreviewTool(host: ToolHost, services: PreviewServices): To
           name: { type: 'string' },
           width: { type: 'integer' },
           height: { type: 'integer' },
+          scale: { type: 'number', description: 'Image scale relative to the source. One means full size.' },
           warnings: { type: 'array', items: { type: 'string' } },
           image: {
             type: 'object',
@@ -1115,9 +1116,21 @@ export function createPreviewTool(host: ToolHost, services: PreviewServices): To
         const name = typeof fields.name === 'string' ? fields.name : undefined;
         const subject = name === undefined ? String(fields.title) : `layer "${name}" in ${String(fields.title)}`;
         const head = `Preview of ${subject} (${label}): ${String(image.width)}x${String(image.height)} px. The image rides beside this text; check layout, spacing, alignment, and text fit against what the user asked for.`;
+        let scaleNote = '';
+        if (typeof fields.scale === 'number' && fields.scale < 1) {
+          if (name === undefined) {
+            scaleNote = version === undefined
+              ? ' This is a downscaled overview. Pass the complete draft and a frame path, or preview one frame on its own if it compiles separately.'
+              : ' This is a downscaled overview. Get frame paths from artifact_read with outline: true, then preview one frame at a time with path.';
+          } else {
+            scaleNote = version === undefined
+              ? ' This layer is downscaled. Preview a child layer if it has one, or render a smaller draft frame.'
+              : ' This layer is downscaled. Export it to PNG with the same path for full-size review.';
+          }
+        }
         const warningLines = warnings.length === 0 ? '' : '\nWarnings:\n' + warnings.map((item) => '- ' + item).join('\n');
         return [
-          { type: 'text', text: head + warningLines },
+          { type: 'text', text: head + scaleNote + warningLines },
           {
             type: 'image',
             attachment: {
@@ -1169,6 +1182,7 @@ export function createPreviewTool(host: ToolHost, services: PreviewServices): To
         title,
         width: preview.width,
         height: preview.height,
+        scale: preview.scale,
         warnings: preview.info.warnings,
         image: { attachmentId: ref.attachmentId, mediaType: ref.mediaType, bytes: ref.bytes, width: ref.width, height: ref.height },
       };

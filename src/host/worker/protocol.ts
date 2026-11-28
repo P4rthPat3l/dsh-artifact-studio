@@ -31,6 +31,7 @@ export interface WorkerSuccess {
   data?: string;
   width?: number;
   height?: number;
+  scale?: number;
   /** The stored Design JSX an import produced. */
   source?: string;
   /** The layer name when the request rendered one node. */

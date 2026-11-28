@@ -507,6 +507,7 @@ Status: **Inferred** (implemented, uncommitted)
       "data": "<base64>",
       "width": 1200,
       "height": 800,
+      "scale": 1,
       "info": { "pages": 1, "nodes": 40, "types": { "FRAME": 12 }, "fonts": ["Inter"], "warnings": [] }
     }
   }
@@ -711,10 +712,10 @@ A preview is keyed by the sha256 of the source. The current version's cache is r
 | BR-032 | Inferred | `artifact_patch` replaces one layer by dotted path from the outline, re-serializes the whole design, refuses designs holding component instances, and is refused like any write on a stale baseVersion. The outline's paths are content-deterministic, because engine layer ids are not stable across compiles | `artifact_patch`, `service.patchDesign`, the worker `patch` action | AC-073 to AC-075 |
 | BR-033 | Inferred | `artifact_preview` returns the render as an image block beside the result, registered only while durable image storage and model routes are mounted, and refused on model routes without image input | `createPreviewTool`, the tools plugin `ctx.inject` | AC-077 |
 | BR-034 | Inferred | Variable references that name no stored variable fail with guidance naming the limitation, and the brief states every authoring exclusion as a fact | worker `compileFailure`, the mockup brief | AC-076 |
-| BR-035 | Inferred | The worker measures text with the headless CanvasKit renderer before compiling, because the engine cannot parse fonts through Node's module shape and would otherwise estimate 0.6 × font size per character. Every design summary then carries layout warnings for a `lineHeight` under the font size, text outside its frame, and two texts stacked in a frame that has no flex. The brief teaches the pixel line height and when a text needs a width. Layout warnings never block a save, because the engine lint has no geometry rule | `design-worker.ts`, the mockup brief | AC-078, AC-081 |
+| BR-035 | Inferred | The worker measures text with the headless CanvasKit renderer before compiling, because the engine cannot parse fonts through Node's module shape and would otherwise estimate 0.6 × font size per character. Every design summary then carries layout warnings for a `lineHeight` under the font size, text outside its frame, two texts stacked in a frame that has no flex, and a linked instance spilling out of an unclipped wrapper into a caption below it in the same column. The brief shows how to size and inset the instance. Layout warnings never block a save | `design-worker.ts`, the mockup brief | AC-078, AC-081, AC-083 |
 | BR-036 | Inferred | A text family outside the bundled three is drawn in Inter by registering the Inter faces under that family. The node keeps its family, so no save rewrites the source, and the warning names the substitution | `src/fonts.ts`, the worker, the canvas chunk | AC-079 |
 | BR-037 | Inferred | `artifact_preview` renders unsaved content without writing a version, a manifest, or a preview cache file, and a saved id still renders the stored version | `tools.ts`, `ArtifactService.previewSource` | AC-080 |
-| BR-038 | Inferred | Agents can render one design layer by dotted outline path: `artifact_preview` and `artifact_export` accept `path`, the worker resolves it with the same reader as `artifact_patch` and renders that node at its own box, and a layer preview bypasses the whole-design preview cache. A layer export is png or svg, and its file name carries the layer name and dotted path, so same-named layers exported in one second do not collide; SVG text does not wrap, so layout is judged from the preview | `design-worker.ts`, `design-render.ts`, `service.ts`, `export.ts`, `tools.ts` | AC-082 |
+| BR-038 | Inferred | Agents can render one design layer by dotted outline path: `artifact_preview` and `artifact_export` accept `path`, the worker resolves it with the same reader as `artifact_patch`, and a layer preview bypasses the whole-design preview cache. The outline lists shallower layers first, with at most 120 rows. Preview scale travels with the PNG, including on cache hits, so the tool can label downscaled images. A layer export is png or svg, and its file name carries the layer name and dotted path, so same-named layers exported in one second do not collide; SVG text does not wrap, so layout is judged from the preview | `design-worker.ts`, `design-render.ts`, `service.ts`, `export.ts`, `tools.ts` | AC-082, AC-084 |
 
 ## 15. Acceptance Criteria and Cases
 
@@ -1286,7 +1287,7 @@ pnpm links only declared packages into `node_modules`. The worker imported `@ope
 
 ### AC-073: A patch replaces one layer without resending the source
 
-**Given** a design the agent reads with `outline: true`, which names every top-level layer and one level of children by dotted path
+**Given** a design the agent reads with `outline: true`, which names layers by dotted path, shallowest first within the row limit
 **When** `artifact_patch` sends the complete JSX of one element with its `targetPath` and the base version
 **Then** the patch's root replaces that layer in place, keeping its position among siblings, and the whole design re-serializes as a new version
 **And** a sibling layer the patch does not name is unchanged
@@ -1337,6 +1338,8 @@ pnpm links only declared packages into `node_modules`. The worker imported `@ope
 **Then** it returns the render without writing a version, a manifest, or a preview cache file, and names no artifact
 **And** a call with neither id nor content is refused as `artifact/bad-request`
 
+Installed-tool smoke check: from an image-capable session, call `artifact_preview` with only `content: '<Frame w={240} h={72} bg="#f6f3ec"><Text size={16}>Draft</Text></Frame>'`. Expect a 240 × 72 PNG titled "Draft mockup", no id or version, and the same workspace mockup list before and after.
+
 ### AC-081: Text that fits is measured, not estimated
 
 **Given** a caption without a width in a 330 px card with 24 px padding, whose measured width is 278 px
@@ -1352,6 +1355,20 @@ pnpm links only declared packages into `node_modules`. The worker imported `@ope
 **And** the result names the layer, and the export file name carries the layer name and path, so two layers, even same-named ones, exported in one second do not collide
 **And** a missing path is refused as `artifact/bad-request`, and a non-design artifact or a format other than png and svg with a path is refused as `artifact/bad-request`
 **And** a layer preview does not write the whole-design preview cache
+**And** an oversized overview is marked as downscaled for drafts and saved versions, even when cached. A preview rendered at full size is not
+
+### AC-083: A linked instance overlapping its caption warns
+
+**Given** a linked instance extends below its unclipped wrapper and overlaps the caption below it in the same column
+**When** the design is saved or previewed
+**Then** the summary names the instance, wrapper, and caption without blocking the save
+**And** the warning is absent when the wrapper contains the instance or clipping hides the overlap
+
+### AC-084: The outline exposes nested screen paths
+
+**Given** a board with screens nested in rows and a first screen with more than 120 children
+**When** the agent reads the outline
+**Then** it includes the other screen paths and never returns more than 120 rows
 
 ### Edge Cases
 

@@ -106,36 +106,36 @@ async function compile(source: string): Promise<Compiled> {
   return { graph, page, renderWarnings };
 }
 
-/** The most rows an outline carries, across both levels. */
+/** The most rows an outline carries, with shallower layers listed first. */
 const OUTLINE_ROWS = 120;
 
 /**
- * The layers the patch flow can target: every top-level layer and one level of
- * its children, capped, so a large design still reads cheaply. A row's path is
- * the dotted index chain from the page, which a compile of the same source
- * always reproduces.
+ * List targetable layers by depth so a busy screen cannot hide its siblings.
+ * Paths use the original child indexes so they still resolve when capped.
  * @param graph the graph.
  * @param page the page node.
  * @returns the outline rows.
  */
 function outlineOf(graph: SceneGraph, page: SceneNode): DesignOutlineRow[] {
   const rows: DesignOutlineRow[] = [];
+  const queue = [{ node: page, path: '', rows }];
   let budget = OUTLINE_ROWS;
-  page.childIds.forEach((id, index) => {
-    if (budget <= 0) return;
-    const node = graph.getNode(id);
-    if (node === undefined) return;
-    budget -= 1;
-    const children: DesignOutlineRow[] = [];
-    node.childIds.forEach((childId, childIndex) => {
-      if (budget <= 0) return;
-      const child = graph.getNode(childId);
-      if (child === undefined) return;
+  for (const parent of queue) {
+    if (budget === 0) break;
+    for (const [index, childId] of parent.node.childIds.entries()) {
+      if (budget === 0) break;
+      const node = graph.getNode(childId);
+      if (node === undefined) continue;
       budget -= 1;
-      children.push({ path: String(index) + '.' + String(childIndex), name: child.name, type: String(child.type) });
-    });
-    rows.push({ path: String(index), name: node.name, type: String(node.type), ...(children.length === 0 ? {} : { children }) });
-  });
+      const path = parent.path === '' ? String(index) : parent.path + '.' + String(index);
+      const row: DesignOutlineRow = { path, name: node.name, type: String(node.type) };
+      parent.rows.push(row);
+      if (node.childIds.length > 0) {
+        row.children = [];
+        queue.push({ node, path, rows: row.children });
+      }
+    }
+  }
   return rows;
 }
 
@@ -409,9 +409,8 @@ function textLabel(node: SceneNode): string {
 
 /**
  * What the layout gets wrong: a line height under the font size, text outside
- * its frame, and two texts that share an origin because their frame has no flex.
- * The engine lints contrast but not geometry, and these are the mistakes a
- * mockup shows first, so the summary names them before the render.
+ * its frame, texts that stack without flex, and an instance that spills into
+ * a caption below its wrapper. The engine lints contrast but not geometry.
  * @param graph the graph.
  * @param page the page node.
  * @returns the warnings.
@@ -438,7 +437,46 @@ function layoutWarnings(graph: SceneGraph, page: SceneNode): string[] {
   };
   const siblings = new Map<string, SceneNode[]>();
   for (const node of descendants(graph, page)) {
-    if (node.type !== 'TEXT' || node.visible === false) continue;
+    if (node.visible === false) continue;
+    if (node.type === 'INSTANCE' && node.rotation === 0) {
+      const wrapper = node.parentId === null ? undefined : graph.getNode(node.parentId);
+      if (wrapper?.type !== 'FRAME' || wrapper.visible === false || wrapper.clipsContent || wrapper.rotation !== 0) continue;
+      const top = wrapper.y + node.y;
+      const bottom = top + node.height;
+      const wrapperBottom = wrapper.y + wrapper.height;
+      if (bottom <= wrapperBottom + 0.5) continue;
+      const column = wrapper.parentId === null ? undefined : graph.getNode(wrapper.parentId);
+      if (column?.layoutMode !== 'VERTICAL') continue;
+      const frame = boxOf(column);
+      const instance = boxOf(node);
+      let left = instance.x;
+      let right = left + instance.w;
+      let visibleTop = instance.y;
+      let visibleBottom = visibleTop + instance.h;
+      for (let ancestor: SceneNode | undefined = column; ancestor !== undefined && ancestor.id !== page.id && ancestor.rotation === 0; ancestor = ancestor.parentId === null ? undefined : graph.getNode(ancestor.parentId)) {
+        if (!ancestor.clipsContent) continue;
+        const clip = boxOf(ancestor);
+        left = Math.max(left, clip.x);
+        right = Math.min(right, clip.x + clip.w);
+        visibleTop = Math.max(visibleTop, clip.y);
+        visibleBottom = Math.min(visibleBottom, clip.y + clip.h);
+      }
+      for (const id of column.childIds) {
+        const caption = graph.getNode(id);
+        if (caption?.type !== 'TEXT' || caption.visible === false || caption.rotation !== 0) continue;
+        if (caption.layoutPositioning === 'ABSOLUTE' || caption.y < wrapperBottom - 0.5) continue;
+        const captionX = frame.x + caption.x;
+        const captionY = frame.y + caption.y;
+        const overlapY = Math.min(visibleBottom, captionY + caption.height) - Math.max(visibleTop, captionY);
+        const overlapX = Math.min(right, captionX + caption.width) - Math.max(left, captionX);
+        if (overlapX > 0.5 && overlapY > 0.5) {
+          messages.push(
+            `Instance "${node.name}" extends below its frame "${wrapper.name}" and overlaps text "${textLabel(caption)}". Give the wrapper enough height and use a numeric instance width and inset.`,
+          );
+        }
+      }
+    }
+    if (node.type !== 'TEXT') continue;
     const lineHeight = node.lineHeight ?? 0;
     if (lineHeight > 0 && lineHeight < node.fontSize) {
       messages.push(
@@ -499,9 +537,8 @@ function pngSize(bytes: Uint8Array): { width: number; height: number } {
  * @param maxSide the longest side, or zero for the selection's own size.
  * @param nodeIds the nodes to render: the page's children, or one layer.
  * @param trimTransparent whether to crop transparent space around the content.
- * @returns the PNG bytes, or null for an empty selection.
  */
-async function renderPng(compiled: Compiled, maxSide: number, nodeIds: string[], trimTransparent: boolean): Promise<Uint8Array | null> {
+async function renderPng(compiled: Compiled, maxSide: number, nodeIds: string[], trimTransparent: boolean): Promise<{ bytes: Uint8Array; scale: number } | null> {
   await aliasUnbundledFamilies(compiled.graph, compiled.page, readBundledFace);
   const bounds = computeContentBounds(compiled.graph, nodeIds);
   if (bounds === null) return null;
@@ -509,11 +546,12 @@ async function renderPng(compiled: Compiled, maxSide: number, nodeIds: string[],
   const height = bounds.maxY - bounds.minY;
   const longest = Math.max(width, height);
   const scale = maxSide > 0 && longest > maxSide ? maxSide / longest : 1;
-  return headlessRenderNodes(compiled.graph, compiled.page.id, nodeIds, {
+  const bytes = await headlessRenderNodes(compiled.graph, compiled.page.id, nodeIds, {
     scale,
     format: 'PNG',
     trimTransparent,
   });
+  return bytes === null ? null : { bytes, scale };
 }
 
 /**
@@ -555,8 +593,8 @@ async function handle(source: string, request: WorkerRequest): Promise<WorkerRes
     if (request.action === 'preview') {
       const png = await renderPng(compiled, request.maxSide ?? 1600, nodeIds, request.targetPath === undefined);
       if (png === null) return { ok: false, code: 'artifact/design-render-failed', message: 'The design produced no image.' };
-      const size = pngSize(png);
-      return { ok: true, info, ...named, mediaType: 'image/png', data: Buffer.from(png).toString('base64'), width: size.width, height: size.height };
+      const size = pngSize(png.bytes);
+      return { ok: true, info, ...named, mediaType: 'image/png', data: Buffer.from(png.bytes).toString('base64'), ...size, scale: png.scale };
     }
     if (request.format === 'fig') {
       const bytes = await exportFigFile(compiled.graph);
@@ -575,8 +613,8 @@ async function handle(source: string, request: WorkerRequest): Promise<WorkerRes
     }
     const png = await renderPng(compiled, 0, nodeIds, request.targetPath === undefined);
     if (png === null) return { ok: false, code: 'artifact/design-render-failed', message: 'The design produced no image.' };
-    const size = pngSize(png);
-    return { ok: true, info, ...named, mediaType: 'image/png', data: Buffer.from(png).toString('base64'), width: size.width, height: size.height };
+    const size = pngSize(png.bytes);
+    return { ok: true, info, ...named, mediaType: 'image/png', data: Buffer.from(png.bytes).toString('base64'), ...size };
   } catch (error) {
     return { ok: false, code: 'artifact/design-render-failed', message: messageOf(error) };
   }

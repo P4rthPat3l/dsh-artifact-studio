@@ -53,9 +53,9 @@ class CountingRenderer extends DesignRenderer {
 
   inspectCalls = 0;
 
-  async preview(source, maxSide) {
+  async preview(source, maxSide, layerPath) {
     this.previewCalls += 1;
-    return super.preview(source, maxSide);
+    return super.preview(source, maxSide, layerPath);
   }
 
   async inspect(source) {
@@ -533,6 +533,36 @@ test('FEAT-007 AC-078: layout problems are warned, never refused', async () => {
   assert.ok(narrowInfo.warnings.some((warning) => /leaves its frame/.test(warning)), JSON.stringify(narrowInfo.warnings));
 });
 
+test('FEAT-007 AC-083: an instance that overlaps its wrapper caption warns without blocking save', async () => {
+  const { service, target } = await fixture();
+  const source = `<Frame w={200} flex="col" gap={12} bg="#ffffff">
+    <Component name="Berth row" w={100} p={8} flex="col" bg="#f6f3ec">
+      <Text size={12} color="#111111">MV Nordstrand</Text>
+    </Component>
+    <Frame name="Reuse example" w={198} flex="col" gap={4}>
+      <Frame name="Instance wrapper" w="fill" p={5} bg="#f6f3ec">
+        <Instance of="Berth row" x={0} y={0} w="fill" />
+      </Frame>
+      <Text size={10} color="#111111">Linked instance</Text>
+    </Frame>
+  </Frame>`;
+  const created = await service.create(target, { type: 'design', title: 'Reuse', content: source, source: agent });
+  const warning = /Instance "Berth row".*"Instance wrapper".*"Linked instance"/;
+  const saved = await service.read(target, created.id);
+  assert.ok(saved.designInfo.warnings.some((item) => warning.test(item)), JSON.stringify(saved.designInfo.warnings));
+
+  const fixed = source.replace('name="Instance wrapper"', 'name="Instance wrapper" h={42}')
+    .replace('x={0} y={0} w="fill"', 'x={5} y={5} w={188}');
+  const clipped = source.replace('name="Instance wrapper"', 'name="Instance wrapper" overflow="hidden"');
+  const clippedColumn = source.replace('name="Reuse example"', 'name="Reuse example" h={14} overflow="hidden"');
+  const clippedAncestor = source.replace('<Frame name="Reuse example"', '<Frame w={198} h={14} overflow="hidden"><Frame name="Reuse example"')
+    .replace('</Text>\n    </Frame>\n  </Frame>', '</Text>\n    </Frame></Frame>\n  </Frame>');
+  for (const content of [fixed, clipped, clippedColumn, clippedAncestor]) {
+    const preview = await service.previewSource(content);
+    assert.ok(!preview.info.warnings.some((item) => warning.test(item)), JSON.stringify(preview.info.warnings));
+  }
+});
+
 test('FEAT-007 AC-081: text that fits is measured, not estimated, so it reports no overflow', async () => {
   const { service, target } = await fixture();
   const source = '<Frame name="Card" w={330} p={24} bg="#ffffff" flex="col" gap={10}><Text size={14} color="#61666b">Excel formulas, exported as CSV or XLSX.</Text></Frame>';
@@ -574,13 +604,15 @@ test('FEAT-007 AC-080: the preview tool renders unsaved content without writing'
   const host = { service, registry, workingDirectory: { ensure: async () => path.join(base, 'project-a') } };
   const exec = { agent: { id: 'ses-a', session: { requestHeader: () => ({ config: { provider: 'p', model: 'glm' } }) } }, signal: new AbortController().signal };
   const tool = createPreviewTool(host, { attachments, llm: { resolveModelInfo: async () => ({ inputModalities: ['image'] }) } });
-  const value = await tool.execute(
-    { content: '<Frame w={120} h={40} bg="#ffffff"><Text size={14} color="#111111">Draft</Text></Frame>', id: 'art_missing' },
-    exec,
-  );
-  assert.equal(value.id, undefined, 'a draft preview names no artifact');
-  assert.ok(value.width > 0);
-  assert.equal(saved.length, 1, 'the draft render was stored once');
+  const content = '<Frame w={120} h={40} bg="#ffffff"><Text size={14} color="#111111">Draft</Text></Frame>';
+  for (const args of [{ content }, { content, id: 'art_missing' }]) {
+    const value = await tool.execute(args, exec);
+    assert.equal(value.id, undefined, 'a draft preview names no artifact');
+    assert.equal(value.version, undefined);
+    assert.deepEqual([value.width, value.height], [120, 40]);
+    assert.equal(tool.output.render(args, value)[1].attachment.attachmentId, 'att-draft');
+  }
+  assert.equal(saved.length, 2, 'each draft call stored one image');
   const workspace = path.join(home, WORKSPACE_BASE, 'ws-a');
   const names = await fs.readdir(workspace).catch(() => []);
   assert.deepEqual(names.filter((name) => name.startsWith('art_')), [], 'a draft preview wrote an artifact');
@@ -679,7 +711,8 @@ test('AC-SVG-006: the SVG HTML page shows the requested version, and a missing v
 });
 
 test('FEAT-007 AC-082: one layer previews and exports at its own size', async () => {
-  const { service, target } = await fixture();
+  const renderer = new CountingRenderer();
+  const { service, target } = await fixture(renderer);
   const layered = '<Frame name="Wide" w={200} h={80} bg="#ff0000"><Rectangle name="Chip" w={40} h={20} bg="#00ff00" /></Frame>'
     + '<Frame name="Tall" w={120} h={300} bg="#0000ff" />';
   const created = await service.create(target, { type: 'design', title: 'Layered', content: layered, source: agent });
@@ -752,6 +785,25 @@ test('FEAT-007 AC-082: one layer previews and exports at its own size', async ()
   assert.match(previewTool.output.render({}, saved)[0].text, /layer "Wide"/);
   const previewDraft = await previewTool.execute({ content: layered, path: '1' }, exec);
   assert.equal(previewDraft.name, 'Tall');
+  assert.doesNotMatch(previewTool.output.render({}, saved)[0].text, /downscaled/);
+  const overview = await service.create(target, {
+    type: 'design', title: 'Overview', content: '<Frame w={2400} h={100} bg="#ffffff" />', source: agent,
+  });
+  const overviewArgs = { id: overview.id };
+  const previewCalls = renderer.previewCalls;
+  for (const args of [overviewArgs, overviewArgs]) {
+    const result = await previewTool.execute(args, exec);
+    assert.match(previewTool.output.render(args, result)[0].text, /downscaled.*artifact_read.*path/);
+  }
+  assert.equal(renderer.previewCalls, previewCalls + 1, 'the overview cache was not used');
+  const draftArgs = { content: '<Frame name="Large screen" w={2400} h={100} bg="#ffffff" />' };
+  const oversizedDraft = await previewTool.execute(draftArgs, exec);
+  assert.match(previewTool.output.render(draftArgs, oversizedDraft)[0].text, /downscaled overview.*complete draft/);
+  const layerArgs = { ...draftArgs, path: '0' };
+  const oversizedLayer = await previewTool.execute(layerArgs, exec);
+  assert.match(previewTool.output.render(layerArgs, oversizedLayer)[0].text, /downscaled.*smaller draft frame/);
+  const fullSize = await previewTool.execute({ content: '<Frame w={1600} h={100} bg="#ffffff" />' }, exec);
+  assert.doesNotMatch(previewTool.output.render({}, fullSize)[0].text, /downscaled/);
   const exportTool = createTools(host).find((tool) => tool.name === 'artifact_export');
   const exported = await exportTool.execute({ id: created.id, format: 'png', path: '0' }, exec);
   assert.ok(exported.bytes > 0);
@@ -759,4 +811,27 @@ test('FEAT-007 AC-082: one layer previews and exports at its own size', async ()
     exportTool.execute({ id: created.id, format: 'fig', path: '0' }, exec),
     (error) => error.code === 'artifact/bad-request',
   );
+});
+
+test('FEAT-007 AC-084: a wide first section does not hide other screens in the outline', async () => {
+  const { service, target } = await fixture();
+  const content = '<Frame name="Board" w={420} flex="col">'
+    + '<Frame name="First row" w={420} h={100}><Frame name="Console" w={420} h={100}>'
+    + '<Rectangle w={2} h={2} />'.repeat(125) + '</Frame></Frame>'
+    + '<Frame name="Second row" w={420} h={100}><Frame name="Vessel detail" w={420} h={100} bg="#123456" /></Frame></Frame>';
+  const created = await service.create(target, { type: 'design', title: 'Board', content, source: agent });
+  const tool = createTools({ service, registry, workingDirectory: { ensure: async () => path.join(base, 'project-a') } })
+    .find((entry) => entry.name === 'artifact_read');
+  const exec = { agent: { id: 'ses-a' }, signal: new AbortController().signal };
+  const args = { id: created.id, outline: true };
+  const result = await tool.execute(args, exec);
+  const board = result.designInfo.outline[0];
+  assert.equal(board.children[1].children?.[0].path, '0.1.0');
+  assert.match(tool.output.render(args, result)[0].text, /0\.1\.0 FRAME "Vessel detail"/);
+  const preview = await service.preview(target, created.id, 1, board.children[1].children[0].path);
+  assert.equal(preview.name, 'Vessel detail');
+  assert.deepEqual([preview.width, preview.height], [420, 100]);
+  const queue = [...result.designInfo.outline];
+  for (const row of queue) queue.push(...(row.children ?? []));
+  assert.equal(queue.length, 120);
 });

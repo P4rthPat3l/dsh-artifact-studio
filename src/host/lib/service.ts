@@ -21,7 +21,7 @@ import type {
   VersionSource,
 } from '../../contract.js';
 import { DESIGN_RENDER_VERSION, DesignRenderer, PREVIEW_MAX_SIDE } from './design-render.js';
-import type { ImportedFig } from './design-render.js';
+import type { ImportedFig, RenderedPreview } from './design-render.js';
 import { clearWorkspaceDesignSystem, saveDesignSystem } from './design-system.js';
 import { resolveSystem, saveSystem, listSystems, setSystemDefault } from './design-catalog.js';
 import { generationHash, generationSummary } from './generation.js';
@@ -581,12 +581,13 @@ export class ArtifactService {
     const cached = layerPath === undefined ? await this.readPreview(root, id, content) : undefined;
     if (cached !== undefined) return cached;
     const rendered = await this.designs.preview(content, PREVIEW_MAX_SIDE, layerPath);
-    if (layerPath === undefined) await this.writePreview(root, id, content, rendered.info, rendered.width, rendered.height, rendered.bytes);
+    if (layerPath === undefined) await this.writePreview(root, id, content, rendered);
     return {
       mediaType: 'image/png',
       data: rendered.bytes.toString('base64'),
       width: rendered.width,
       height: rendered.height,
+      scale: rendered.scale,
       info: rendered.info,
       ...(rendered.name === undefined ? {} : { name: rendered.name }),
     };
@@ -609,6 +610,7 @@ export class ArtifactService {
       data: rendered.bytes.toString('base64'),
       width: rendered.width,
       height: rendered.height,
+      scale: rendered.scale,
       info: rendered.info,
       ...(rendered.name === undefined ? {} : { name: rendered.name }),
     };
@@ -642,13 +644,14 @@ export class ArtifactService {
       const parsed: unknown = JSON.parse(await fs.readFile(paths.meta, 'utf8'));
       if (parsed === null || typeof parsed !== 'object') return undefined;
       const fields: Record<string, unknown> = { ...parsed };
-      if (!isDesignInfo(fields.info) || typeof fields.width !== 'number' || typeof fields.height !== 'number') return undefined;
+      if (!isDesignInfo(fields.info) || typeof fields.width !== 'number' || typeof fields.height !== 'number' || typeof fields.scale !== 'number') return undefined;
       const bytes = await fs.readFile(paths.png);
       return {
         mediaType: 'image/png',
         data: bytes.toString('base64'),
         width: fields.width,
         height: fields.height,
+        scale: fields.scale,
         info: fields.info,
       };
     } catch {
@@ -725,19 +728,12 @@ export class ArtifactService {
    * @param root the scope root.
    * @param id the artifact id.
    * @param content the design source.
-   * @param info the summary.
-   * @param width the image width.
-   * @param height the image height.
-   * @param bytes the PNG bytes.
    */
   private async writePreview(
     root: ScopeRoot,
     id: string,
     content: string,
-    info: DesignInfo,
-    width: number,
-    height: number,
-    bytes: Buffer,
+    { info, width, height, scale, bytes }: RenderedPreview,
   ): Promise<void> {
     try {
       const paths = this.previewPaths(root, id, content);
@@ -747,7 +743,7 @@ export class ArtifactService {
         await assertWithin(root.root, paths.png);
         await writeAtomic(paths.png, bytes);
         await assertWithin(root.root, paths.meta);
-        await writeAtomic(paths.meta, `${JSON.stringify({ info, width, height }, null, 2)}\n`);
+        await writeAtomic(paths.meta, `${JSON.stringify({ info, width, height, scale }, null, 2)}\n`);
         await this.prunePreview(paths.dir, path.basename(paths.png));
       });
     } catch (error) {

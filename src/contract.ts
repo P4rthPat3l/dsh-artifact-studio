@@ -137,12 +137,12 @@ export interface ResolvedDesignSystem {
   catalogRevision?: number;
 }
 
-/** One layer the patch flow can target, with one level of its children. A path is the dotted index chain from the page, which a compile of the same source always reproduces. */
+/** One targetable layer. Its path is the dotted index chain from the page. */
 export type DesignOutlineRow = {
   path: string;
   name: string;
   type: string;
-  /** Direct children, when the row is a top-level layer that has any. */
+  /** Direct children included in the bounded outline. */
   children?: DesignOutlineRow[];
 };
 
@@ -163,6 +163,7 @@ export interface PreviewResult {
   data: string;
   width: number;
   height: number;
+  scale: number;
   info: DesignInfo;
   /** The layer name, when the preview rendered one layer. */
   name?: string;

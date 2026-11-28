@@ -21,10 +21,10 @@ const MAX_CONCURRENT = 2;
 export const PREVIEW_MAX_SIDE = 1600;
 
 /**
- * Bumped when the worker's layout or paint changes, so a cached preview or
- * summary from an older render cannot outlive it. The cache paths carry it.
+ * Bumped when the worker changes the preview or summary, so cached results
+ * cannot outlive the worker that produced them.
  */
-export const DESIGN_RENDER_VERSION = 2;
+export const DESIGN_RENDER_VERSION = 4;
 
 const WORKER = fileURLToPath(new URL('../worker/design-worker.js', import.meta.url));
 const PLUGIN_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
@@ -125,6 +125,7 @@ export interface RenderedPreview {
   bytes: Buffer;
   width: number;
   height: number;
+  scale: number;
   info: DesignInfo;
   /** The layer name, when the request rendered one layer. */
   name?: string;
@@ -177,13 +178,14 @@ export class DesignRenderer {
    */
   async preview(source: string, maxSide: number, layerPath?: string): Promise<RenderedPreview> {
     const response = await this.request(source, { action: 'preview', maxSide, ...(layerPath === undefined ? {} : { targetPath: layerPath }) });
-    if (typeof response.data !== 'string' || typeof response.width !== 'number' || typeof response.height !== 'number') {
+    if (typeof response.data !== 'string' || typeof response.width !== 'number' || typeof response.height !== 'number' || typeof response.scale !== 'number') {
       throw new ArtifactError('artifact/design-render-failed', 'The design renderer returned no image.');
     }
     return {
       bytes: Buffer.from(response.data, 'base64'),
       width: response.width,
       height: response.height,
+      scale: response.scale,
       info: response.info,
       ...(response.name === undefined ? {} : { name: response.name }),
     };
