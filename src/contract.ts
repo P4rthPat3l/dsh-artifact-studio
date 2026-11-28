@@ -164,6 +164,8 @@ export interface PreviewResult {
   width: number;
   height: number;
   info: DesignInfo;
+  /** The layer name, when the preview rendered one layer. */
+  name?: string;
 }
 
 /**

@@ -552,39 +552,43 @@ export class ArtifactService {
    * @param format the format.
    * @param version the version, when the caller named one.
    * @param sheet the sheet a CSV exports; the first sheet when omitted.
+   * @param layerPath the dotted design layer to export instead of the whole artifact.
    * @returns the exported file.
    */
-  async export(target: Target, id: string, format: ExportFormat, version?: number, sheet?: string): Promise<ExportedFile> {
+  async export(target: Target, id: string, format: ExportFormat, version?: number, sheet?: string, layerPath?: string): Promise<ExportedFile> {
     const root = await this.root(target, id);
     const result = await this.store.read(root, id, version);
     const { manifest, content, version: readVersion } = result;
     const design = await this.versionDesign(target, result);
-    return writeExport(root, { ...manifest, version: readVersion }, content, format, design, this.now(), this.designs, sheet);
+    return writeExport(root, { ...manifest, version: readVersion }, content, format, design, this.now(), this.designs, sheet, layerPath);
   }
 
   /**
-   * Render a design, or return its cached preview for the same source.
+   * Render a design, or return its cached preview for the same source. A named
+   * layer is always rendered, because the cache holds the whole design only.
    * @param target the caller's context.
    * @param id the artifact id.
    * @param version the version, when the caller named one.
+   * @param layerPath the dotted design layer to render instead of the whole design.
    * @returns the preview.
    */
-  async preview(target: Target, id: string, version?: number): Promise<PreviewResult> {
+  async preview(target: Target, id: string, version?: number, layerPath?: string): Promise<PreviewResult> {
     const root = await this.root(target, id);
     const { manifest, content } = await this.store.read(root, id, version);
     if (manifest.type !== 'design') {
       throw new ArtifactError('artifact/unsupported-type', 'Only a design has a rendered preview.', { type: manifest.type });
     }
-    const cached = await this.readPreview(root, id, content);
+    const cached = layerPath === undefined ? await this.readPreview(root, id, content) : undefined;
     if (cached !== undefined) return cached;
-    const rendered = await this.designs.preview(content, PREVIEW_MAX_SIDE);
-    await this.writePreview(root, id, content, rendered.info, rendered.width, rendered.height, rendered.bytes);
+    const rendered = await this.designs.preview(content, PREVIEW_MAX_SIDE, layerPath);
+    if (layerPath === undefined) await this.writePreview(root, id, content, rendered.info, rendered.width, rendered.height, rendered.bytes);
     return {
       mediaType: 'image/png',
       data: rendered.bytes.toString('base64'),
       width: rendered.width,
       height: rendered.height,
       info: rendered.info,
+      ...(rendered.name === undefined ? {} : { name: rendered.name }),
     };
   }
 
@@ -592,19 +596,21 @@ export class ArtifactService {
    * Render a design source that is not saved, so a draft can be checked before
    * its first write. Nothing is stored: no version, no manifest, no cache.
    * @param content the Design JSX source.
+   * @param layerPath the dotted design layer to render instead of the whole design.
    * @returns the preview.
    */
-  async previewSource(content: string): Promise<PreviewResult> {
+  async previewSource(content: string, layerPath?: string): Promise<PreviewResult> {
     if (content.trim() === '') {
       throw new ArtifactError('artifact/bad-request', 'A preview of unsaved content needs the Design JSX source.');
     }
-    const rendered = await this.designs.preview(content, PREVIEW_MAX_SIDE);
+    const rendered = await this.designs.preview(content, PREVIEW_MAX_SIDE, layerPath);
     return {
       mediaType: 'image/png',
       data: rendered.bytes.toString('base64'),
       width: rendered.width,
       height: rendered.height,
       info: rendered.info,
+      ...(rendered.name === undefined ? {} : { name: rendered.name }),
     };
   }
 

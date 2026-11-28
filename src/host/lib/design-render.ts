@@ -126,12 +126,16 @@ export interface RenderedPreview {
   width: number;
   height: number;
   info: DesignInfo;
+  /** The layer name, when the request rendered one layer. */
+  name?: string;
 }
 
 /** One exported file. */
 export interface RenderedExport {
   bytes: Buffer;
   mediaType: string;
+  /** The layer name, when the request exported one layer. */
+  name?: string;
 }
 
 /** One .fig import: the stored Design JSX source and its summary. */
@@ -167,11 +171,12 @@ export class DesignRenderer {
   /**
    * Compile and rasterize a source.
    * @param source the Design JSX source.
-   * @param maxSide the longest side in pixels; zero keeps the design's own size.
+   * @param maxSide the longest side in pixels; zero keeps the selection's own size.
+   * @param layerPath the dotted layer path to render instead of the whole design.
    * @returns the image and summary.
    */
-  async preview(source: string, maxSide: number): Promise<RenderedPreview> {
-    const response = await this.request(source, { action: 'preview', maxSide });
+  async preview(source: string, maxSide: number, layerPath?: string): Promise<RenderedPreview> {
+    const response = await this.request(source, { action: 'preview', maxSide, ...(layerPath === undefined ? {} : { targetPath: layerPath }) });
     if (typeof response.data !== 'string' || typeof response.width !== 'number' || typeof response.height !== 'number') {
       throw new ArtifactError('artifact/design-render-failed', 'The design renderer returned no image.');
     }
@@ -180,6 +185,7 @@ export class DesignRenderer {
       width: response.width,
       height: response.height,
       info: response.info,
+      ...(response.name === undefined ? {} : { name: response.name }),
     };
   }
 
@@ -187,14 +193,19 @@ export class DesignRenderer {
    * Compile and export a source.
    * @param source the Design JSX source.
    * @param format the output format.
+   * @param layerPath the dotted layer path to export instead of the whole design.
    * @returns the file bytes and media type.
    */
-  async exportContent(source: string, format: WorkerFormat): Promise<RenderedExport> {
-    const response = await this.request(source, { action: 'export', format });
+  async exportContent(source: string, format: WorkerFormat, layerPath?: string): Promise<RenderedExport> {
+    const response = await this.request(source, { action: 'export', format, ...(layerPath === undefined ? {} : { targetPath: layerPath }) });
     if (typeof response.data !== 'string' || typeof response.mediaType !== 'string') {
       throw new ArtifactError('artifact/design-render-failed', 'The design renderer returned no file.');
     }
-    return { bytes: Buffer.from(response.data, 'base64'), mediaType: response.mediaType };
+    return {
+      bytes: Buffer.from(response.data, 'base64'),
+      mediaType: response.mediaType,
+      ...(response.name === undefined ? {} : { name: response.name }),
+    };
   }
 
   /**

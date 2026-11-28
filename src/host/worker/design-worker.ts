@@ -494,23 +494,25 @@ function pngSize(bytes: Uint8Array): { width: number; height: number } {
 }
 
 /**
- * Rasterize the page, scaled down when it is wider or taller than the cap.
+ * Rasterize nodes, scaled down when the selection is wider or taller than the cap.
  * @param compiled the graph.
- * @param maxSide the longest side, or zero for the design's own size.
- * @returns the PNG bytes, or null for an empty design.
+ * @param maxSide the longest side, or zero for the selection's own size.
+ * @param nodeIds the nodes to render: the page's children, or one layer.
+ * @param trimTransparent whether to crop transparent space around the content.
+ * @returns the PNG bytes, or null for an empty selection.
  */
-async function renderPng(compiled: Compiled, maxSide: number): Promise<Uint8Array | null> {
+async function renderPng(compiled: Compiled, maxSide: number, nodeIds: string[], trimTransparent: boolean): Promise<Uint8Array | null> {
   await aliasUnbundledFamilies(compiled.graph, compiled.page, readBundledFace);
-  const bounds = computeContentBounds(compiled.graph, compiled.page.childIds);
+  const bounds = computeContentBounds(compiled.graph, nodeIds);
   if (bounds === null) return null;
   const width = bounds.maxX - bounds.minX;
   const height = bounds.maxY - bounds.minY;
   const longest = Math.max(width, height);
   const scale = maxSide > 0 && longest > maxSide ? maxSide / longest : 1;
-  return headlessRenderNodes(compiled.graph, compiled.page.id, compiled.page.childIds, {
+  return headlessRenderNodes(compiled.graph, compiled.page.id, nodeIds, {
     scale,
     format: 'PNG',
-    trimTransparent: true,
+    trimTransparent,
   });
 }
 
@@ -538,12 +540,23 @@ async function handle(source: string, request: WorkerRequest): Promise<WorkerRes
     };
   }
   if (request.action === 'inspect') return { ok: true, info };
+  let nodeIds = compiled.page.childIds;
+  let name: string | undefined;
+  if (request.targetPath !== undefined) {
+    const node = nodeAtPath(compiled.graph, compiled.page, request.targetPath);
+    if (node === undefined) {
+      return { ok: false, code: 'artifact/bad-request', message: 'Layer path "' + request.targetPath + '" does not exist in the current design. Read it again for a fresh outline.' };
+    }
+    nodeIds = [node.id];
+    name = node.name;
+  }
+  const named = name === undefined ? {} : { name };
   try {
     if (request.action === 'preview') {
-      const png = await renderPng(compiled, request.maxSide ?? 1600);
+      const png = await renderPng(compiled, request.maxSide ?? 1600, nodeIds, request.targetPath === undefined);
       if (png === null) return { ok: false, code: 'artifact/design-render-failed', message: 'The design produced no image.' };
       const size = pngSize(png);
-      return { ok: true, info, mediaType: 'image/png', data: Buffer.from(png).toString('base64'), width: size.width, height: size.height };
+      return { ok: true, info, ...named, mediaType: 'image/png', data: Buffer.from(png).toString('base64'), width: size.width, height: size.height };
     }
     if (request.format === 'fig') {
       const bytes = await exportFigFile(compiled.graph);
@@ -551,19 +564,19 @@ async function handle(source: string, request: WorkerRequest): Promise<WorkerRes
     }
     if (request.format === 'svg') {
       await aliasUnbundledFamilies(compiled.graph, compiled.page, readBundledFace);
-      const svg = renderNodesToSVG(compiled.graph, compiled.page.id, compiled.page.childIds, { xmlDeclaration: true });
+      const svg = renderNodesToSVG(compiled.graph, compiled.page.id, nodeIds, { xmlDeclaration: true });
       if (svg === null) return { ok: false, code: 'artifact/design-render-failed', message: 'The design produced no SVG.' };
-      return { ok: true, info, mediaType: 'image/svg+xml', data: Buffer.from(svg, 'utf8').toString('base64') };
+      return { ok: true, info, ...named, mediaType: 'image/svg+xml', data: Buffer.from(svg, 'utf8').toString('base64') };
     }
     if (request.format === 'html-svg') {
       await aliasUnbundledFamilies(compiled.graph, compiled.page, readBundledFace);
       const model = await buildPageModel(compiled.graph, compiled.page);
       return { ok: true, info, mediaType: 'application/json', data: Buffer.from(JSON.stringify(model), 'utf8').toString('base64') };
     }
-    const png = await renderPng(compiled, 0);
+    const png = await renderPng(compiled, 0, nodeIds, request.targetPath === undefined);
     if (png === null) return { ok: false, code: 'artifact/design-render-failed', message: 'The design produced no image.' };
     const size = pngSize(png);
-    return { ok: true, info, mediaType: 'image/png', data: Buffer.from(png).toString('base64'), width: size.width, height: size.height };
+    return { ok: true, info, ...named, mediaType: 'image/png', data: Buffer.from(png).toString('base64'), width: size.width, height: size.height };
   } catch (error) {
     return { ok: false, code: 'artifact/design-render-failed', message: messageOf(error) };
   }

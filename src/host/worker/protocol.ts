@@ -1,7 +1,7 @@
 import type { DesignInfo } from '../../contract.js';
 
 /** Actions the host can ask the renderer to perform. */
-export type WorkerAction = 'inspect' | 'preview' | 'export' | 'import-fig' | 'patch';
+type WorkerAction = 'inspect' | 'preview' | 'export' | 'import-fig' | 'patch';
 
 /** Formats a design export can produce. */
 export type WorkerFormat = 'png' | 'svg' | 'fig' | 'html-svg';
@@ -19,7 +19,7 @@ export interface WorkerRequest {
   bytes?: string;
   /** The Design JSX of one layer, for a patch. Its single root replaces the layer at `targetPath` in place. */
   patch?: string;
-  /** The dotted index path from the page to the layer a patch replaces. */
+  /** The dotted index path from the page to one layer: the layer a patch replaces, or the layer to preview or export. */
   targetPath?: string;
 }
 
@@ -33,10 +33,12 @@ export interface WorkerSuccess {
   height?: number;
   /** The stored Design JSX an import produced. */
   source?: string;
+  /** The layer name when the request rendered one node. */
+  name?: string;
 }
 
 /** One failed answer, with a stable artifact error code. */
-export interface WorkerFailure {
+interface WorkerFailure {
   ok: false;
   code: string;
   message: string;

@@ -129,6 +129,7 @@ Call this artifact a mockup when you talk to the user. The tools still take type
 - The renderer reports a warning when it ignores a prop or a helper option that would change what you drew, such as \`margin\` on a frame. Those warnings travel with the design summary; fix the ones that apply to your change.
 - For a one-layer change on a large design, use artifact_patch instead of resending the whole source: read with outline: true for layer paths, then send the complete JSX of that one element as patch with its targetPath. A design holding component instances is refused; send the full source through artifact_update instead.
 - Check a draft before it is saved: call artifact_preview with the complete \`content\` and no \`id\`. It renders without writing a version, so fix what the render shows and save once. After a save, call it again with the id and version. The render arrives beside the result, so check layout, spacing, alignment, and text fit yourself instead of assuming the compile is correct.
+- A large canvas is downscaled in that preview. Pass a dotted \`path\` from artifact_read's outline to render one frame, component, or layer at its own size; pass the same path to artifact_export for a PNG or SVG file.
 - Export is PNG, SVG, \`.fig\`, a self-contained HTML viewer, or a smaller HTML/SVG viewer with selectable text. A \`.fig\` opens in OpenPencil or Figma. If the user supplies a \`.fig\` file, use artifact_import instead of recreating it from a description.
 
 ### When a design write fails

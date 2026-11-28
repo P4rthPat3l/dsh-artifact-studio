@@ -427,7 +427,7 @@ export function createTools(host: ToolHost): ToolDefinition[] {
       properties: {
         id: { type: 'string', description: 'Artifact id from artifact_create or artifact_list.' },
         version: { type: 'integer', description: 'An earlier version to read. Omit for the current one.' },
-        outline: { type: 'boolean', description: 'For a design, include the layer outline with paths for artifact_patch. Defaults to false; set it when you plan to patch.' },
+        outline: { type: 'boolean', description: 'For a design, include the layer outline with paths for artifact_patch, and for a one-layer artifact_preview or artifact_export. Defaults to false; set it when you plan to patch or inspect one layer.' },
         values: {
           type: 'object',
           additionalProperties: false,
@@ -469,7 +469,7 @@ export function createTools(host: ToolHost): ToolDefinition[] {
         const artifact = record(fields.artifact ?? null);
         const info = record(fields.designInfo ?? null);
         const outlineRows = Array.isArray(info.outline) ? info.outline : [];
-        const outlineBlock = outlineRows.length === 0 ? '' : '\n\nOutline (paths for artifact_patch):\n' + outlineText(outlineRows);
+        const outlineBlock = outlineRows.length === 0 ? '' : '\n\nOutline (paths for artifact_patch, artifact_preview, and artifact_export):\n' + outlineText(outlineRows);
         const sheetRows = Array.isArray(fields.sheetInfo) ? fields.sheetInfo.map(record) : [];
         const sheetLine = sheetRows.length === 0
           ? ''
@@ -773,7 +773,7 @@ export function createTools(host: ToolHost): ToolDefinition[] {
   const exportTool: ToolDefinition = {
     name: 'artifact_export',
     description:
-      'Write an artifact to a standalone file and return its path. A page exports as html; a doc exports as md, docx, or printable html; a design exports as png, svg, .fig, a self-contained view-only html viewer, or a smaller html page with an svg scene and selectable text; a sheet exports as csv (one sheet, the first by default) or xlsx (every sheet).',
+      'Write an artifact to a standalone file and return its path. A page exports as html; a doc exports as md, docx, or printable html; a design exports as png, svg, .fig, a self-contained view-only html viewer, or a smaller html page with an svg scene and selectable text; a sheet exports as csv (one sheet, the first by default) or xlsx (every sheet). Pass path to export one design frame, component, or layer as png or svg at its own size.',
     parameters: {
       type: 'object',
       additionalProperties: false,
@@ -781,6 +781,7 @@ export function createTools(host: ToolHost): ToolDefinition[] {
       properties: { id: { type: 'string' }, format: { type: 'string', enum: ['html', 'md', 'docx', 'png', 'svg', 'fig', 'html-svg', 'csv', 'xlsx'] },
         version: { type: 'integer', minimum: 1, description: 'Saved version to export. Omit for the current version.' },
         sheet: { type: 'string', description: 'Sheet name for a CSV export. Defaults to the first sheet. XLSX exports every sheet.' },
+        path: { type: 'string', description: 'Dotted layer path from the artifact_read outline, to export one design frame, component, or layer on its own. Works only with png and svg; SVG text does not wrap, so use artifact_preview to judge layout.' },
         workspaceId: WORKSPACE_PARAM },
     },
     output: {
@@ -791,7 +792,7 @@ export function createTools(host: ToolHost): ToolDefinition[] {
       const fields = fieldsOf(args);
       const id = requiredString(fields, 'id');
       const target = await targetFor(host, exec, id.startsWith('art_lib_') ? 'library' : undefined, optionalString(fields, 'workspaceId'));
-      const file = await service.export(target, id, requiredFormat(fields), optionalInteger(fields, 'version'), optionalString(fields, 'sheet'));
+      const file = await service.export(target, id, requiredFormat(fields), optionalInteger(fields, 'version'), optionalString(fields, 'sheet'), optionalString(fields, 'path'));
       return { path: file.path, bytes: file.bytes };
     },
   };
@@ -1064,6 +1065,7 @@ export function createPreviewTool(host: ToolHost, services: PreviewServices): To
     description: [
       'Render design content and return the image beside the result, so you can check the visual result yourself: layout, spacing, alignment, contrast, clipping, and that every requested state exists.',
       'Pass the complete content and no id to check a draft before its first save; that writes no version. Pass an id and optionally a version to render a saved design.',
+      'Pass path from the artifact_read outline to render one frame, component, or layer on its own at its own size, so a large canvas is not downscaled.',
       'The calling model route must accept image input; the tool refuses on routes that cannot see images.',
     ].join('\n'),
     parameters: {
@@ -1073,6 +1075,7 @@ export function createPreviewTool(host: ToolHost, services: PreviewServices): To
         id: { type: 'string', description: 'Design artifact id. Omit when checking unsaved content.' },
         version: { type: 'integer', minimum: 1, description: 'Saved version to render. Omit for the current version.' },
         content: { type: 'string', description: 'Complete Design JSX to render without saving, for a draft check. Takes precedence over id.' },
+        path: { type: 'string', description: 'Dotted layer path from the artifact_read outline, to render one frame, component, or layer instead of the whole design. Works with a saved id or unsaved content.' },
         workspaceId: WORKSPACE_PARAM,
       },
     },
@@ -1085,6 +1088,7 @@ export function createPreviewTool(host: ToolHost, services: PreviewServices): To
           id: { type: 'string' },
           title: { type: 'string' },
           version: { type: 'integer' },
+          name: { type: 'string' },
           width: { type: 'integer' },
           height: { type: 'integer' },
           warnings: { type: 'array', items: { type: 'string' } },
@@ -1108,7 +1112,9 @@ export function createPreviewTool(host: ToolHost, services: PreviewServices): To
         const warnings = Array.isArray(fields.warnings) ? fields.warnings.map(String) : [];
         const version = fields.version;
         const label = version === undefined ? 'unsaved draft' : 'version ' + String(version);
-        const head = `Preview of ${String(fields.title)} (${label}): ${String(image.width)}x${String(image.height)} px. The image rides beside this text; check layout, spacing, alignment, and text fit against what the user asked for.`;
+        const name = typeof fields.name === 'string' ? fields.name : undefined;
+        const subject = name === undefined ? String(fields.title) : `layer "${name}" in ${String(fields.title)}`;
+        const head = `Preview of ${subject} (${label}): ${String(image.width)}x${String(image.height)} px. The image rides beside this text; check layout, spacing, alignment, and text fit against what the user asked for.`;
         const warningLines = warnings.length === 0 ? '' : '\nWarnings:\n' + warnings.map((item) => '- ' + item).join('\n');
         return [
           { type: 'text', text: head + warningLines },
@@ -1129,6 +1135,7 @@ export function createPreviewTool(host: ToolHost, services: PreviewServices): To
       const fields = fieldsOf(args);
       const content = optionalString(fields, 'content');
       const id = optionalString(fields, 'id');
+      const path = optionalString(fields, 'path');
       if (content === undefined && id === undefined) {
         throw new ArtifactError('artifact/bad-request', 'Pass the design id to preview a saved design, or the complete content to preview a draft.');
       }
@@ -1138,22 +1145,27 @@ export function createPreviewTool(host: ToolHost, services: PreviewServices): To
       let preview: PreviewResult;
       if (content !== undefined) {
         title = 'Draft mockup';
-        preview = await service.previewSource(content);
+        preview = await service.previewSource(content, path);
       } else {
         const target = await targetFor(host, exec, String(id).startsWith('art_lib_') ? 'library' : undefined, optionalString(fields, 'workspaceId'));
         const manifest = await service.store.manifest(await service.root(target, String(id)), String(id));
         version = optionalInteger(fields, 'version') ?? manifest.version;
         title = manifest.title;
-        preview = await service.preview(target, String(id), version);
+        preview = await service.preview(target, String(id), version, path);
       }
       const refs = await services.attachments.saveImages([
-        { data: Buffer.from(preview.data, 'base64'), mediaType: 'image/png', name: String(preview.info.nodes) + '-node design preview' },
+        {
+          data: Buffer.from(preview.data, 'base64'),
+          mediaType: 'image/png',
+          name: preview.name === undefined ? String(preview.info.nodes) + '-node design preview' : preview.name + ' layer preview',
+        },
       ]);
       const ref = refs[0];
       if (ref === undefined) throw new ArtifactError('artifact/design-render-failed', 'The preview image was not stored.');
       return {
         ...(content !== undefined || id === undefined ? {} : { id }),
         ...(version === undefined ? {} : { version }),
+        ...(preview.name === undefined ? {} : { name: preview.name }),
         title,
         width: preview.width,
         height: preview.height,

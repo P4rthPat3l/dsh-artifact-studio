@@ -35,13 +35,13 @@ after(async () => {
 });
 
 /** A fresh home per test, so ids and cache directories never overlap. */
-async function fixture(designs = new DesignRenderer()) {
+async function fixture(designs = new DesignRenderer(), now = () => new Date()) {
   const home = await fs.mkdtemp(path.join(base, 'home-'));
   const service = new ArtifactService(
     { workspaceBase: WORKSPACE_BASE, libraryDir: 'artifacts/v1', home },
     registry,
     new ArtifactStore(),
-    () => new Date(),
+    now,
     designs,
   );
   return { home, service, target: { workspaceId: 'ws-a' } };
@@ -675,5 +675,88 @@ test('AC-SVG-006: the SVG HTML page shows the requested version, and a missing v
   await assert.rejects(
     service.export(target, created.id, 'html-svg', 99),
     (error) => error.code === 'artifact/version-not-found',
+  );
+});
+
+test('FEAT-007 AC-082: one layer previews and exports at its own size', async () => {
+  const { service, target } = await fixture();
+  const layered = '<Frame name="Wide" w={200} h={80} bg="#ff0000"><Rectangle name="Chip" w={40} h={20} bg="#00ff00" /></Frame>'
+    + '<Frame name="Tall" w={120} h={300} bg="#0000ff" />';
+  const created = await service.create(target, { type: 'design', title: 'Layered', content: layered, source: agent });
+  const outline = (await service.read(target, created.id)).designInfo.outline;
+  assert.deepEqual(outline.map((row) => row.name), ['Wide', 'Tall']);
+
+  const tall = await service.preview(target, created.id, undefined, '1');
+  assert.equal(tall.name, 'Tall');
+  assert.equal(tall.width, 120);
+  assert.equal(tall.height, 300);
+  const chip = await service.preview(target, created.id, undefined, '0.0');
+  assert.equal(chip.name, 'Chip');
+  assert.equal(chip.width, 40);
+  assert.equal(chip.height, 20);
+  const draft = await service.previewSource(layered, '0');
+  assert.equal(draft.name, 'Wide');
+  assert.equal(draft.width, 200);
+  assert.equal(draft.height, 80);
+
+  const wideSvg = await service.export(target, created.id, 'svg', undefined, undefined, '0');
+  const svg = Buffer.from(wideSvg.data, 'base64').toString('utf8');
+  assert.match(svg, /width="200"/);
+  assert.match(svg, /height="80"/);
+  assert.match(svg, /#ff0000/i);
+  assert.doesNotMatch(svg, /#0000ff/i);
+  assert.match(wideSvg.fileName, /-wide-0-/);
+
+  const tallPng = await service.export(target, created.id, 'png', undefined, undefined, '1');
+  const png = Buffer.from(tallPng.data, 'base64');
+  assert.equal(png.readUInt32BE(16), 120);
+  assert.equal(png.readUInt32BE(20), 300);
+  assert.match(tallPng.fileName, /-tall-1-/);
+  assert.notEqual(tallPng.path, wideSvg.path, 'two layer exports shared a file name');
+  const fixed = await fixture(new DesignRenderer(), () => new Date('2026-11-28T10:00:00Z'));
+  const twins = await fixed.service.create(fixed.target, {
+    type: 'design',
+    title: 'Twins',
+    content: '<Frame name="Card" w={100} h={50} bg="#111111" /><Frame name="Card" w={80} h={40} bg="#222222" />',
+    source: agent,
+  });
+  const first = await fixed.service.export(fixed.target, twins.id, 'png', undefined, undefined, '0');
+  const second = await fixed.service.export(fixed.target, twins.id, 'png', undefined, undefined, '1');
+  assert.notEqual(first.path, second.path, 'same-named layers exported in one second shared a file name');
+  assert.match(first.fileName, /-0-/);
+  assert.match(second.fileName, /-1-/);
+
+  await assert.rejects(
+    service.preview(target, created.id, undefined, '9'),
+    (error) => error.code === 'artifact/bad-request' && /does not exist/.test(error.message),
+  );
+  await assert.rejects(
+    service.export(target, created.id, 'fig', undefined, undefined, '0'),
+    (error) => error.code === 'artifact/bad-request' && /png and svg/.test(error.message),
+  );
+  const page = await service.create(target, { type: 'page', title: 'Page', content: '<!doctype html><p>Hi</p>', source: agent });
+  await assert.rejects(
+    service.export(target, page.id, 'html', undefined, undefined, '0'),
+    (error) => error.code === 'artifact/bad-request' && /Only a design/.test(error.message),
+  );
+
+  const host = { service, registry, workingDirectory: { ensure: async () => path.join(base, 'project-a') } };
+  const exec = { agent: { id: 'ses-a', session: { requestHeader: () => ({ config: { provider: 'p', model: 'glm' } }) } }, signal: new AbortController().signal };
+  const attachments = {
+    saveImages: async (inputs) => inputs.map(() => ({ attachmentId: 'att-layer', mediaType: 'image/png', bytes: 20, width: 200, height: 80 })),
+  };
+  const previewTool = createPreviewTool(host, { attachments, llm: { resolveModelInfo: async () => ({ inputModalities: ['image'] }) } });
+  const saved = await previewTool.execute({ id: created.id, path: '0' }, exec);
+  assert.equal(saved.name, 'Wide');
+  assert.equal(saved.width, 200);
+  assert.match(previewTool.output.render({}, saved)[0].text, /layer "Wide"/);
+  const previewDraft = await previewTool.execute({ content: layered, path: '1' }, exec);
+  assert.equal(previewDraft.name, 'Tall');
+  const exportTool = createTools(host).find((tool) => tool.name === 'artifact_export');
+  const exported = await exportTool.execute({ id: created.id, format: 'png', path: '0' }, exec);
+  assert.ok(exported.bytes > 0);
+  await assert.rejects(
+    exportTool.execute({ id: created.id, format: 'fig', path: '0' }, exec),
+    (error) => error.code === 'artifact/bad-request',
   );
 });

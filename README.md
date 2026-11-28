@@ -112,10 +112,10 @@ Tools read and write the same files the panel uses. They default to the session'
 | `artifact_patch` | Replace one mockup layer in place. |
 | `artifact_sheet_update` | Apply cell, range, row, column, and sheet operations. |
 | `artifact_list` | List artifacts in a project or the library. |
-| `artifact_export` | Write a standalone file in one supported format. |
+| `artifact_export` | Write a standalone file in one supported format, or one mockup layer as PNG or SVG. |
 | `artifact_import` | Import a `.fig` file as a mockup. |
 | `artifact_delete` | Move an artifact to the trash. |
-| `artifact_preview` | Render a mockup and return the image to the model. |
+| `artifact_preview` | Render a mockup, or one layer at its own size, and return the image to the model. |
 | `artifact_brief` | Read the authoring brief and compatible recipes for one type. |
 | `artifact_guide_update` | Save project conventions or a recipe. |
 | `artifact_rebase` | Adopt newer design settings for a page or document. |

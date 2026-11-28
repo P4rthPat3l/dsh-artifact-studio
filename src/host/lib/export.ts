@@ -66,18 +66,23 @@ function isMarked(token: Token): token is MarkedToken {
  * @param manifest the manifest.
  * @param format the format.
  * @param now the clock value.
+ * @param layerName the exported layer, which keeps two layers from sharing a name.
+ * @param layerPath the layer's dotted path, which keeps two same-named layers apart.
  * @returns the file name.
  */
-function exportFileName(manifest: Manifest, format: ExportFormat, now: Date): string {
-  const slug =
-    manifest.title
+function exportFileName(manifest: Manifest, format: ExportFormat, now: Date, layerName?: string, layerPath?: string): string {
+  const slug = (value: string): string =>
+    value
       .toLowerCase()
       .normalize('NFKD')
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-+|-+$/g, '')
-      .slice(0, 60) || 'artifact';
+      .slice(0, 60);
+  const title = slug(manifest.title) || 'artifact';
+  const pathSuffix = layerPath === undefined ? '' : '-' + layerPath.replace(/\./g, '-');
+  const layer = layerName === undefined ? '' : '-' + (slug(layerName) || 'layer') + pathSuffix;
   const stamp = now.toISOString().replace(/[-:]/g, '').replace(/\..*$/, '').replace('T', '-');
-  return `${slug}-v${manifest.version}-${stamp}.${EXTENSIONS[format] ?? format}`;
+  return `${title}${layer}-v${manifest.version}-${stamp}.${EXTENSIONS[format] ?? format}`;
 }
 
 /**
@@ -319,7 +324,7 @@ function blocks(tokens: readonly Token[], design: DesignTokens, depth = 0): (Par
  * @param design design tokens for fonts and heading color.
  * @returns the file bytes.
  */
-export async function docToDocx(title: string, markdown: string, design: DesignTokens): Promise<Buffer> {
+async function docToDocx(title: string, markdown: string, design: DesignTokens): Promise<Buffer> {
   const tokens = marked.lexer(markdown, { gfm: true });
   const color = design.colors.primary.startsWith('#') && design.colors.primary.length === 7
     ? design.colors.primary.slice(1)
@@ -452,6 +457,7 @@ td { padding: 4px 8px; border: .5px solid color-mix(in srgb, var(--artifact-colo
  * @param now the clock value.
  * @param designs the design renderer, needed for a design's derived formats.
  * @param sheet the sheet a CSV exports; the first sheet when omitted.
+ * @param layerPath the dotted design layer to export instead of the whole design.
  * @returns the written file and its bytes, base64 encoded for a browser download.
  */
 export async function writeExport(
@@ -463,14 +469,24 @@ export async function writeExport(
   now: Date,
   designs?: DesignRenderer,
   sheet?: string,
+  layerPath?: string,
 ): Promise<ExportedFile> {
   if (!FORMATS_BY_TYPE[manifest.type].includes(format)) {
     throw new ArtifactError('artifact/unsupported-format', `A ${manifest.type} cannot be exported as ${format}.`, {
       supported: FORMATS_BY_TYPE[manifest.type],
     });
   }
+  if (layerPath !== undefined) {
+    if (manifest.type !== 'design') {
+      throw new ArtifactError('artifact/bad-request', 'Only a design has layers to export.');
+    }
+    if (format !== 'png' && format !== 'svg') {
+      throw new ArtifactError('artifact/bad-request', 'A layer export supports only png and svg; fig, html, and html-svg carry the whole design.');
+    }
+  }
   let data: Buffer;
   let mediaType = MEDIA_TYPES[format];
+  let layerName: string | undefined;
   if (manifest.type === 'design') {
     if (designs === undefined) {
       throw new ArtifactError('artifact/design-unavailable', 'The design renderer is not available.', {});
@@ -484,9 +500,10 @@ export async function writeExport(
       data = await buildSvgViewerHtml({ title: manifest.title, model });
       mediaType = 'text/html';
     } else if (format === 'png' || format === 'svg' || format === 'fig') {
-      const rendered = await designs.exportContent(content, format);
+      const rendered = await designs.exportContent(content, format, layerPath);
       data = rendered.bytes;
       mediaType = rendered.mediaType;
+      layerName = rendered.name;
     } else {
       throw new ArtifactError('artifact/unsupported-format', `A design cannot be exported as ${format}.`, {
         supported: FORMATS_BY_TYPE.design,
@@ -519,7 +536,7 @@ export async function writeExport(
   else if (manifest.type === 'page') data = Buffer.from(composePage(content, design.css, PAGE_CSP, manifest.title), 'utf8');
   else data = Buffer.from(docToHtml(manifest.title, content, design.css), 'utf8');
   const dir = path.join(root.root, 'exports');
-  const fileName = exportFileName(manifest, format, now);
+  const fileName = exportFileName(manifest, format, now, layerName, layerPath);
   const file = path.join(dir, fileName);
   await withLock(dir, async () => {
     await assertWithin(root.root, dir);
