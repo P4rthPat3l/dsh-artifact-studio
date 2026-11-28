@@ -715,7 +715,7 @@ A preview is keyed by the sha256 of the source. The current version's cache is r
 | BR-035 | Inferred | The worker measures text with the headless CanvasKit renderer before compiling, because the engine cannot parse fonts through Node's module shape and would otherwise estimate 0.6 × font size per character. Every design summary then carries layout warnings for a `lineHeight` under the font size, text outside its frame, two texts stacked in a frame that has no flex, and a linked instance spilling out of an unclipped wrapper into a caption below it in the same column. The brief shows how to size and inset the instance. Layout warnings never block a save | `design-worker.ts`, the mockup brief | AC-078, AC-081, AC-083 |
 | BR-036 | Inferred | A text family outside the bundled three is drawn in Inter by registering the Inter faces under that family. The node keeps its family, so no save rewrites the source, and the warning names the substitution | `src/fonts.ts`, the worker, the canvas chunk | AC-079 |
 | BR-037 | Inferred | `artifact_preview` renders unsaved content without writing a version, a manifest, or a preview cache file, and a saved id still renders the stored version | `tools.ts`, `ArtifactService.previewSource` | AC-080 |
-| BR-038 | Inferred | Agents can render one design layer by dotted outline path: `artifact_preview` and `artifact_export` accept `path`, the worker resolves it with the same reader as `artifact_patch`, and a layer preview bypasses the whole-design preview cache. The outline lists shallower layers first, with at most 120 rows. Preview scale travels with the PNG, including on cache hits, so the tool can label downscaled images. A layer export is png or svg, and its file name carries the layer name and dotted path, so same-named layers exported in one second do not collide; SVG text does not wrap, so layout is judged from the preview | `design-worker.ts`, `design-render.ts`, `service.ts`, `export.ts`, `tools.ts` | AC-082, AC-084 |
+| BR-038 | Inferred | Agents can render one design layer by dotted outline path: `artifact_preview` and `artifact_export` accept `path`, the worker resolves it with the same reader as `artifact_patch`, and a layer preview bypasses the whole-design preview cache. The outline lists shallower layers first, with at most 120 rows. Whole draft previews expose named frame paths from that outline; saved previews and crops do not. Preview scale travels with the PNG, including on cache hits, so the tool can label downscaled images. A layer export is png or svg, and its file name carries the layer name and dotted path, so same-named layers exported in one second do not collide; SVG text does not wrap, so layout is judged from the preview | `design-worker.ts`, `design-render.ts`, `service.ts`, `export.ts`, `tools.ts` | AC-082, AC-084, AC-087 |
 
 ## 15. Acceptance Criteria and Cases
 
@@ -1373,7 +1373,7 @@ Installed-tool smoke check: from an image-capable session, call `artifact_previe
 ### AC-085: The mockup brief teaches repeated alignment
 
 **Given** an agent requests the mockup brief
-**Then** it gets render-tested examples with aligned component captions, equal switch tracks on one right edge, and a single text node for a metric and its qualifier
+**Then** it gets render-tested examples with aligned component captions, equal switch tracks on one right edge, a single text node for a metric and its qualifier, and a dashboard row with a fixed-height chart card, a content-sized notes card, and a pinned footer
 **And** the brief asks the agent to compare repeated elements at full size before saving
 
 ### AC-086: A View drag pans from anywhere and a click still selects
@@ -1386,6 +1386,25 @@ Installed-tool smoke check: from an image-capable session, call `artifact_previe
 **And** the canvas shows a grab cursor, which reads grabbing while the press is held
 
 Checked in the exported viewer's real-browser check and in a live GUI pass: a drag that started on the frame moved the view, the layer bar stayed hidden, and the reverse drag restored the exact first frame. Test type: browser.
+
+### AC-087: Draft overviews expose named frame paths
+
+**Given** a complete draft with named frames nested under default-named wrappers
+**When** `artifact_preview` renders it without an id or path
+**Then** `frames` and the text beside the image list named frames and their dotted paths, in shallowest-first order from the existing 120-layer outline
+**And** the same source with one listed path renders the frame with its linked components intact
+**And** neither draft call writes an artifact version or a preview cache file
+**And** saved previews and single-layer previews do not return `frames`.
+
+Review the assembled board once for composition. Use the returned paths to check distinct screens at readable size, batch corrections, and save once. The brief uses canonical MDI names and shows a crop with a shared component definition. See [the preview tool](../../src/host/lib/tools.ts) and [the mockup brief](../../src/host/lib/brief.ts).
+
+### Mockup authoring benchmark
+
+Run one fresh top-level session at a time in this workspace. Use the `ptc` preset and `ollama/deepseek-v4.1-flash:1017` with Max reasoning. For a before-and-after comparison, run the exact prompt on both builds with the same workspace inputs and model settings. Do not treat the earlier open-ended showcase runs as the control.
+
+> Create one editable mockup board for a fictional port operations app called Tidemark. Include a 1440 × 900 desktop dashboard with a daily departures chart in a fixed-height card with a bottom footer beside a notes card that hugs its content. Add two 390 × 844 mobile screens for departures and vessel detail, and an empty departures state. Include a small component section. Define one linked status-pill component and reuse it on the dashboard and on both mobile screens. Label all data as illustrative and keep repeated values consistent. Check the draft and publish one version. List the screens you reviewed at full size and call out any that remained downscaled.
+
+Record wall time, model steps, generated tokens, preview calls and failures, and the number of saves. Check that the published board covers all requested screens and has one component definition with at least three linked instances across the screens. Count a preview as full size only at `scale: 1`.
 
 ### Edge Cases
 

@@ -654,6 +654,7 @@ test('AC-070: both artifact skills register and the tools load without the skill
   const skill = skills.find(item => item.name === 'artifact-design');
   assert.ok(skill);
   assert.ok(skill.description.length > 0 && skill.description.length < 300);
+  assert.ok(skill.content.includes('artifact_brief({ type: "design" })'));
   for (const topic of ['## Precedence', 'sandbox', 'artifact_brief', 'Sheets do not use recipes', 'Only pages and documents pin', 'baseVersion', 'edits']) {
     assert.ok(skill.content.includes(topic), `skill covers ${topic}`);
   }

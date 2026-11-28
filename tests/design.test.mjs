@@ -336,13 +336,21 @@ test('FEAT-007 AC-012b: the starter and mockup brief teach flex layout, not dir'
   assert.ok(info.nodes >= 4);
 });
 
-test('FEAT-007 AC-085: mockup brief examples render aligned components, switches, and metrics', async () => {
+test('FEAT-007 AC-085: mockup brief examples render aligned components, switches, metrics, and dashboard cards', async () => {
   const { service, target } = await fixture();
   const { brief } = await service.brief(target, 'design', 'general');
   const examples = [...brief.matchAll(/```jsx\n([\s\S]+?)\n```/g)].map(([, source]) => source);
-  assert.equal(examples.length, 3);
+  assert.equal(examples.length, 4);
+  const icons = JSON.parse(await fs.readFile(new URL('../assets/icons.json', import.meta.url), 'utf8'));
+  const namesLine = brief.split('\n').find((line) => line.includes('Canonical names include:'));
+  assert.ok(namesLine);
+  const iconNames = [...namesLine.split('Canonical names include:')[1].matchAll(/`([^`]+)`/g)];
+  for (const [, name] of iconNames) assert.ok(Object.hasOwn(icons.icons, name), name);
   const renderer = new DesignRenderer();
-  const [pair, settings, metric] = await Promise.all(examples.map((source) => renderer.pageModel(source)));
+  const [pair, settings, metric, dashboard] = await Promise.all(examples.map((source) => renderer.pageModel(source)));
+  const crop = await renderer.preview(examples[0], 1600, '0.1');
+  assert.deepEqual([crop.name, crop.width, crop.scale], ['Linked example', 152, 1]);
+  assert.equal(crop.info.types.INSTANCE, 1);
   const captions = pair.texts.filter(({ text }) => ['Main component', 'Linked instance'].includes(text));
   assert.equal(captions.length, 2);
   assert.equal(captions[0].matrix.f, captions[1].matrix.f);
@@ -353,6 +361,15 @@ test('FEAT-007 AC-085: mockup brief examples render aligned components, switches
   const value = metric.texts.find(({ text }) => text === '14 of 18');
   assert.ok(value, 'the number and qualifier render in one text node');
   assert.deepEqual(value.runs.map(({ text, size }) => [text, size]), [['14', 28], [' of 18', 14]]);
+  const heading = dashboard.texts.find(({ text }) => text === 'Daily departures');
+  const note = dashboard.texts.find(({ text }) => text === 'Dock notes');
+  const footer = dashboard.texts.find(({ text }) => text === 'Last 3 days');
+  assert.ok(heading && note && footer);
+  assert.equal(heading.matrix.f, note.matrix.f, 'card headings align at the top');
+  assert.equal(footer.matrix.f + footer.height + 12, 156, 'footer sits at the bottom inset of the fixed card');
+  const chart = await renderer.preview(examples[3], 1600, '0.0');
+  const notes = await renderer.preview(examples[3], 1600, '0.1');
+  assert.deepEqual([chart.height, notes.height < chart.height, chart.info.warnings], [144, true, []]);
 });
 
 test('FEAT-007 AC-013: list filters designs', async () => {
@@ -801,6 +818,7 @@ test('FEAT-007 AC-082: one layer previews and exports at its own size', async ()
   const saved = await previewTool.execute({ id: created.id, path: '0' }, exec);
   assert.equal(saved.name, 'Wide');
   assert.equal(saved.width, 200);
+  assert.ok(!Object.hasOwn(saved, 'frames'));
   assert.match(previewTool.output.render({}, saved)[0].text, /layer "Wide"/);
   const previewDraft = await previewTool.execute({ content: layered, path: '1' }, exec);
   assert.equal(previewDraft.name, 'Tall');
@@ -812,6 +830,7 @@ test('FEAT-007 AC-082: one layer previews and exports at its own size', async ()
   const previewCalls = renderer.previewCalls;
   for (const args of [overviewArgs, overviewArgs]) {
     const result = await previewTool.execute(args, exec);
+    assert.ok(!Object.hasOwn(result, 'frames'));
     assert.match(previewTool.output.render(args, result)[0].text, /downscaled.*artifact_read.*path/);
   }
   assert.equal(renderer.previewCalls, previewCalls + 1, 'the overview cache was not used');
@@ -830,6 +849,31 @@ test('FEAT-007 AC-082: one layer previews and exports at its own size', async ()
     exportTool.execute({ id: created.id, format: 'fig', path: '0' }, exec),
     (error) => error.code === 'artifact/bad-request',
   );
+});
+
+test('FEAT-007 AC-087: a draft overview exposes named frame paths for full-source crops', async () => {
+  const { service, target } = await fixture();
+  const host = { service, registry, workingDirectory: { ensure: async () => path.join(base, 'project-a') } };
+  const exec = { agent: { id: 'ses-a', session: { requestHeader: () => ({ config: { provider: 'p', model: 'glm' } }) } }, signal: new AbortController().signal };
+  const attachments = { saveImages: async (inputs) => inputs.map(({ data }) => ({
+    attachmentId: 'att-draft', mediaType: 'image/png', bytes: data.length,
+    width: data.readUInt32BE(16), height: data.readUInt32BE(20),
+  })) };
+  const tool = createPreviewTool(host, { attachments, llm: { resolveModelInfo: async () => ({ inputModalities: ['image'] }) } });
+  const content = '<Frame name="Board" w={1800} h={150} bg="#ffffff" flex="row">'
+    + '<Frame w={200} h={150}><Component name="Control" w={64} h={40} bg="#eeeeee" flex="row"><Icon name="mdi:magnify" size={16} color="#111111" /></Component></Frame>'
+    + '<Frame w={320} h={150}><Frame name="Search screen" w={320} h={150} bg="#ffffff" flex="row"><Instance of="Control" w={64} h={40} /></Frame>'
+    + '<Frame name="Detail" w={2} h={2} />'.repeat(125) + '</Frame></Frame>';
+  const overview = await tool.execute({ content }, exec);
+  assert.equal(overview.width, 1600);
+  assert.deepEqual(overview.frames.slice(0, 2), [{ path: '0', name: 'Board' }, { path: '0.1.0', name: 'Search screen' }]);
+  assert.ok(overview.frames.length <= 120);
+  assert.ok(overview.frames.every((row) => row.name !== 'Frame' && row.name !== 'Control'));
+  assert.match(tool.output.render({ content }, overview)[0].text, /0\.1\.0 "Search screen"/);
+  const crop = await tool.execute({ content, path: overview.frames[1].path }, exec);
+  assert.deepEqual([crop.name, crop.width, crop.height, crop.scale], ['Search screen', 320, 150, 1]);
+  assert.ok(!Object.hasOwn(crop, 'frames'));
+  assert.equal((await service.list(target, {})).total, 0);
 });
 
 test('FEAT-007 AC-084: a wide first section does not hide other screens in the outline', async () => {

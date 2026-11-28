@@ -1065,7 +1065,7 @@ export function createPreviewTool(host: ToolHost, services: PreviewServices): To
     description: [
       'Render design content and return the image beside the result, so you can check the visual result yourself: layout, spacing, alignment, contrast, clipping, and that every requested state exists.',
       'Pass the complete content and no id to check a draft before its first save; that writes no version. Pass an id and optionally a version to render a saved design.',
-      'Use the whole-board preview for orientation. Pass path from the artifact_read outline to review one screen at a time. Oversized previews are marked as downscaled.',
+      'Use the whole-board preview for orientation. Draft overviews list named frame paths. Use a listed path with the same complete draft to review a frame, or get paths for saved designs from artifact_read with outline: true.',
       'The calling model route must accept image input; the tool refuses on routes that cannot see images.',
     ].join('\n'),
     parameters: {
@@ -1075,7 +1075,7 @@ export function createPreviewTool(host: ToolHost, services: PreviewServices): To
         id: { type: 'string', description: 'Design artifact id. Omit when checking unsaved content.' },
         version: { type: 'integer', minimum: 1, description: 'Saved version to render. Omit for the current version.' },
         content: { type: 'string', description: 'Complete Design JSX to render without saving, for a draft check. Takes precedence over id.' },
-        path: { type: 'string', description: 'Dotted layer path from the artifact_read outline, to render one frame, component, or layer instead of the whole design. Works with a saved id or unsaved content.' },
+        path: { type: 'string', description: 'Dotted path from the draft overview or saved outline. Render one layer instead of the whole design.' },
         workspaceId: WORKSPACE_PARAM,
       },
     },
@@ -1093,6 +1093,16 @@ export function createPreviewTool(host: ToolHost, services: PreviewServices): To
           height: { type: 'integer' },
           scale: { type: 'number', description: 'Image scale relative to the source. One means full size.' },
           warnings: { type: 'array', items: { type: 'string' } },
+          frames: {
+            type: 'array',
+            description: 'Named frames from the bounded outline. Only present on whole draft previews.',
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['path', 'name'],
+              properties: { path: { type: 'string' }, name: { type: 'string' } },
+            },
+          },
           image: {
             type: 'object',
             additionalProperties: false,
@@ -1111,6 +1121,7 @@ export function createPreviewTool(host: ToolHost, services: PreviewServices): To
         const fields = record(value);
         const image = record(fields.image ?? null);
         const warnings = Array.isArray(fields.warnings) ? fields.warnings.map(String) : [];
+        const frames = Array.isArray(fields.frames) ? fields.frames.map(record) : [];
         const version = fields.version;
         const label = version === undefined ? 'unsaved draft' : 'version ' + String(version);
         const name = typeof fields.name === 'string' ? fields.name : undefined;
@@ -1120,7 +1131,7 @@ export function createPreviewTool(host: ToolHost, services: PreviewServices): To
         if (typeof fields.scale === 'number' && fields.scale < 1) {
           if (name === undefined) {
             scaleNote = version === undefined
-              ? ' This is a downscaled overview. Pass the complete draft and a frame path, or preview one frame on its own if it compiles separately.'
+              ? ' This is a downscaled overview. Use the complete draft and a frame path for readable detail.'
               : ' This is a downscaled overview. Get frame paths from artifact_read with outline: true, then preview one frame at a time with path.';
           } else {
             scaleNote = version === undefined
@@ -1128,9 +1139,11 @@ export function createPreviewTool(host: ToolHost, services: PreviewServices): To
               : ' This layer is downscaled. Export it to PNG with the same path for full-size review.';
           }
         }
+        const frameLines = frames.length === 0 ? '' : '\nNamed frames, pass a path with the same complete draft:\n'
+          + frames.map((frame) => `- ${String(frame.path)} ${JSON.stringify(frame.name)}`).join('\n');
         const warningLines = warnings.length === 0 ? '' : '\nWarnings:\n' + warnings.map((item) => '- ' + item).join('\n');
         return [
-          { type: 'text', text: head + scaleNote + warningLines },
+          { type: 'text', text: head + scaleNote + frameLines + warningLines },
           {
             type: 'image',
             attachment: {
@@ -1175,6 +1188,16 @@ export function createPreviewTool(host: ToolHost, services: PreviewServices): To
       ]);
       const ref = refs[0];
       if (ref === undefined) throw new ArtifactError('artifact/design-render-failed', 'The preview image was not stored.');
+      const frames: { path: string; name: string }[] = [];
+      if (content !== undefined && path === undefined) {
+        const queue = [...(preview.info.outline ?? [])];
+        for (const row of queue) {
+          if (row.children !== undefined) queue.push(...row.children);
+          if (row.type === 'FRAME' && row.name !== 'Frame' && row.name.trim() !== '') {
+            frames.push({ path: row.path, name: row.name });
+          }
+        }
+      }
       return {
         ...(content !== undefined || id === undefined ? {} : { id }),
         ...(version === undefined ? {} : { version }),
@@ -1184,6 +1207,7 @@ export function createPreviewTool(host: ToolHost, services: PreviewServices): To
         height: preview.height,
         scale: preview.scale,
         warnings: preview.info.warnings,
+        ...(content !== undefined && path === undefined ? { frames } : {}),
         image: { attachmentId: ref.attachmentId, mediaType: ref.mediaType, bytes: ref.bytes, width: ref.width, height: ref.height },
       };
     },

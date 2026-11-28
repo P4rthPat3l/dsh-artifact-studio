@@ -121,32 +121,32 @@ Call this artifact a mockup when you talk to the user. The tools still take type
 - Effects: \`shadow="0 4 8 #00000033"\` takes a CSS shadow list, \`blur={4}\` blurs the layer, and \`effects={[dropShadow({ x: 0, y: 4, radius: 8, color: '#00000055' })]}\` stacks structured effects such as \`innerShadow\` and \`backgroundBlur\`.
 - Put a background on the outer \`Frame\`; the preview crops transparent space around the content.
 - Example: \`<Frame w={720} p={40} bg="#ffffff" flex="col" gap={12}><Text size={40} weight={700} color="#16181d">Title</Text><Text size={16} color="#5b6170">One line of context.</Text></Frame>\`
-- Icons: \`<Icon name="mdi:home" size={24} color="#1b1712" />\`. Only the \`mdi:\` set is bundled. Common names: \`home\`, \`search\`, \`user\`, \`heart\`, \`star\`, \`check\`, \`close\`, \`plus\`, \`arrow-right\`, \`settings\`, \`bell\`, \`calendar\`, \`mail\`, \`image\`, \`file\`, \`folder\`, \`trash\`, \`edit\`, \`download\`, \`lock\`, \`eye\`, \`cart\`, \`chart-bar\`, \`alert\`, \`clock\`, \`map-marker\`, \`menu\`, \`chevron-right\`. An unknown set or name refuses the save. Icons draw as vectors and keep their 24 unit box.
+- Icons: \`<Icon name="mdi:home" size={24} color="#1b1712" />\`. Only the \`mdi:\` set is bundled. Canonical names include: \`home\`, \`magnify\`, \`account\`, \`heart\`, \`star\`, \`check\`, \`close\`, \`plus\`, \`arrow-right\`, \`cog\`, \`bell\`, \`calendar\`, \`email\`, \`image\`, \`file\`, \`folder\`, \`delete\`, \`pencil\`, \`download\`, \`lock\`, \`eye\`, \`cart\`, \`chart-bar\`, \`alert\`, \`clock\`, \`map-marker\`, \`menu\`, \`chevron-right\`. An unknown set or name refuses the save. Icons draw as vectors and keep their 24 unit box.
 - Mockup text draws in Inter, Roboto, or Noto Naskh Arabic, which ship with the package. Any other family, including this design system's CSS stack or a product font such as Georgia, is drawn in Inter and returns a warning, so set \`font="Inter"\` when you mean it.
 - A design has no network and no external images. Use solid and gradient fills, shapes, and text. Image fills do not exist here.
 - Design JSX here cannot create variables (designVar references only variables a .fig import already carries, so use literal colors), cannot author component properties (property() and ref() are unavailable), and stores one page per design. Reka behaviour controls such as Switch and Tabs render as static states in the panel; there is no live behaviour preview.
 - The stored artifact is the JSX source. Send the complete source as \`content\` when you update a design. The host compiles and validates before saving, so a compile error refuses the write and returns the compiler message.
 - The renderer reports a warning when it ignores a prop or a helper option that would change what you drew, such as \`margin\` on a frame. Those warnings travel with the design summary; fix the ones that apply to your change.
 - For a one-layer change on a large design, use artifact_patch instead of resending the whole source: read with outline: true for layer paths, then send the complete JSX of that one element as patch with its targetPath. A design holding component instances is refused; send the full source through artifact_update instead.
-- Before saving, call artifact_preview with the complete \`content\` and no \`id\`. If the draft is in a file, read it directly with \`fs.readFile(path, "utf8")\` in run_code rather than rebuilding it from a text reader that may truncate. Confirm the preview says "unsaved draft". If you get a saved preview or an error, the draft remains unchecked. After saving once, preview the saved id and version.
-- A downscaled board preview shows the overall layout only. Review each named screen at readable size with a dotted \`path\` from artifact_read with \`outline: true\`. For a draft, pass the frame path with the complete source, or preview the frame source on its own if it compiles separately. For a saved layer that still downscales, export it as PNG with the same path.
+- Before saving, call artifact_preview with the complete \`content\` and no id or path. If the draft is in a file, read it directly with \`fs.readFile(path, "utf8")\` in run_code rather than rebuilding it from a text reader that may truncate. Confirm the preview says "unsaved draft".
+- Use the draft overview for composition. It lists named frame paths. Pass a listed path with the same complete content to check a frame at readable size. Call a preview full-size only if it reports scale: 1. For saved designs, call artifact_read with outline: true for paths. If a saved crop still downscales, export that path as PNG.
 - Export is PNG, SVG, \`.fig\`, a self-contained HTML viewer, or a smaller HTML/SVG viewer with selectable text. A \`.fig\` opens in OpenPencil or Figma. If the user supplies a \`.fig\` file, use artifact_import instead of recreating it from a description.
 
 ## Common alignment patterns
 
-**Component comparison.** Give both wrappers the same width, height, and inset. Use the same caption gap on both sides. Size the linked instance to the inner box instead of relying on fill sizing.
+**Component comparison.** Give both wrappers the same width, height, and inset. Use the same caption gap on both sides. Size the linked instance to the inner box instead of relying on fill sizing. Keep definitions and instances in the same draft: the example below lists \`0.1\` for "Linked example". Preview that path with the complete example, not the frame on its own.
 
 \`\`\`jsx
 <Frame w={352} p={16} bg="#FFFFFF" flex="row" items="start" gap={16}>
   <Frame w={152} flex="col" gap={8}>
     <Frame w="fill" h={56} bg="#F4F6F8" p={8} flex="col">
       <Component name="Berth row" w={136} h={40} bg="#FFFFFF" p={8} flex="col" justify="center">
-        <Text size={13}>MV Nordstrand</Text>
+        <Frame flex="row" items="center" gap={4}><Icon name="mdi:magnify" size={12} color="#1B1712" /><Text size={13}>MV Nordstrand</Text></Frame>
       </Component>
     </Frame>
     <Text size={12}>Main component</Text>
   </Frame>
-  <Frame w={152} flex="col" gap={8}>
+  <Frame name="Linked example" w={152} flex="col" gap={8}>
     <Frame w="fill" h={56} bg="#F4F6F8">
       <Instance of="Berth row" x={8} y={8} w={136} h={40} />
     </Frame>
@@ -183,6 +183,26 @@ Call this artifact a mockup when you talk to the user. The tools still take type
 </Frame>
 \`\`\`
 
+**Dashboard cards.** Use a row with \`items="start"\` so a shorter card can hug its content beside a fixed-height chart card. Give the plot its own height. In the fixed card, \`justify="between"\` pushes the footer to the bottom inset without an empty spacer.
+
+\`\`\`jsx
+<Frame w={368} p={12} bg="#F4F6F8" flex="row" items="start" gap={12}>
+  <Frame name="Departures card" w={208} h={144} p={12} bg="#FFFFFF" flex="col" justify="between">
+    <Text size={14} weight={700}>Daily departures</Text>
+    <Frame name="Plot" w="fill" h={60} bg="#F4F6F8" flex="row" items="end" justify="center" gap={12}>
+      <Rectangle w={20} h={28} bg="#1F5C4D" />
+      <Rectangle w={20} h={44} bg="#1F5C4D" />
+      <Rectangle w={20} h={36} bg="#1F5C4D" />
+    </Frame>
+    <Text size={11}>Last 3 days</Text>
+  </Frame>
+  <Frame name="Notes card" w={124} p={12} bg="#FFFFFF" flex="col" gap={8}>
+    <Text size={14} weight={700}>Dock notes</Text>
+    <Text size={11} w="fill">Gate 2 opens at 08:00.</Text>
+  </Frame>
+</Frame>
+\`\`\`
+
 ### When a design write fails
 
 - A compile, icon, or validation error names a problem in your source. Fix the source and try again.
@@ -194,7 +214,8 @@ Call this artifact a mockup when you talk to the user. The tools still take type
 - Inspect the project's real screens, components, or supplied references before matching its UI. Establish the target device, frame dimensions, and main user task. Use one visual hierarchy with consistent spacing, typography, and repeated controls; do not copy the Artifact Studio editor into the mockup.
 - Draw each requested screen or flow step in a named frame. Include empty, selected, error, and other states only where they affect the task. Use realistic, supported copy and label illustrative data. Canvas controls are static representations, not working product actions.
 - Derive chart marks, labels, and totals from one dataset. Check repeated records across screens, including illustrative ones. A vessel should keep the same call ID.
-- Inspect a rendered preview when available. Check text wrapping, clipping, alignment, contrast, layer order, and consistency across frames. A successful compile and no warnings do not prove visual correctness or that every requested state exists. If a preview cannot be inspected, say that visual quality remains unverified.
+- For a large draft, preview a representative screen if you need to settle the visual direction. Assemble the board, review the distinct screens in batches, then fix the findings together. Check text fit, clipping, alignment, contrast, layer order, and requested states. No warnings does not prove visual correctness. Say which checks you could not make.
+- Save once and check its version and warnings. Preview the saved result only to answer a new visual question.
 - Before saving, compare repeated elements side by side in the full-size render. Check matching wrapper insets and caption baselines, control sizes and right edges, and the spacing between each metric and its qualifier. Check that any large gap before a pinned footer is intentional.
 - Read the layout warnings: a line height under the font size, a text that leaves its frame, two texts that stack in a frame without flex, and a linked instance overlapping its caption are geometry mistakes, and each warning names the layer. Fix them all in one update.
 - Mockups have no pinned generation snapshot. To change their appearance, restyle the Design JSX source explicitly; changing the shared tokens does not re-theme saved literal colors or fonts.`;
