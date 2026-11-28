@@ -1370,6 +1370,12 @@ Installed-tool smoke check: from an image-capable session, call `artifact_previe
 **When** the agent reads the outline
 **Then** it includes the other screen paths and never returns more than 120 rows
 
+### AC-085: The mockup brief teaches repeated alignment
+
+**Given** an agent requests the mockup brief
+**Then** it gets render-tested examples with aligned component captions, equal switch tracks on one right edge, and a single text node for a metric and its qualifier
+**And** the brief asks the agent to compare repeated elements at full size before saving
+
 ### Edge Cases
 
 | Case ID | Scenario | Expected behavior | Test type |

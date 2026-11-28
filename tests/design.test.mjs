@@ -336,6 +336,25 @@ test('FEAT-007 AC-012b: the starter and mockup brief teach flex layout, not dir'
   assert.ok(info.nodes >= 4);
 });
 
+test('FEAT-007 AC-085: mockup brief examples render aligned components, switches, and metrics', async () => {
+  const { service, target } = await fixture();
+  const { brief } = await service.brief(target, 'design', 'general');
+  const examples = [...brief.matchAll(/```jsx\n([\s\S]+?)\n```/g)].map(([, source]) => source);
+  assert.equal(examples.length, 3);
+  const renderer = new DesignRenderer();
+  const [pair, settings, metric] = await Promise.all(examples.map((source) => renderer.pageModel(source)));
+  const captions = pair.texts.filter(({ text }) => ['Main component', 'Linked instance'].includes(text));
+  assert.equal(captions.length, 2);
+  assert.equal(captions[0].matrix.f, captions[1].matrix.f);
+  const names = pair.texts.filter(({ text }) => text === 'MV Nordstrand');
+  assert.equal(names.length, 2);
+  assert.equal(names[0].matrix.f, names[1].matrix.f);
+  assert.equal((settings.svg.match(/translate\(224, 0\)"[\s\S]*?<rect width="36" height="20"/g) ?? []).length, 2);
+  const value = metric.texts.find(({ text }) => text === '14 of 18');
+  assert.ok(value, 'the number and qualifier render in one text node');
+  assert.deepEqual(value.runs.map(({ text, size }) => [text, size]), [['14', 28], [' of 18', 14]]);
+});
+
 test('FEAT-007 AC-013: list filters designs', async () => {
   const { service, target } = await fixture();
   await service.create(target, { type: 'page', title: 'Page', content: '<p>x</p>', source: agent });

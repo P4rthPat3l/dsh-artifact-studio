@@ -123,7 +123,6 @@ Call this artifact a mockup when you talk to the user. The tools still take type
 - Example: \`<Frame w={720} p={40} bg="#ffffff" flex="col" gap={12}><Text size={40} weight={700} color="#16181d">Title</Text><Text size={16} color="#5b6170">One line of context.</Text></Frame>\`
 - Icons: \`<Icon name="mdi:home" size={24} color="#1b1712" />\`. Only the \`mdi:\` set is bundled. Common names: \`home\`, \`search\`, \`user\`, \`heart\`, \`star\`, \`check\`, \`close\`, \`plus\`, \`arrow-right\`, \`settings\`, \`bell\`, \`calendar\`, \`mail\`, \`image\`, \`file\`, \`folder\`, \`trash\`, \`edit\`, \`download\`, \`lock\`, \`eye\`, \`cart\`, \`chart-bar\`, \`alert\`, \`clock\`, \`map-marker\`, \`menu\`, \`chevron-right\`. An unknown set or name refuses the save. Icons draw as vectors and keep their 24 unit box.
 - Mockup text draws in Inter, Roboto, or Noto Naskh Arabic, which ship with the package. Any other family, including this design system's CSS stack or a product font such as Georgia, is drawn in Inter and returns a warning, so set \`font="Inter"\` when you mean it.
-- In a padded wrapper with a caption below it, give the wrapper an explicit height and the linked instance a numeric width and inset. For a 198 by 58 wrapper with 5 px padding, use \`<Instance of="Berth row" x={5} y={5} w={188} />\`; \`w="fill"\` can leave the instance at its content width and let it overlap the caption.
 - A design has no network and no external images. Use solid and gradient fills, shapes, and text. Image fills do not exist here.
 - Design JSX here cannot create variables (designVar references only variables a .fig import already carries, so use literal colors), cannot author component properties (property() and ref() are unavailable), and stores one page per design. Reka behaviour controls such as Switch and Tabs render as static states in the panel; there is no live behaviour preview.
 - The stored artifact is the JSX source. Send the complete source as \`content\` when you update a design. The host compiles and validates before saving, so a compile error refuses the write and returns the compiler message.
@@ -132,6 +131,57 @@ Call this artifact a mockup when you talk to the user. The tools still take type
 - Before saving, call artifact_preview with the complete \`content\` and no \`id\`. If the draft is in a file, read it directly with \`fs.readFile(path, "utf8")\` in run_code rather than rebuilding it from a text reader that may truncate. Confirm the preview says "unsaved draft". If you get a saved preview or an error, the draft remains unchecked. After saving once, preview the saved id and version.
 - A downscaled board preview shows the overall layout only. Review each named screen at readable size with a dotted \`path\` from artifact_read with \`outline: true\`. For a draft, pass the frame path with the complete source, or preview the frame source on its own if it compiles separately. For a saved layer that still downscales, export it as PNG with the same path.
 - Export is PNG, SVG, \`.fig\`, a self-contained HTML viewer, or a smaller HTML/SVG viewer with selectable text. A \`.fig\` opens in OpenPencil or Figma. If the user supplies a \`.fig\` file, use artifact_import instead of recreating it from a description.
+
+## Common alignment patterns
+
+**Component comparison.** Give both wrappers the same width, height, and inset. Use the same caption gap on both sides. Size the linked instance to the inner box instead of relying on fill sizing.
+
+\`\`\`jsx
+<Frame w={352} p={16} bg="#FFFFFF" flex="row" items="start" gap={16}>
+  <Frame w={152} flex="col" gap={8}>
+    <Frame w="fill" h={56} bg="#F4F6F8" p={8} flex="col">
+      <Component name="Berth row" w={136} h={40} bg="#FFFFFF" p={8} flex="col" justify="center">
+        <Text size={13}>MV Nordstrand</Text>
+      </Component>
+    </Frame>
+    <Text size={12}>Main component</Text>
+  </Frame>
+  <Frame w={152} flex="col" gap={8}>
+    <Frame w="fill" h={56} bg="#F4F6F8">
+      <Instance of="Berth row" x={8} y={8} w={136} h={40} />
+    </Frame>
+    <Text size={12}>Linked instance</Text>
+  </Frame>
+</Frame>
+\`\`\`
+
+**Settings rows.** Keep labels in a flexible column and controls in a fixed column. Reuse the same track size and right inset across related rows, even inside a card. Let long labels wrap without moving the control column. On mobile, keep the touch target larger than the visible track.
+
+\`\`\`jsx
+<Frame w={300} p={16} bg="#FFFFFF" flex="col" gap={8}>
+  <Frame w="fill" flex="row" items="center" gap={12}>
+    <Text w="fill" size={13}>Stop the move</Text>
+    <Frame name="Stop switch" w={44} h={44} flex="row" items="center" justify="center">
+      <Frame w={36} h={20} rounded={10} bg="#1F5C4D" p={2} flex="row" justify="end"><Ellipse w={16} h={16} bg="#FFFFFF" /></Frame>
+    </Frame>
+  </Frame>
+  <Frame w="fill" flex="row" items="center" gap={12}>
+    <Text w="fill" size={13}>Notify the gate team</Text>
+    <Frame name="Notify switch" w={44} h={44} flex="row" items="center" justify="center">
+      <Frame w={36} h={20} rounded={10} bg="#6B7280" p={2} flex="row"><Ellipse w={16} h={16} bg="#FFFFFF" /></Frame>
+    </Frame>
+  </Frame>
+</Frame>
+\`\`\`
+
+**Metric and qualifier.** Keep the number and its denominator or unit in one text node. Use a smaller span for the qualifier so it stays next to the value and shares its baseline.
+
+\`\`\`jsx
+<Frame w={180} p={16} bg="#FFFFFF" flex="col" gap={6}>
+  <Text size={13}>At berth</Text>
+  <Text size={28} weight={700}>14<Span size={14} weight={400}> of 18</Span></Text>
+</Frame>
+\`\`\`
 
 ### When a design write fails
 
@@ -145,6 +195,7 @@ Call this artifact a mockup when you talk to the user. The tools still take type
 - Draw each requested screen or flow step in a named frame. Include empty, selected, error, and other states only where they affect the task. Use realistic, supported copy and label illustrative data. Canvas controls are static representations, not working product actions.
 - Derive chart marks, labels, and totals from one dataset. Check repeated records across screens, including illustrative ones. A vessel should keep the same call ID.
 - Inspect a rendered preview when available. Check text wrapping, clipping, alignment, contrast, layer order, and consistency across frames. A successful compile and no warnings do not prove visual correctness or that every requested state exists. If a preview cannot be inspected, say that visual quality remains unverified.
+- Before saving, compare repeated elements side by side in the full-size render. Check matching wrapper insets and caption baselines, control sizes and right edges, and the spacing between each metric and its qualifier. Check that any large gap before a pinned footer is intentional.
 - Read the layout warnings: a line height under the font size, a text that leaves its frame, two texts that stack in a frame without flex, and a linked instance overlapping its caption are geometry mistakes, and each warning names the layer. Fix them all in one update.
 - Mockups have no pinned generation snapshot. To change their appearance, restyle the Design JSX source explicitly; changing the shared tokens does not re-theme saved literal colors or fonts.`;
 
