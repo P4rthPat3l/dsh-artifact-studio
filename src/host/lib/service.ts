@@ -589,6 +589,26 @@ export class ArtifactService {
   }
 
   /**
+   * Render a design source that is not saved, so a draft can be checked before
+   * its first write. Nothing is stored: no version, no manifest, no cache.
+   * @param content the Design JSX source.
+   * @returns the preview.
+   */
+  async previewSource(content: string): Promise<PreviewResult> {
+    if (content.trim() === '') {
+      throw new ArtifactError('artifact/bad-request', 'A preview of unsaved content needs the Design JSX source.');
+    }
+    const rendered = await this.designs.preview(content, PREVIEW_MAX_SIDE);
+    return {
+      mediaType: 'image/png',
+      data: rendered.bytes.toString('base64'),
+      width: rendered.width,
+      height: rendered.height,
+      info: rendered.info,
+    };
+  }
+
+  /**
    * The cache location of a source's preview.
    * @param root the scope root.
    * @param id the artifact id.

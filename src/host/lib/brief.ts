@@ -111,22 +111,24 @@ Call this artifact a mockup when you talk to the user. The tools still take type
 
 - Elements: \`Frame\`, \`Text\`, \`Rectangle\`, \`Ellipse\`, \`Line\`, \`Star\`, \`Polygon\`, \`Vector\`, \`Group\`, \`Section\`.
 - Layout props: \`w\`, \`h\`, \`p\`, \`px\`, \`py\`, \`gap\`, \`flex\` (\`row\` or \`col\`), \`items\`, \`justify\`, \`bg\`, \`rounded\`, \`stroke\`, \`strokeWidth\`, \`opacity\`.
-- \`flex\` turns on auto layout; without it every child sits at the same origin. A frame with \`flex\` sizes itself to its children unless you give it \`w\` or \`h\`. \`w="fill"\` or \`h="fill"\` takes the space a layout parent offers, and \`dir="rtl"\` flips the flow direction inside a flex frame.
+- \`flex\` turns on auto layout; without it every child sits at the same origin. Padding alone also turns it on; \`gap\` alone does not, so a frame with \`gap\` and no \`flex\` stacks every child at one point. A frame with \`flex\` sizes itself to its children unless you give it \`w\` or \`h\`. \`w="fill"\` or \`h="fill"\` takes the space a layout parent offers, and \`dir="rtl"\` flips the flow direction inside a flex frame.
 - \`grid\` with \`columns\` or \`rows\` lays children on a grid, with tracks such as \`columns="repeat(3, 1fr)"\`, \`"auto"\`, or \`"minmax(120px, 1fr)"\`, and \`gap\` between them.
 - Text props: \`size\`, \`weight\`, \`color\`, \`font\`, \`lineHeight\`, \`letterSpacing\`, \`textAlign\`, \`maxLines\`.
+- \`lineHeight\` is a line height in pixels, not a CSS multiplier: for 16 px text use 24, or \`lineHeight="auto"\`. A value below the font size stacks the lines on top of each other.
+- A \`Text\` wraps only when it has a numeric \`w\` or \`w="fill"\` inside a flex parent. Without one it draws a single line that runs out of its box, so give every paragraph a width and leave short labels without one.
 - Inside \`Text\`, \`Paragraph\` writes one paragraph and \`Span\` styles part of one: \`<Text size={16}><Paragraph spacing={8}>Hello <Span weight="bold" color="#EE2222">world</Span></Paragraph><Paragraph list="ordered">First</Paragraph></Text>\`. A paragraph takes \`list="ordered"\` or \`list="unordered"\` with \`level\` 1 to 5.
 - \`bg\` and \`stroke\` take one color. For a gradient or several paints use \`fills={[linearGradient([['#3b82f6', 0], ['#8b5cf6', 1]])]}\`; \`radialGradient\`, \`angularGradient\`, and \`diamondGradient\` work the same way, and each stop is a color and a position from 0 to 1.
 - Effects: \`shadow="0 4 8 #00000033"\` takes a CSS shadow list, \`blur={4}\` blurs the layer, and \`effects={[dropShadow({ x: 0, y: 4, radius: 8, color: '#00000055' })]}\` stacks structured effects such as \`innerShadow\` and \`backgroundBlur\`.
 - Put a background on the outer \`Frame\`; the preview crops transparent space around the content.
 - Example: \`<Frame w={720} p={40} bg="#ffffff" flex="col" gap={12}><Text size={40} weight={700} color="#16181d">Title</Text><Text size={16} color="#5b6170">One line of context.</Text></Frame>\`
 - Icons: \`<Icon name="mdi:home" size={24} color="#1b1712" />\`. Only the \`mdi:\` set is bundled. Common names: \`home\`, \`search\`, \`user\`, \`heart\`, \`star\`, \`check\`, \`close\`, \`plus\`, \`arrow-right\`, \`settings\`, \`bell\`, \`calendar\`, \`mail\`, \`image\`, \`file\`, \`folder\`, \`trash\`, \`edit\`, \`download\`, \`lock\`, \`eye\`, \`cart\`, \`chart-bar\`, \`alert\`, \`clock\`, \`map-marker\`, \`menu\`, \`chevron-right\`. An unknown set or name refuses the save. Icons draw as vectors and keep their 24 unit box.
-- Text uses Inter, Roboto, or Noto Naskh Arabic, which ship with the package. Any other family substitutes a default face and returns a warning.
+- Mockup text draws in Inter, Roboto, or Noto Naskh Arabic, which ship with the package. Any other family, including this design system's CSS stack or a product font such as Georgia, is drawn in Inter and returns a warning, so set \`font="Inter"\` when you mean it.
 - A design has no network and no external images. Use solid and gradient fills, shapes, and text. Image fills do not exist here.
 - Design JSX here cannot create variables (designVar references only variables a .fig import already carries, so use literal colors), cannot author component properties (property() and ref() are unavailable), and stores one page per design. Reka behaviour controls such as Switch and Tabs render as static states in the panel; there is no live behaviour preview.
 - The stored artifact is the JSX source. Send the complete source as \`content\` when you update a design. The host compiles and validates before saving, so a compile error refuses the write and returns the compiler message.
 - The renderer reports a warning when it ignores a prop or a helper option that would change what you drew, such as \`margin\` on a frame. Those warnings travel with the design summary; fix the ones that apply to your change.
 - For a one-layer change on a large design, use artifact_patch instead of resending the whole source: read with outline: true for layer paths, then send the complete JSX of that one element as patch with its targetPath. A design holding component instances is refused; send the full source through artifact_update instead.
-- Call artifact_preview after saving a design. The render arrives beside the result, so check layout, spacing, alignment, and text fit yourself instead of assuming the compile is correct.
+- Check a draft before it is saved: call artifact_preview with the complete \`content\` and no \`id\`. It renders without writing a version, so fix what the render shows and save once. After a save, call it again with the id and version. The render arrives beside the result, so check layout, spacing, alignment, and text fit yourself instead of assuming the compile is correct.
 - Export is PNG, SVG, \`.fig\`, a self-contained HTML viewer, or a smaller HTML/SVG viewer with selectable text. A \`.fig\` opens in OpenPencil or Figma. If the user supplies a \`.fig\` file, use artifact_import instead of recreating it from a description.
 
 ### When a design write fails
@@ -140,6 +142,7 @@ Call this artifact a mockup when you talk to the user. The tools still take type
 - Inspect the project's real screens, components, or supplied references before matching its UI. Establish the target device, frame dimensions, and main user task. Use one visual hierarchy with consistent spacing, typography, and repeated controls; do not copy the Artifact Studio editor into the mockup.
 - Draw each requested screen or flow step in a named frame. Include empty, selected, error, and other states only where they affect the task. Use realistic, supported copy and label illustrative data. Canvas controls are static representations, not working product actions.
 - Inspect a rendered preview when available. Check text wrapping, clipping, alignment, contrast, layer order, and consistency across frames. A successful compile and no warnings do not prove visual correctness or that every requested state exists. If a preview cannot be inspected, say that visual quality remains unverified.
+- Read the layout warnings: a line height under the font size, a text that leaves its frame, and two texts that stack in a frame without flex are geometry mistakes, and each warning names the layer. Fix them all in one update.
 - Mockups have no pinned generation snapshot. To change their appearance, restyle the Design JSX source explicitly; changing the shared tokens does not re-theme saved literal colors or fonts.`;
 
 /** The layers in force, narrowest first, as the brief prints them. */
@@ -198,7 +201,7 @@ function tokensText(tokens: DesignTokens, source: TokenSource, type: ArtifactTyp
   const lines = ['## Design system: ' + tokens.name + ', source ' + source];
   if (tokens.notes.trim() !== '') lines.push('', 'Notes: ' + tokens.notes.trim());
   if (type === 'design') {
-    lines.push('', 'A mockup has no CSS variables. Use these values as literal colors and fonts, unless the mockup recreates a product with its own look.');
+    lines.push('', 'A mockup has no CSS variables. Use these values as literal colors, unless the mockup recreates a product with its own look. Mockup text draws only in Inter, Roboto, or Noto Naskh Arabic, which ship with the package; the font stack above is for pages.');
     lines.push('Light: ' + COLOR_ROLES.map((role) => role + ' ' + tokens.colors[role]).join(', ') + '.');
     lines.push('Dark: ' + COLOR_ROLES.map((role) => role + ' ' + tokens.colorsDark[role]).join(', ') + '.');
     lines.push('Fonts: body ' + tokens.typography.fontFamily + '; headings ' + tokens.typography.displayFamily + '; code ' + tokens.typography.monoFamily + '.');

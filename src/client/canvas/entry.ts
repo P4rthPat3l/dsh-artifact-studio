@@ -9,6 +9,7 @@ import { SceneGraph } from '@open-pencil/scene-graph';
 import type { SceneNode } from '@open-pencil/scene-graph';
 import { selectionToJSX } from '@open-pencil/design-jsx';
 import { CanvasRoot, LayerTreeRoot, provideEditor } from '@open-pencil/vue';
+import { aliasUnbundledFamilies } from '../../fonts.js';
 import { bundledIconProvider } from '../../icon-set.js';
 import { createCanvasBridge } from './bridge.js';
 import type { SelectionMode } from './bridge.js';
@@ -243,6 +244,17 @@ async function loadExtraFonts(): Promise<void> {
 }
 
 /**
+ * Read one bundled Inter face, used to draw a family the package does not ship.
+ * @param file the file name under fonts/.
+ * @returns the bytes.
+ */
+async function readInterFace(file: string): Promise<ArrayBuffer> {
+  const response = await fetch(assetUrl('fonts/' + file));
+  if (!response.ok) throw new Error('The bundled font ' + file + ' is missing.');
+  return response.arrayBuffer();
+}
+
+/**
  * Compile a source into a graph whose first page holds the top-level elements.
  * @param source the Design JSX source.
  * @returns the graph and page.
@@ -299,6 +311,7 @@ export async function mountDesignCanvas(options: DesignCanvasOptions): Promise<D
   fontManager.setBundledFontLocator((file) => assetUrl('fonts/' + file));
   await loadExtraFonts();
   let compiled = await compile(options.source);
+  await aliasUnbundledFamilies(compiled.graph, compiled.page, readInterFace);
 
   const editor: Editor = createEditor({
     graph: compiled.graph,
@@ -434,6 +447,7 @@ export async function mountDesignCanvas(options: DesignCanvasOptions): Promise<D
       void (async () => {
         try {
           const next = await compile(source);
+          await aliasUnbundledFamilies(next.graph, next.page, readInterFace);
           if (destroyed) return;
           compiled = next;
           lastEmitted = source;

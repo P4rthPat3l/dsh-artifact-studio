@@ -325,6 +325,8 @@ test('FEAT-007 AC-012b: the starter and mockup brief teach flex layout, not dir'
   assert.match(starter, /flex="col"/);
   assert.doesNotMatch(starter, /dir="/);
   assert.match(brief, /`flex` turns on auto layout/);
+  assert.match(brief, /`lineHeight` is a line height in pixels/);
+  assert.match(brief, /wraps only when it has a numeric/);
   const example = brief.split('- Example: `')[1].split('`')[0];
   assert.ok((await new DesignRenderer().inspect(example)).nodes >= 3, 'brief example compiles');
   const renderer = new DesignRenderer();
@@ -496,6 +498,79 @@ test('FEAT-007 AC-077: the preview tool returns the render beside the result and
     textOnly.execute({ id: created.id }, exec),
     (error) => error.code === 'artifact/preview-invisible' && /cannot see a preview/.test(error.message),
   );
+});
+
+test('FEAT-007 AC-078: layout problems are warned, never refused', async () => {
+  const { service, target } = await fixture();
+  const card = (inner) => '<Frame name="Card" w={280} p={16} flex="col" gap={8} bg="#ffffff">' + inner + '</Frame>';
+  const tight = await service.create(target, {
+    type: 'design',
+    title: 'Line height',
+    content: card('<Text size={18} color="#111111" lineHeight={1.4}>A paragraph that wraps inside the card.</Text>'),
+    source: agent,
+  });
+  const tightInfo = (await service.read(target, tight.id)).designInfo;
+  assert.ok(tightInfo.warnings.some((warning) => /lineHeight 1\.4/.test(warning)), JSON.stringify(tightInfo.warnings));
+
+  const stacked = await service.create(target, {
+    type: 'design',
+    title: 'Stacked',
+    content: '<Frame name="Row" w={240} gap={8} bg="#ffffff"><Text size={16} color="#111111">Alpha</Text><Text size={16} color="#111111">Beta</Text></Frame>',
+    source: agent,
+  });
+  const stackedInfo = (await service.read(target, stacked.id)).designInfo;
+  assert.ok(stackedInfo.warnings.some((warning) => /overlaps/.test(warning)), JSON.stringify(stackedInfo.warnings));
+
+  const narrow = await service.create(target, {
+    type: 'design',
+    title: 'Narrow',
+    content: '<Frame name="Narrow" w={160} p={16} flex="col" bg="#ffffff"><Text size={16} color="#111111">Self-contained HTML that renders in a sandbox, exported as HTML.</Text></Frame>',
+    source: agent,
+  });
+  const narrowInfo = (await service.read(target, narrow.id)).designInfo;
+  assert.ok(narrowInfo.warnings.some((warning) => /leaves its frame/.test(warning)), JSON.stringify(narrowInfo.warnings));
+});
+
+test('FEAT-007 AC-079: a family the package does not ship draws in Inter', async () => {
+  const { service, target } = await fixture();
+  const card = (family) => '<Frame w={320} h={80} bg="#ffffff"><Text font="' + family + '" size={32} color="#111111">Quarterly</Text></Frame>';
+  const georgia = await service.create(target, { type: 'design', title: 'Georgia', content: card('Georgia'), source: agent });
+  const inter = await service.create(target, { type: 'design', title: 'Inter', content: card('Inter'), source: agent });
+  const georgiaPreview = await service.preview(target, georgia.id);
+  const interPreview = await service.preview(target, inter.id);
+  assert.ok(
+    Buffer.from(georgiaPreview.data, 'base64').equals(Buffer.from(interPreview.data, 'base64')),
+    'the unbundled family did not draw in Inter',
+  );
+  assert.ok(
+    georgiaPreview.info.warnings.some((warning) => /Georgia/.test(warning) && /Inter/.test(warning)),
+    JSON.stringify(georgiaPreview.info.warnings),
+  );
+});
+
+test('FEAT-007 AC-080: the preview tool renders unsaved content without writing', async () => {
+  const { home, service } = await fixture();
+  const saved = [];
+  const attachments = {
+    saveImages: async (inputs) => {
+      saved.push(...inputs);
+      return inputs.map(() => ({ attachmentId: 'att-draft', mediaType: 'image/png', bytes: 10, width: 120, height: 40 }));
+    },
+  };
+  const host = { service, registry, workingDirectory: { ensure: async () => path.join(base, 'project-a') } };
+  const exec = { agent: { id: 'ses-a', session: { requestHeader: () => ({ config: { provider: 'p', model: 'glm' } }) } }, signal: new AbortController().signal };
+  const tool = createPreviewTool(host, { attachments, llm: { resolveModelInfo: async () => ({ inputModalities: ['image'] }) } });
+  const value = await tool.execute(
+    { content: '<Frame w={120} h={40} bg="#ffffff"><Text size={14} color="#111111">Draft</Text></Frame>', id: 'art_missing' },
+    exec,
+  );
+  assert.equal(value.id, undefined, 'a draft preview names no artifact');
+  assert.ok(value.width > 0);
+  assert.equal(saved.length, 1, 'the draft render was stored once');
+  const workspace = path.join(home, WORKSPACE_BASE, 'ws-a');
+  const names = await fs.readdir(workspace).catch(() => []);
+  assert.deepEqual(names.filter((name) => name.startsWith('art_')), [], 'a draft preview wrote an artifact');
+  await assert.rejects(tool.execute({}, exec), (error) => error.code === 'artifact/bad-request');
 });
 
 test('FEAT-007 AC-037: bundled icons compile to vectors and render', async () => {

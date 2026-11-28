@@ -1,4 +1,4 @@
-import type { Manifest, Scope } from '../../contract.js';
+import type { Manifest, PreviewResult, Scope } from '../../contract.js';
 import type { SheetWorkbook } from '../../sheet/index.js';
 import { checkPage } from './checks.js';
 import { SheetError, applySheetOperations, checkSheetWorkbook, evaluateWorkbook, parseSheetWorkbook, serializeSheetWorkbook, sheetOverview, sheetValues } from '../../sheet/index.js';
@@ -1062,16 +1062,17 @@ export function createPreviewTool(host: ToolHost, services: PreviewServices): To
   return {
     name: 'artifact_preview',
     description: [
-      'Render a design artifact and return the image beside the result, so you can check the visual result yourself: layout, spacing, alignment, contrast, clipping, and that every requested state exists. Call it after creating or updating a design, and again after fixing warnings.',
+      'Render design content and return the image beside the result, so you can check the visual result yourself: layout, spacing, alignment, contrast, clipping, and that every requested state exists.',
+      'Pass the complete content and no id to check a draft before its first save; that writes no version. Pass an id and optionally a version to render a saved design.',
       'The calling model route must accept image input; the tool refuses on routes that cannot see images.',
     ].join('\n'),
     parameters: {
       type: 'object',
       additionalProperties: false,
-      required: ['id'],
       properties: {
-        id: { type: 'string', description: 'Design artifact id.' },
+        id: { type: 'string', description: 'Design artifact id. Omit when checking unsaved content.' },
         version: { type: 'integer', minimum: 1, description: 'Saved version to render. Omit for the current version.' },
+        content: { type: 'string', description: 'Complete Design JSX to render without saving, for a draft check. Takes precedence over id.' },
         workspaceId: WORKSPACE_PARAM,
       },
     },
@@ -1079,7 +1080,7 @@ export function createPreviewTool(host: ToolHost, services: PreviewServices): To
       schema: {
         type: 'object',
         additionalProperties: false,
-        required: ['id', 'title', 'version', 'width', 'height', 'image'],
+        required: ['title', 'width', 'height', 'image'],
         properties: {
           id: { type: 'string' },
           title: { type: 'string' },
@@ -1105,7 +1106,9 @@ export function createPreviewTool(host: ToolHost, services: PreviewServices): To
         const fields = record(value);
         const image = record(fields.image ?? null);
         const warnings = Array.isArray(fields.warnings) ? fields.warnings.map(String) : [];
-        const head = `Preview of ${String(fields.title)} (version ${String(fields.version)}): ${String(image.width)}x${String(image.height)} px. The image rides beside this text; check layout, spacing, alignment, and text fit against what the user asked for.`;
+        const version = fields.version;
+        const label = version === undefined ? 'unsaved draft' : 'version ' + String(version);
+        const head = `Preview of ${String(fields.title)} (${label}): ${String(image.width)}x${String(image.height)} px. The image rides beside this text; check layout, spacing, alignment, and text fit against what the user asked for.`;
         const warningLines = warnings.length === 0 ? '' : '\nWarnings:\n' + warnings.map((item) => '- ' + item).join('\n');
         return [
           { type: 'text', text: head + warningLines },
@@ -1124,21 +1127,34 @@ export function createPreviewTool(host: ToolHost, services: PreviewServices): To
     },
     async execute(args, exec) {
       const fields = fieldsOf(args);
-      const id = requiredString(fields, 'id');
-      const target = await targetFor(host, exec, id.startsWith('art_lib_') ? 'library' : undefined, optionalString(fields, 'workspaceId'));
+      const content = optionalString(fields, 'content');
+      const id = optionalString(fields, 'id');
+      if (content === undefined && id === undefined) {
+        throw new ArtifactError('artifact/bad-request', 'Pass the design id to preview a saved design, or the complete content to preview a draft.');
+      }
       await assertImageVisible(exec, services);
-      const manifest = await service.store.manifest(await service.root(target, id), id);
-      const version = optionalInteger(fields, 'version') ?? manifest.version;
-      const preview = await service.preview(target, id, version);
+      let title: string;
+      let version: number | undefined;
+      let preview: PreviewResult;
+      if (content !== undefined) {
+        title = 'Draft mockup';
+        preview = await service.previewSource(content);
+      } else {
+        const target = await targetFor(host, exec, String(id).startsWith('art_lib_') ? 'library' : undefined, optionalString(fields, 'workspaceId'));
+        const manifest = await service.store.manifest(await service.root(target, String(id)), String(id));
+        version = optionalInteger(fields, 'version') ?? manifest.version;
+        title = manifest.title;
+        preview = await service.preview(target, String(id), version);
+      }
       const refs = await services.attachments.saveImages([
         { data: Buffer.from(preview.data, 'base64'), mediaType: 'image/png', name: String(preview.info.nodes) + '-node design preview' },
       ]);
       const ref = refs[0];
       if (ref === undefined) throw new ArtifactError('artifact/design-render-failed', 'The preview image was not stored.');
       return {
-        id,
-        title: manifest.title,
-        version,
+        ...(content !== undefined || id === undefined ? {} : { id }),
+        ...(version === undefined ? {} : { version }),
+        title,
         width: preview.width,
         height: preview.height,
         warnings: preview.info.warnings,

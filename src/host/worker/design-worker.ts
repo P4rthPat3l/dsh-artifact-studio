@@ -11,12 +11,10 @@ import { exportFigFile, parseFigFile } from '@open-pencil/core/io/formats/fig';
 import { selectionToJSX } from '@open-pencil/design-jsx';
 import { layoutAuthoredNodes } from '@open-pencil/core/layout';
 import type { DesignInfo, DesignOutlineRow } from '../../contract.js';
+import { BUNDLED_FAMILIES, aliasUnbundledFamilies } from '../../fonts.js';
 import { bundledIconProvider } from '../../icon-set.js';
 import { buildPageModel } from './page-model.js';
 import type { WorkerRequest, WorkerResponse } from './protocol.js';
-
-/** Fonts that ship with the package; any other family is substituted. */
-const BUNDLED_FONTS: ReadonlySet<string> = new Set(['Inter', 'Noto Naskh Arabic', 'Roboto']);
 
 /** The Roboto faces the package ships, by style. */
 const EXTRA_FONTS: ReadonlyArray<readonly [string, string]> = [
@@ -36,6 +34,16 @@ async function loadExtraFonts(): Promise<void> {
     copy.set(bytes);
     fontManager.markLoaded('Roboto', style, copy.buffer);
   }
+}
+
+/**
+ * Read one bundled Inter face, used to draw a family the package does not ship.
+ * @param file the file name under assets/fonts.
+ * @returns the bytes.
+ */
+async function readBundledFace(file: string): Promise<ArrayBuffer> {
+  const bytes = await fs.readFile(new URL('../../../assets/fonts/' + file, import.meta.url));
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
 }
 
 /** The bundled Material Design Icons set, read on the first icon. */
@@ -198,7 +206,8 @@ function lintWarnings(graph: SceneGraph): string[] {
 
 /**
  * Count the design's nodes, record its types and fonts, and warn about
- * families the engine cannot load, ignored authoring options, and lint issues.
+ * families the engine cannot load, ignored authoring options, lint issues, and
+ * layout the engine does not lint.
  * @param graph the graph.
  * @param page the page node.
  * @param renderWarnings the renderer's own warnings about the source.
@@ -215,15 +224,20 @@ function summarize(graph: SceneGraph, page: SceneNode, renderWarnings: readonly 
   }
   const sorted = [...fonts].sort();
   const warnings = sorted
-    .filter((family) => !BUNDLED_FONTS.has(family))
-    .map((family) => `Font "${family}" is not bundled. The preview substitutes a default face.`);
+    .filter((family) => !BUNDLED_FAMILIES.has(family))
+    .map((family) => `Font "${family}" is not bundled; the mockup draws it in Inter. Use Inter, Roboto, or Noto Naskh Arabic for the face you want.`);
   return {
     pages: graph.getPages().length,
     nodes: nodes.length,
     types,
     fonts: sorted,
     outline: outlineOf(graph, page),
-    warnings: [...warnings, ...capWarnings(renderWarnings, 'render warnings'), ...lintWarnings(graph)],
+    warnings: [
+      ...warnings,
+      ...capWarnings(renderWarnings, 'render warnings'),
+      ...lintWarnings(graph),
+      ...capWarnings(layoutWarnings(graph, page), 'layout issues'),
+    ],
   };
 }
 
@@ -354,6 +368,101 @@ async function handlePatch(source: string, request: WorkerRequest): Promise<Work
   return { ok: true, info, source: next };
 }
 
+/** A box in page coordinates. */
+interface PageBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/**
+ * A text layer's opening words, for a warning that has to name the layer.
+ * @param node the text node.
+ * @returns the label.
+ */
+function textLabel(node: SceneNode): string {
+  const text = String(node.text ?? '').replace(/\s+/g, ' ').trim();
+  if (text === '') return '(empty)';
+  return text.length > 40 ? text.slice(0, 40) + '...' : text;
+}
+
+/**
+ * What the layout gets wrong: a line height under the font size, text outside
+ * its frame, and two texts that share an origin because their frame has no flex.
+ * The engine lints contrast but not geometry, and these are the mistakes a
+ * mockup shows first, so the summary names them before the render.
+ * @param graph the graph.
+ * @param page the page node.
+ * @returns the warnings.
+ */
+function layoutWarnings(graph: SceneGraph, page: SceneNode): string[] {
+  const messages: string[] = [];
+  const boxes = new Map<string, PageBox>();
+  const boxOf = (node: SceneNode): PageBox => {
+    const cached = boxes.get(node.id);
+    if (cached !== undefined) return cached;
+    let x = node.x;
+    let y = node.y;
+    let parentId = node.parentId;
+    while (parentId !== null && parentId !== page.id) {
+      const parent = graph.getNode(parentId);
+      if (parent === undefined) break;
+      x += parent.x;
+      y += parent.y;
+      parentId = parent.parentId;
+    }
+    const box = { x, y, w: node.width, h: node.height };
+    boxes.set(node.id, box);
+    return box;
+  };
+  const siblings = new Map<string, SceneNode[]>();
+  for (const node of descendants(graph, page)) {
+    if (node.type !== 'TEXT' || node.visible === false) continue;
+    const lineHeight = node.lineHeight ?? 0;
+    if (lineHeight > 0 && lineHeight < node.fontSize) {
+      messages.push(
+        `Text "${textLabel(node)}" sets lineHeight ${String(Number(lineHeight.toFixed(2)))} under its ${String(Number(node.fontSize.toFixed(2)))} px size, so its lines overlap. Set a pixel line height of at least the font size, or leave it out.`,
+      );
+    }
+    const parent = node.parentId === null ? undefined : graph.getNode(node.parentId);
+    if (parent !== undefined && parent.id !== page.id && node.layoutPositioning !== 'ABSOLUTE') {
+      const inner = boxOf(node);
+      const frame = boxOf(parent);
+      if (inner.x + inner.w > frame.x + frame.w + 0.5 || inner.y + inner.h > frame.y + frame.h + 0.5) {
+        messages.push(`Text "${textLabel(node)}" leaves its frame "${parent.name}". Give the text a width, or widen the frame.`);
+      }
+    }
+    const key = node.parentId ?? '';
+    const list = siblings.get(key);
+    if (list === undefined) siblings.set(key, [node]);
+    else list.push(node);
+  }
+  for (const [parentId, list] of siblings) {
+    const parent = graph.getNode(parentId);
+    if (parent === undefined || parent.id === page.id || parent.layoutMode !== 'NONE') continue;
+    for (let i = 0; i < list.length; i += 1) {
+      for (let j = i + 1; j < list.length; j += 1) {
+        const first = list[i];
+        const second = list[j];
+        if (first === undefined || second === undefined) continue;
+        if (first.layoutPositioning === 'ABSOLUTE' || second.layoutPositioning === 'ABSOLUTE') continue;
+        const a = boxOf(first);
+        const b = boxOf(second);
+        const shared = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+        const height = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+        const smaller = Math.min(a.w * a.h, b.w * b.h);
+        if (shared > 0 && height > 0 && smaller > 0 && (shared * height) / smaller > 0.2) {
+          messages.push(
+            `Text "${textLabel(first)}" overlaps "${textLabel(second)}" in "${parent.name}", because that frame has no flex. Give the frame flex with a gap, or position them on purpose.`,
+          );
+        }
+      }
+    }
+  }
+  return messages;
+}
+
 /**
  * Read a PNG's pixel size from its IHDR chunk.
  * @param bytes the PNG file.
@@ -371,6 +480,7 @@ function pngSize(bytes: Uint8Array): { width: number; height: number } {
  * @returns the PNG bytes, or null for an empty design.
  */
 async function renderPng(compiled: Compiled, maxSide: number): Promise<Uint8Array | null> {
+  await aliasUnbundledFamilies(compiled.graph, compiled.page, readBundledFace);
   const bounds = computeContentBounds(compiled.graph, compiled.page.childIds);
   if (bounds === null) return null;
   const width = bounds.maxX - bounds.minX;
@@ -420,11 +530,13 @@ async function handle(source: string, request: WorkerRequest): Promise<WorkerRes
       return { ok: true, info, mediaType: 'application/octet-stream', data: Buffer.from(bytes).toString('base64') };
     }
     if (request.format === 'svg') {
+      await aliasUnbundledFamilies(compiled.graph, compiled.page, readBundledFace);
       const svg = renderNodesToSVG(compiled.graph, compiled.page.id, compiled.page.childIds, { xmlDeclaration: true });
       if (svg === null) return { ok: false, code: 'artifact/design-render-failed', message: 'The design produced no SVG.' };
       return { ok: true, info, mediaType: 'image/svg+xml', data: Buffer.from(svg, 'utf8').toString('base64') };
     }
     if (request.format === 'html-svg') {
+      await aliasUnbundledFamilies(compiled.graph, compiled.page, readBundledFace);
       const model = await buildPageModel(compiled.graph, compiled.page);
       return { ok: true, info, mediaType: 'application/json', data: Buffer.from(JSON.stringify(model), 'utf8').toString('base64') };
     }
