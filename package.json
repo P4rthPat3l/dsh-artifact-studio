@@ -1,6 +1,6 @@
 {
   "name": "dsh-artifact-studio",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "type": "module",
   "description": "Local-first artifacts for DeepSeek Harness: the agent creates pages, documents, spreadsheets, and mockups as versioned files, and you open, edit, restore, and export them beside the chat.",
   "keywords": [
