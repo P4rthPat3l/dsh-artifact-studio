@@ -81,7 +81,7 @@ export function ArtifactsPanel({ t, workspaces }: { t: Translator; workspaces: W
           open={(next) => setSelected(next)}
         />
       </div>
-      {address === undefined ? null : <div className="art-panel-region"><ArtifactPanelBody t={t} address={address} workspaceName={items.find(item => address.scope === 'workspace' && item.workspaceId === address.workspaceId)?.title} onBack={() => setSelected(null)} /></div>}
+      {address === undefined ? null : <div className="art-panel-region"><ArtifactPanelBody t={t} address={address} workspaceName={items.find(item => address.scope === 'workspace' && item.workspaceId === address.workspaceId)?.title} workspaces={items} onMoved={setSelected} onBack={() => setSelected(null)} /></div>}
     </div>
   );
 }

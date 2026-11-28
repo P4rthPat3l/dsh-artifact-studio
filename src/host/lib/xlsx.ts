@@ -8,7 +8,7 @@
  */
 
 import { zipSync, strToU8 } from 'fflate';
-import { columnName, effectiveTextColor, evaluateWorkbook, formatNumber, usedBounds } from '../../sheet/index.js';
+import { columnName, effectiveTextColor, evaluateWorkbook, formatNumber, sheetRowHeights, usedBounds } from '../../sheet/index.js';
 import type { CellResult, EvaluatedWorkbook, SheetCell, SheetStyle, SheetWorkbook } from '../../sheet/index.js';
 
 const MAIN = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
@@ -55,6 +55,7 @@ interface StyleSpec {
   fill: string | null;
   align: 'left' | 'center' | 'right' | null;
   numberFormat: string | null;
+  wrap: boolean;
 }
 
 interface StyleTables {
@@ -78,9 +79,10 @@ function normaliseStyle(style: SheetStyle | undefined): StyleSpec | undefined {
     fill,
     align: style.align ?? null,
     numberFormat: style.numberFormat === undefined || style.numberFormat === 'general' ? null : style.numberFormat,
+    wrap: style.wrap === true,
   };
   const plain = !font.bold && !font.italic && !font.underline && !font.strike && font.color === null
-    && spec.fill === null && spec.align === null && spec.numberFormat === null;
+    && spec.fill === null && spec.align === null && spec.numberFormat === null && !spec.wrap;
   return plain ? undefined : spec;
 }
 
@@ -89,7 +91,7 @@ function fontKey(font: FontSpec): string {
 }
 
 function styleKey(style: StyleSpec): string {
-  return fontKey(style.font) + '|' + (style.fill ?? '') + '|' + (style.align ?? '') + '|' + (style.numberFormat ?? '');
+  return fontKey(style.font) + '|' + (style.fill ?? '') + '|' + (style.align ?? '') + '|' + (style.numberFormat ?? '') + '|' + (style.wrap ? 'w' : '');
 }
 
 /**
@@ -175,8 +177,12 @@ function stylesXml(tables: StyleTables): string {
     if (numFmtId !== 0) attributes.push('applyNumberFormat="1"');
     if (fontIdOf(tables, style) !== 0) attributes.push('applyFont="1"');
     if (fillIdOf(tables, style) !== 0) attributes.push('applyFill="1"');
-    if (style.align !== null) attributes.push('applyAlignment="1"');
-    const alignment = style.align === null ? '' : '<alignment horizontal="' + style.align + '"/>';
+    if (style.align !== null || style.wrap) attributes.push('applyAlignment="1"');
+    const alignmentAttributes = [
+      ...(style.align === null ? [] : ['horizontal="' + style.align + '"']),
+      ...(style.wrap ? ['vertical="top"', 'wrapText="1"'] : []),
+    ];
+    const alignment = alignmentAttributes.length === 0 ? '' : '<alignment ' + alignmentAttributes.join(' ') + '/>';
     xfs.push('<xf ' + attributes.join(' ') + '>' + alignment + '</xf>');
   }
   return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
@@ -221,11 +227,18 @@ function columnsXml(widths: Record<string, number> | undefined): string {
   return columns.length === 0 ? '' : '<cols>' + columns.join('') + '</cols>';
 }
 
+function mergeCellsXml(merges: string[] | undefined): string {
+  if (merges === undefined || merges.length === 0) return '';
+  const cells = merges.map((ref) => '<mergeCell ref="' + ref + '"/>').join('');
+  return '<mergeCells count="' + String(merges.length) + '">' + cells + '</mergeCells>';
+}
+
 function worksheetXml(sheetName: string, workbook: SheetWorkbook, evaluated: EvaluatedWorkbook, tables: StyleTables): string {
   const sheet = workbook.sheets.find((item) => item.name === sheetName);
   if (sheet === undefined) return '';
   const bounds = usedBounds(sheet);
   const results = evaluated.results[sheet.name] ?? {};
+  const rowHeights = sheetRowHeights(sheet, evaluated);
   const rowsXml: string[] = [];
   for (let row = 1; row <= Math.max(1, bounds.rows); row += 1) {
     const cells: string[] = [];
@@ -237,7 +250,10 @@ function worksheetXml(sheetName: string, workbook: SheetWorkbook, evaluated: Eva
       const styleIndex = xfIdOf(tables, cell === undefined ? undefined : normaliseStyle(cell.style));
       cells.push(cellXml(ref, cell ?? {}, result, styleIndex));
     }
-    if (cells.length > 0) rowsXml.push('<row r="' + String(row) + '">' + cells.join('') + '</row>');
+    const height = rowHeights.get(row);
+    // Excel measures a row in points; the sheet stores and renders pixels.
+    const heightAttribute = height === undefined ? '' : ' ht="' + String(Math.round(height * 0.75 * 100) / 100) + '" customHeight="1"';
+    if (cells.length > 0) rowsXml.push('<row r="' + String(row) + '"' + heightAttribute + '>' + cells.join('') + '</row>');
   }
   const dimension = bounds.rows === 0 || bounds.columns === 0
     ? 'A1'
@@ -249,6 +265,7 @@ function worksheetXml(sheetName: string, workbook: SheetWorkbook, evaluated: Eva
     '<sheetFormatPr defaultRowHeight="15"/>' +
     columnsXml(sheet.columnWidths) +
     '<sheetData>' + rowsXml.join('') + '</sheetData>' +
+    mergeCellsXml(sheet.merges) +
     '<pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/>' +
     '</worksheet>';
 }

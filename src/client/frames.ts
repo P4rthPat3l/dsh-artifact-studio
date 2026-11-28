@@ -11,6 +11,16 @@ export const PRINT_SANDBOX = 'allow-scripts allow-modals';
 const PRINT_LIFETIME_MS = 30_000;
 
 /**
+ * Opens a link in the viewer's browser instead of letting the frame navigate
+ * itself. The frame is opaque, so it reports the click; the panel re-checks the
+ * protocol and opens it.
+ */
+const LINK_BRIDGE =
+  "<script>(function(){document.addEventListener('click',function(e){var t=e.target;" +
+  "var a=t&&t.closest?t.closest('a[href]'):null;if(a===null)return;var u;try{u=new URL(a.getAttribute('href'),document.baseURI)}catch(_){return}" +
+  "if(u.protocol!=='http:'&&u.protocol!=='https:')return;e.preventDefault();parent.postMessage({dshArtifactOpen:u.href},'*')},true)})()</script>";
+
+/**
  * Reports the text a reader selects in a preview, so it can become the quote
  * of an edit request. The frame is opaque, so it posts the text; the page can
  * only ever fill a quote the user still reviews before sending.
@@ -29,10 +39,10 @@ const SELECTION_LIMIT = 4000;
  * @param title the artifact title.
  * @param theme the colors a dark-capable page uses.
  * @param bridge whether to report selections to the panel.
- * @returns HTML with the network-blocking policy and the tokens ahead of the content.
+ * @returns HTML with the network-blocking policy, the link report, and the tokens ahead of the content.
  */
 export function pageDocument(content: string, designCss: string, title: string, theme: PageTheme = 'auto', bridge = false): string {
-  return composePage(content, designCss, PAGE_CSP, title, bridge ? SELECTION_BRIDGE : '', theme);
+  return composePage(content, designCss, PAGE_CSP, title, LINK_BRIDGE + (bridge ? SELECTION_BRIDGE : ''), theme);
 }
 
 /**
@@ -44,6 +54,24 @@ export function selectionFrom(value: unknown): string | undefined {
   if (value === null || typeof value !== 'object') return undefined;
   const fields: Record<string, unknown> = { ...value };
   return typeof fields.dshArtifactSelection === 'string' ? fields.dshArtifactSelection.slice(0, SELECTION_LIMIT) : undefined;
+}
+
+/**
+ * Read a link report from a preview frame. Only HTTP(S) leaves the frame: the
+ * panel checks the protocol again because a page can post the message itself.
+ * @param value the message data.
+ * @returns the absolute URL, or undefined for any other message.
+ */
+export function linkFrom(value: unknown): string | undefined {
+  if (value === null || typeof value !== 'object') return undefined;
+  const fields: Record<string, unknown> = { ...value };
+  if (typeof fields.dshArtifactOpen !== 'string') return undefined;
+  try {
+    const url = new URL(fields.dshArtifactOpen);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**

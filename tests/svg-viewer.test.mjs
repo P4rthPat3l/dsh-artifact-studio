@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { JSDOM } from 'jsdom';
 import { buildSvgViewerHtml } from '../dist/host/lib/svg-viewer.js';
 
 /** The shapes the engine would hand over, without any text. */
@@ -89,4 +90,38 @@ test('CASE-SVG-001: clipped text sits inside a wrapper at the clipping box', asy
   })).toString('utf8');
   assert.match(html, /overflow:hidden/);
   assert.match(html, /transform:matrix\(1,0,0,1,10,10\)/);
+});
+
+test('AC-SVG-009: two touch pointers pinch the page and one finger pans after it', async () => {
+  const html = (await buildSvgViewerHtml({ title: 'Pinch', model: model([box(0)], { families: [] }) })).toString('utf8');
+  const dom = new JSDOM(html, { pretendToBeVisual: true, runScripts: 'dangerously', url: 'http://localhost/' });
+  const { window } = dom;
+  const host = window.document.getElementById('dsh-mockup');
+  const stage = window.document.getElementById('dsh-stage');
+  const pan = window.document.getElementById('dsh-pan');
+  const fitted = Number(stage.style.zoom);
+  const captured = new Set();
+  window.HTMLElement.prototype.setPointerCapture = (id) => captured.add(id);
+  window.HTMLElement.prototype.hasPointerCapture = (id) => captured.has(id);
+  window.HTMLElement.prototype.releasePointerCapture = (id) => captured.delete(id);
+  const pointer = (type, id, x, y) => {
+    const event = new window.MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y });
+    Object.defineProperty(event, 'pointerId', { value: id });
+    Object.defineProperty(event, 'pointerType', { value: 'touch' });
+    host.dispatchEvent(event);
+  };
+  try {
+    pointer('pointerdown', 1, 400, 400);
+    pointer('pointerdown', 2, 500, 400);
+    pointer('pointermove', 1, 350, 400);
+    pointer('pointermove', 2, 550, 400);
+    const pinched = Number(stage.style.zoom);
+    assert.ok(pinched > fitted * 1.5, 'two fingers did not zoom: ' + fitted + ' -> ' + pinched);
+    pointer('pointerup', 2, 550, 400);
+    const beforePan = pan.style.transform;
+    pointer('pointermove', 1, 400, 430);
+    assert.notEqual(pan.style.transform, beforePan, 'one finger did not pan after the pinch');
+  } finally {
+    dom.window.close();
+  }
 });

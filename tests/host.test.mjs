@@ -650,7 +650,7 @@ test('SEC-001: the route serves only admitted owner peers', async () => {
 test('AC-070: both artifact skills register and the tools load without the skill registry', () => {
   const skills = [];
   applySkill({ skills: { register: (skill) => { skills.push(skill); return () => {}; } } });
-  assert.deepEqual(skills.map(skill => skill.name).sort(), ['artifact-design', 'visual-codebase-walkthrough']);
+  assert.deepEqual(skills.map(skill => skill.name).sort(), ['artifact-design', 'visual-codebase-walkthrough', 'visual-feature-flow']);
   const skill = skills.find(item => item.name === 'artifact-design');
   assert.ok(skill);
   assert.ok(skill.description.length > 0 && skill.description.length < 300);
@@ -703,6 +703,36 @@ test('FEAT-009: loaded walkthrough instructions preserve evidence, investigation
   assert.match(skill.content, /No network, browser storage, live filesystem access, automatic chat submission/);
   assert.match(skill.content, /rendering and interactions remain unverified/);
   assert.match(skill.content, /preserve user edits, and update the same artifact using its current baseVersion/);
+});
+
+test('FEAT-010: the feature-flow skill requires full screens with page URLs and keeps the output a Mockup', () => {
+  const skills = [];
+  applySkill({ skills: { register: (skill) => { skills.push(skill); return () => {}; } } });
+  const skill = skills.find(item => item.name === 'visual-feature-flow');
+  assert.ok(skill);
+  assert.equal(skill.source, 'bundled');
+  assert.ok(skill.description.length > 0 && skill.description.length < 300);
+  assert.match(skill.content, /Every screen is a full screen/);
+  assert.match(skill.content, /Every screen shows its page URL/);
+  assert.match(skill.content, /Never switch to a page or a doc/);
+  assert.match(skill.content, /Client-facing is optional/);
+  assert.match(skill.content, /Never present a proposed element as if it already ships/);
+  assert.match(skill.content, /strokeDash=\{\[6, 4\]\}/);
+  assert.match(skill.content, /### Focus first/);
+  assert.match(skill.content, /Never outline a screen only to say No change/);
+  assert.match(skill.content, /Same screen, same route, same size, same data/);
+  assert.match(skill.content, /Attach each highlight to the component itself/);
+  assert.match(skill.content, /Never draw a highlight that frames empty space/);
+  assert.match(skill.content, /Put each note beside the component it explains/);
+  assert.match(skill.content, /look like the real product at first glance/);
+  assert.match(skill.content, /Look at every image the screen uses before drawing it/);
+  assert.match(skill.content, /Do not invent UI/);
+  assert.match(skill.content, /Annotation layer versus product layer/);
+  assert.match(skill.content, /Do not pass a transform option to linearGradient/);
+  assert.match(skill.content, /### Client review layout/);
+  assert.match(skill.content, /draw both as Option A and Option B/);
+  assert.match(skill.content, /Never write that the team will test, check, or confirm something later/);
+  assert.match(skill.content, /Text wraps only when the Text has a numeric width/);
 });
 
 test('AC-071: write tool descriptions name the skill and the precedence rule', () => {
@@ -980,3 +1010,142 @@ test('SHEET-AC-008: a sheet cannot be rebased and list filters by its type', asy
   await fs.rm(storeHome('ws-a'), { recursive: true, force: true });
 });
 
+test('SHEET-AC-009: the read tool returns evaluated cells for a requested range', async () => {
+  const svc = service();
+  const { run } = toolsFor('ses-a', wsA, svc);
+  const created = await run('artifact_create', { type: 'sheet', title: 'Values', content: sheetFixture() });
+  const read = await run('artifact_read', { id: created.id, values: { range: 'B2:B4' } });
+  assert.equal(read.sheetValues.sheet, 'Budget');
+  assert.equal(read.sheetValues.range, 'B2:B4');
+  assert.equal(read.sheetValues.cells.length, 3);
+  assert.equal(read.sheetValues.cells[2].ref, 'B4');
+  assert.equal(read.sheetValues.cells[2].value, 2000);
+  assert.equal(read.sheetValues.truncated, false);
+  const cell = await run('artifact_read', { id: created.id, values: { range: 'C2' } });
+  assert.equal(cell.sheetValues.cells.length, 1);
+  assert.equal(cell.sheetValues.cells[0].value, 1440);
+  const plain = await run('artifact_read', { id: created.id });
+  assert.equal(plain.sheetValues, undefined);
+  await rejects(run('artifact_read', { id: created.id, values: { sheet: 'Nope' } }), 'artifact/invalid-sheet');
+  await rejects(run('artifact_read', { id: created.id, values: { range: 'nope' } }), 'artifact/invalid-sheet');
+  const page = await run('artifact_create', { type: 'page', title: 'Not a sheet', content: PAGE });
+  const pageRead = await run('artifact_read', { id: page.id, values: { range: 'A1' } });
+  assert.equal(pageRead.sheetValues, undefined);
+  await fs.rm(storeHome('ws-a'), { recursive: true, force: true });
+});
+
+test('SHEET-AC-010: csv export names its sheet and refuses an unknown one', async () => {
+  const svc = service();
+  const { run } = toolsFor('ses-a', wsA, svc);
+  const content = JSON.stringify({ schemaVersion: 1, sheets: [
+    { name: 'Budget', cells: { A1: 'Hosting', B1: 1200 } },
+    { name: 'Summary', cells: { A1: 'Total', B1: 1200 } },
+  ] });
+  const created = await run('artifact_create', { type: 'sheet', title: 'Named export', content });
+  const file = await run('artifact_export', { id: created.id, format: 'csv', sheet: 'Summary' });
+  const text = await fs.readFile(file.path, 'utf8');
+  assert.match(text, /Total/);
+  assert.doesNotMatch(text, /Hosting/);
+  await rejects(run('artifact_export', { id: created.id, format: 'csv', sheet: 'Nope' }), 'artifact/invalid-sheet');
+  const xlsx = await run('artifact_export', { id: created.id, format: 'xlsx', sheet: 'Nope' });
+  assert.equal((await fs.readFile(xlsx.path)).subarray(0, 2).toString(), 'PK');
+  await fs.rm(storeHome('ws-a'), { recursive: true, force: true });
+});
+
+test('SHEET-AC-011: the update tool merges and unmerges cells and the export keeps them', async () => {
+  const svc = service();
+  const { run } = toolsFor('ses-a', wsA, svc);
+  const created = await run('artifact_create', { type: 'sheet', title: 'Merged', content: sheetFixture() });
+  const updated = await run('artifact_sheet_update', {
+    id: created.id,
+    baseVersion: 1,
+    operations: [{ op: 'merge', sheet: 'Budget', range: 'A1:C1' }],
+  });
+  assert.equal(updated.version, 2);
+  assert.ok(updated.notes.some((note) => note.includes('merged Budget!A1:C1')), JSON.stringify(updated.notes));
+  const workbook = parseSheetWorkbook((await svc.read(A, created.id)).content);
+  assert.deepEqual(workbook.sheets[0].merges, ['A1:C1']);
+  assert.equal(workbook.sheets[0].cells.A1.value, 'Item');
+  assert.equal(workbook.sheets[0].cells.B1, undefined);
+  const xlsx = await run('artifact_export', { id: created.id, format: 'xlsx' });
+  const parts = unzipSync(new Uint8Array(await fs.readFile(xlsx.path)));
+  assert.match(strFromU8(parts['xl/worksheets/sheet1.xml']), /<mergeCell ref="A1:C1"\/>/);
+  const printable = await svc.printable(A, created.id);
+  assert.match(printable.html, /<td colspan="3"/);
+  await rejects(run('artifact_sheet_update', { id: created.id, baseVersion: 2, operations: [{ op: 'merge', range: 'B1:D1' }] }), 'artifact/invalid-sheet');
+  const unmerged = await run('artifact_sheet_update', { id: created.id, baseVersion: 2, operations: [{ op: 'unmerge', range: 'A1' }] });
+  assert.equal(unmerged.version, 3);
+  assert.equal(parseSheetWorkbook((await svc.read(A, created.id)).content).sheets[0].merges, undefined);
+  await fs.rm(storeHome('ws-a'), { recursive: true, force: true });
+});
+
+test('SHEET-AC-012: the update tool wraps text and the row grows in the export', async () => {
+  const svc = service();
+  const { run } = toolsFor('ses-a', wsA, svc);
+  const created = await run('artifact_create', { type: 'sheet', title: 'Wrapped', content: sheetFixture() });
+  const long = 'A long note that needs wrapping in a narrow column';
+  const updated = await run('artifact_sheet_update', {
+    id: created.id,
+    baseVersion: 1,
+    operations: [
+      { op: 'set', sheet: 'Budget', ref: 'A1', value: long },
+      { op: 'format', sheet: 'Budget', range: 'A1:A1', style: { wrap: true } },
+    ],
+  });
+  assert.equal(updated.version, 2);
+  const workbook = parseSheetWorkbook((await svc.read(A, created.id)).content);
+  assert.equal(workbook.sheets[0].cells.A1.style?.wrap, true);
+  assert.equal(workbook.sheets[0].cells.A1.value, long);
+  const xlsx = await run('artifact_export', { id: created.id, format: 'xlsx' });
+  const parts = unzipSync(new Uint8Array(await fs.readFile(xlsx.path)));
+  assert.match(strFromU8(parts['xl/styles.xml']), /wrapText="1"/);
+  assert.match(strFromU8(parts['xl/worksheets/sheet1.xml']), /<row r="1" ht="[0-9.]+" customHeight="1">/);
+  const printable = await svc.printable(A, created.id);
+  assert.match(printable.html, /white-space: pre-wrap/);
+  await fs.rm(storeHome('ws-a'), { recursive: true, force: true });
+});
+
+test('AC-116: a workspace artifact copies into another workspace with its history', async () => {
+  const svc = service();
+  const created = await svc.create(A, { type: 'doc', title: 'Cross-project copy', content: 'first', source: agent });
+  await svc.update(A, created.id, { baseVersion: 1, content: 'second', source: { origin: 'user', action: 'update' } });
+  const copied = await svc.transfer(A, created.id, { targetWorkspaceId: 'ws-b', mode: 'copy' });
+  assert.notEqual(copied.id, created.id);
+  assert.match(copied.id, /^art_ws_[a-z0-9]{16}$/);
+  assert.equal(copied.scope, 'workspace');
+  assert.equal(copied.version, 2);
+  const source = await svc.read(A, created.id);
+  assert.equal(source.content, 'second');
+  const target = await svc.read(B, copied.id);
+  assert.equal(target.content, 'second');
+  assert.equal(target.manifest.title, 'Cross-project copy');
+  assert.deepEqual((await svc.history(B, copied.id)).map(entry => entry.version), [2, 1]);
+  assert.equal(JSON.parse(await fs.readFile(path.join(storeHome('ws-b'), copied.id, 'artifact.json'), 'utf8')).id, copied.id);
+  assert.equal(await exists(path.join(storeHome('ws-a'), created.id)), true);
+});
+
+test('AC-117: moving an artifact trashes the source and keeps the copy readable', async () => {
+  const svc = service();
+  const created = await svc.create(A, { type: 'page', title: 'Cross-project move', content: PAGE, source: agent });
+  const moved = await svc.transfer(A, created.id, { targetWorkspaceId: 'ws-b', mode: 'move' });
+  assert.notEqual(moved.id, created.id);
+  await rejects(svc.read(A, created.id), 'artifact/not-found');
+  assert.equal((await svc.read(B, moved.id)).content, PAGE);
+  const trashed = await fs.readdir(path.join(storeHome('ws-a'), '.trash'));
+  assert.ok(trashed.some(name => name.startsWith(created.id + '-')), 'the source was not recoverable from trash');
+});
+
+test('AC-118: transfer refuses the same workspace, an unknown workspace, a library source, and a bad mode', async () => {
+  const svc = service();
+  const created = await svc.create(A, { type: 'doc', title: 'Transfer guards', content: 'x', source: agent });
+  await rejects(svc.transfer(A, created.id, { targetWorkspaceId: 'ws-a', mode: 'copy' }), 'artifact/same-workspace');
+  await rejects(svc.transfer(A, created.id, { targetWorkspaceId: 'ws-missing', mode: 'copy' }), 'artifact/no-workspace');
+  const library = await svc.create({ scope: 'library' }, { type: 'doc', title: 'Library transfer', content: 'x', source: agent });
+  await rejects(svc.transfer({ scope: 'library' }, library.id, { targetWorkspaceId: 'ws-b', mode: 'copy' }), 'artifact/unsupported-type');
+  const refused = await createHandler(svc)('transfer', { ...A, id: created.id, targetWorkspaceId: 'ws-b', mode: 'both' });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.error.code, 'artifact/bad-request');
+  const accepted = await createHandler(svc)('transfer', { ...A, id: created.id, targetWorkspaceId: 'ws-b', mode: 'copy' });
+  assert.equal(accepted.ok, true);
+  assert.notEqual(accepted.value.manifest.id, created.id);
+});

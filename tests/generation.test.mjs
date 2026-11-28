@@ -74,7 +74,7 @@ test('GEN-AC-025: sheet guidance skips recipes and only page and document guidan
   assert.equal(sheet.recipe, null);
   assert.match(sheet.brief, /Sheets do not use recipes/);
   assert.match(sheet.brief, /no pinned generation snapshot/);
-  assert.match(sheet.brief, /bold, italic, underline, and strike/);
+  assert.match(sheet.brief, /bold, italic, underline, strike, and wrap/);
   assert.match(sheet.brief, /align is left, center, or right/);
   assert.doesNotMatch(sheet.brief, /Pass recipe|Choose a recipe|artifact_rebase/);
   const workbook = parseSheetWorkbook(sheet.brief.split('```json\n')[1].split('```')[0]);

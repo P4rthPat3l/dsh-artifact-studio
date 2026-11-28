@@ -85,6 +85,7 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(installDraftGuard, 'dsh-artifact-studio: unsaved draft guard');
   configureConnection(ctx.connection);
   runtime.sidebarRight = ctx.sidebarRight;
+  runtime.sidebarRightTabs = ctx.sidebarRightTabs;
   runtime.layout = layoutOf(ctx.get('layout'));
   ctx.locale.register(NS, 'en', EN);
   ctx.locale.register(NS, 'zh', ZH);

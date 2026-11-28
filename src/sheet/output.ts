@@ -4,8 +4,8 @@
  * the advisory formula diagnostics a write returns.
  */
 
-import { SHEET_LIMITS, contrastRatio, formatCellRef, formatRangeRef, parseRangeRef, sheetOf, usedBounds } from './model.js';
-import type { SheetCell, SheetScalar, SheetStyle, SheetWorkbook } from './model.js';
+import { SHEET_LIMITS, SheetError, columnName, contrastRatio, formatCellRef, formatRangeRef, parseCellRef, parseRangeRef, sheetOf, usedBounds } from './model.js';
+import type { CellRange, SheetCell, SheetData, SheetScalar, SheetStyle, SheetWorkbook } from './model.js';
 import { evaluateWorkbook } from './formula.js';
 import type { CellResult, EvaluatedWorkbook, FormulaErrorCode } from './formula.js';
 
@@ -158,6 +158,138 @@ export function selectionQuote(workbook: SheetWorkbook, evaluated: EvaluatedWork
   if (lastRow < range.row2 || lastColumn < range.column2) text += '\n...';
   if (text.length > SHEET_LIMITS.maxSelectionQuote) text = text.slice(0, SHEET_LIMITS.maxSelectionQuote - 3).trimEnd() + '...';
   return text;
+}
+
+/**
+ * The text metrics the panel and the exports share for wrapped cells. The row
+ * height measure and the rendered cell both read these, so a wrapped line count
+ * and the painted line box agree.
+ */
+export const SHEET_TEXT_METRICS = {
+  /** The cell font size in pixels at 100%. */
+  fontSize: 12,
+  /** The width one character occupies, in pixels, in the design system font. */
+  characterWidth: 6.6,
+  /** The line box height, in pixels. */
+  lineHeight: 16,
+  /** The cell padding above and below the text, in pixels. */
+  padding: 10,
+} as const;
+
+/**
+ * How many lines one cell needs at a given width.
+ * @param text the displayed text.
+ * @param width the cell width in pixels.
+ * @returns the line count, at least one.
+ */
+export function wrappedLineCount(text: string, width: number): number {
+  if (text === '') return 1;
+  const usable = Math.max(SHEET_TEXT_METRICS.characterWidth, width - 12);
+  const perLine = Math.max(1, Math.floor(usable / SHEET_TEXT_METRICS.characterWidth));
+  let lines = 0;
+  for (const paragraph of text.split('\n')) {
+    lines += Math.max(1, Math.ceil(paragraph.length / perLine));
+  }
+  return lines;
+}
+
+/**
+ * The height of every row that holds a wrapped cell, in pixels at 100%. A row
+ * without wrapped text is absent and uses the default height. The panel and the
+ * XLSX writer read this one measure, so a wrapped cell is the same height in both.
+ * @param sheet the sheet.
+ * @param evaluated the evaluated cells.
+ * @returns row number to height.
+ */
+export function sheetRowHeights(sheet: SheetData, evaluated: EvaluatedWorkbook): Map<number, number> {
+  const heights = new Map<number, number>();
+  const results = evaluated.results[sheet.name] ?? {};
+  for (const [ref, cell] of Object.entries(sheet.cells) as [string, SheetCell][]) {
+    if (cell.style?.wrap !== true) continue;
+    const index = parseCellRef(ref);
+    if (index === undefined) continue;
+    const merge = (sheet.merges ?? [])
+      .map(parseRangeRef)
+      .find((range): range is CellRange => range !== undefined && index.row >= range.row1 && index.row <= range.row2 && index.column >= range.column1 && index.column <= range.column2);
+    if (merge !== undefined && (index.row !== merge.row1 || index.column !== merge.column1)) continue;
+    let width = 0;
+    if (merge === undefined) {
+      width = sheet.columnWidths?.[columnName(index.column)] ?? SHEET_LIMITS.defaultColumnWidth;
+    } else {
+      for (let column = merge.column1; column <= merge.column2; column += 1) {
+        width += sheet.columnWidths?.[columnName(column)] ?? SHEET_LIMITS.defaultColumnWidth;
+      }
+    }
+    const text = results[ref]?.display ?? '';
+    const lines = wrappedLineCount(text, width);
+    const height = Math.min(SHEET_LIMITS.maxRowHeight, Math.max(SHEET_LIMITS.defaultRowHeight, lines * SHEET_TEXT_METRICS.lineHeight + SHEET_TEXT_METRICS.padding));
+    const current = heights.get(index.row) ?? SHEET_LIMITS.defaultRowHeight;
+    if (height > current) heights.set(index.row, height);
+  }
+  return heights;
+}
+
+/** The evaluated cells one bounded read of a sheet returns. */
+interface SheetValues {
+  sheet: string;
+  range: string;
+  cells: { ref: string; value: SheetScalar; display: string; error?: FormulaErrorCode }[];
+  truncated: boolean;
+}
+
+function readRange(rangeRef: string): CellRange {
+  const range = parseRangeRef(rangeRef);
+  if (range !== undefined) return range;
+  const single = parseCellRef(rangeRef);
+  if (single !== undefined) return { row1: single.row, column1: single.column, row2: single.row, column2: single.column };
+  throw new SheetError('"' + rangeRef + '" is not a valid range or cell.');
+}
+
+/**
+ * Read evaluated cells from one sheet: the computed value, the display text,
+ * and the error code, row-major over the requested range. The stored cells
+ * travel in the workbook content; this view adds what evaluation produces.
+ * @param workbook the workbook.
+ * @param evaluated the evaluated cells.
+ * @param sheetName the sheet, first when omitted.
+ * @param rangeRef the range or single cell, the used range when omitted.
+ * @returns the bounded cell list.
+ */
+export function sheetValues(workbook: SheetWorkbook, evaluated: EvaluatedWorkbook, sheetName?: string, rangeRef?: string): SheetValues {
+  const sheet = sheetOf(workbook, sheetName);
+  const bounds = sheetBounds(sheet);
+  const range = rangeRef === undefined
+    ? { row1: 1, column1: 0, row2: bounds.rows, column2: Math.max(0, bounds.columns - 1) }
+    : readRange(rangeRef);
+  const results = evaluated.results[sheet.name] ?? {};
+  const cells: SheetValues['cells'] = [];
+  let lastRow = range.row1;
+  let lastColumn = range.column1 - 1;
+  let truncated = false;
+  outer: for (let row = range.row1; row <= range.row2; row += 1) {
+    for (let column = range.column1; column <= range.column2; column += 1) {
+      if (cells.length >= SHEET_LIMITS.maxReadCells) {
+        truncated = true;
+        break outer;
+      }
+      const ref = formatCellRef(row, column);
+      const result = results[ref];
+      cells.push({
+        ref,
+        value: result?.value ?? null,
+        display: result?.display ?? '',
+        ...(result?.error === undefined ? {} : { error: result.error }),
+      });
+      lastRow = row;
+      lastColumn = column;
+    }
+  }
+  return {
+    sheet: sheet.name,
+    range: formatRangeRef({ row1: range.row1, column1: range.column1, row2: lastRow, column2: lastColumn }),
+    cells,
+    truncated,
+  };
 }
 
 /**

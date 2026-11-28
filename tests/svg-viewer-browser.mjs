@@ -147,6 +147,33 @@ try {
   await page.keyboard.up('Space');
   assert.notEqual(await page.evaluate(() => document.getElementById('dsh-pan').style.transform), panned, 'Space and a drag did not pan the page');
   console.log('svg viewer selection check passed:', JSON.stringify(selected.trim().slice(0, 40)));
+
+  // AC-SVG-009: two fingers pinch to zoom on a touch screen, and one finger still pans.
+  const phone = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    deviceScaleFactor: 2,
+    isMobile: true,
+    hasTouch: true,
+  });
+  const phonePage = await phone.newPage();
+  await phonePage.goto(pathToFileURL(file.pathname).href);
+  await phonePage.evaluate(() => document.fonts.ready);
+  const cdp = await phone.newCDPSession(phonePage);
+  const touch = (type, touchPoints) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints });
+  const fittedZoom = await phonePage.evaluate(() => Number(document.getElementById('dsh-stage').style.zoom));
+  await touch('touchStart', [{ x: 145, y: 422, id: 1 }, { x: 245, y: 422, id: 2 }]);
+  await touch('touchMove', [{ x: 95, y: 422, id: 1 }, { x: 295, y: 422, id: 2 }]);
+  await touch('touchEnd', []);
+  const pinchedZoom = await phonePage.evaluate(() => Number(document.getElementById('dsh-stage').style.zoom));
+  assert.ok(pinchedZoom > fittedZoom * 1.5, 'two fingers did not zoom: ' + fittedZoom.toFixed(3) + ' -> ' + pinchedZoom.toFixed(3));
+  const pannedOnPhone = await phonePage.evaluate(() => document.getElementById('dsh-pan').style.transform);
+  await touch('touchStart', [{ x: 20, y: 700, id: 3 }]);
+  await touch('touchMove', [{ x: 60, y: 730, id: 3 }]);
+  await touch('touchEnd', []);
+  assert.notEqual(await phonePage.evaluate(() => document.getElementById('dsh-pan').style.transform), pannedOnPhone, 'one finger did not pan after a pinch');
+  await phone.close();
+  console.log('svg viewer pinch check passed:', fittedZoom.toFixed(3), '->', pinchedZoom.toFixed(3));
+
   console.log('svg viewer browser check passed:', stats.width + 'x' + stats.height, 'mean', stats.mean.toFixed(2), 'over96', stats.over96.toFixed(2) + '%');
 } finally {
   await browser.close();

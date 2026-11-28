@@ -181,6 +181,8 @@ async function webCheck(args) {
       out: { type: 'string' },
       click: { type: 'string', multiple: true, default: [] },
       'wait-for': { type: 'string', multiple: true, default: [] },
+      expect: { type: 'string', multiple: true, default: [] },
+      eval: { type: 'string', multiple: true, default: [] },
       dark: { type: 'boolean' },
       'full-page': { type: 'boolean' },
     },
@@ -192,7 +194,7 @@ async function webCheck(args) {
   });
   const screenshot = path.resolve(ROOT, values.out ?? path.join('.scratch', 'web-check', `${new Date().toISOString().replaceAll(/[:.]/g, '-')}.png`));
   const page = await context.newPage();
-  const summary = { url: '', title: '', console: [], pageErrors: [], requestFailed: [], screenshot };
+  const summary = { url: '', title: '', console: [], pageErrors: [], requestFailed: [], evals: [], screenshot };
   try {
     page.on('console', (message) => summary.console.push(`${message.type()}: ${message.text().slice(0, 300)}`));
     page.on('pageerror', (error) => summary.pageErrors.push(String(error).slice(0, 300)));
@@ -209,6 +211,16 @@ async function webCheck(args) {
     }
     for (const selector of values.click) {
       await page.click(selector);
+    }
+    // A state that only follows a click, such as an autosave finishing, is an
+    // assertion: the run fails when it never appears.
+    for (const selector of values.expect) {
+      await page.locator(selector).first().waitFor({ state: 'visible', timeout: 15000 });
+    }
+    // A probe runs in the page and may await, so a check can wait for a
+    // background effect before reading the state it produced.
+    for (const expression of values.eval) {
+      summary.evals.push(await page.evaluate(expression));
     }
     await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     summary.title = await page.title();

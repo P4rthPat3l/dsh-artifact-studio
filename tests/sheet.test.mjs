@@ -17,7 +17,10 @@ import {
   selectionQuote,
   serializeSheetWorkbook,
   sheetOverview,
+  sheetRowHeights,
   sheetToCsv,
+  sheetValues,
+  wrappedLineCount,
   applySheetOperations,
 } from '../dist/sheet/index.js';
 import { workbookToXlsx } from '../dist/host/lib/xlsx.js';
@@ -320,3 +323,252 @@ test('SHEET-UNIT-012: XLSX export adds a readable font color to a filled cell', 
   assert.match(styles, /rgb="FF1F2933"/);
 });
 
+test('SHEET-UNIT-013: a bounded values read returns evaluated cells and truncates', () => {
+  const parsed = parseSheetWorkbook(workbook([{ name: 'Budget', cells: { A1: 'Item', B1: 'Cost', C2: '=1/0', B2: 1200, B3: 800, B4: '=SUM(B2:B3)' } }]));
+  const evaluated = evaluateWorkbook(parsed);
+  const values = sheetValues(parsed, evaluated, 'Budget', 'A1:B4');
+  assert.equal(values.sheet, 'Budget');
+  assert.equal(values.range, 'A1:B4');
+  assert.equal(values.truncated, false);
+  assert.equal(values.cells.length, 8);
+  const total = values.cells.find((cell) => cell.ref === 'B4');
+  assert.equal(total.value, 2000);
+  assert.equal(total.display, '2000');
+  const failed = sheetValues(parsed, evaluated, 'Budget', 'C2').cells[0];
+  assert.equal(failed.error, '#DIV/0!');
+  assert.equal(failed.value, null);
+  assert.equal(sheetValues(parsed, evaluated).range, 'A1:C4');
+  const huge = parseSheetWorkbook(workbook([{ name: 'Wide', cells: { A1: 1, CV5000: 2 } }]));
+  const bounded = sheetValues(huge, evaluateWorkbook(huge), 'Wide');
+  assert.equal(bounded.cells.length, 500);
+  assert.equal(bounded.truncated, true);
+  assert.equal(bounded.range, 'A1:CV5');
+  assert.throws(() => sheetValues(parsed, evaluated, 'Missing'), /No sheet is named/);
+  assert.throws(() => sheetValues(parsed, evaluated, 'Budget', 'nope'), /is not a valid range or cell/);
+});
+
+test('SHEET-UNIT-014: renaming a sheet rewrites its references and nothing else', () => {
+  const source = workbook([
+    { name: 'Budget', cells: { B4: '=SUM(B2:B3)', B2: 1200, B3: 800 } },
+    {
+      name: 'Summary',
+      cells: {
+        A1: '=Budget!B4',
+        A2: '=budget!B4',
+        A3: "='Budget'!B4",
+        A4: '=Budget2!B4',
+        A5: '="Budget!B4"',
+        A6: '=SUM(Budget!B2:B3)',
+        A7: '=Budget:Summary!A1',
+        A8: '=#REF!',
+      },
+    },
+  ]);
+  const renamed = applySheetOperations(source, [{ op: 'rename-sheet', from: 'Budget', to: 'Q1 Totals' }]).workbook;
+  const cells = renamed.sheets[1].cells;
+  assert.equal(cells.A1.formula, "='Q1 Totals'!B4");
+  assert.equal(cells.A2.formula, "='Q1 Totals'!B4");
+  assert.equal(cells.A3.formula, "='Q1 Totals'!B4");
+  assert.equal(cells.A4.formula, '=Budget2!B4');
+  assert.equal(cells.A5.formula, '="Budget!B4"');
+  assert.equal(cells.A6.formula, "=SUM('Q1 Totals'!B2:B3)");
+  assert.equal(cells.A7.formula, '=Budget:Summary!A1');
+  assert.equal(cells.A8.formula, '=#REF!');
+  const result = evaluateWorkbook(renamed).results.Summary;
+  assert.equal(result.A1.value, 2000);
+  assert.equal(renamed.sheets[0].cells.B4.formula, '=SUM(B2:B3)');
+  const plain = applySheetOperations(source, [{ op: 'rename-sheet', from: 'Budget', to: 'Costs' }]).workbook;
+  assert.equal(plain.sheets[1].cells.A1.formula, '=Costs!B4');
+});
+
+test('SHEET-UNIT-015: merges normalise, refuse overlap, and unmerge', () => {
+  const parsed = parseSheetWorkbook(workbook([{
+    name: 'Budget',
+    cells: { A1: 'Quarter', B1: 'Q1', C1: 'Q2', D2: 'Notes', D3: 'kept', D4: 'dropped' },
+    merges: ['B1:C1'],
+  }]));
+  assert.deepEqual(parsed.sheets[0].merges, ['B1:C1']);
+  const reordered = parseSheetWorkbook(workbook([{ name: 'Budget', cells: {}, merges: ['C4:D5', 'A1:B1'] }]));
+  assert.deepEqual(reordered.sheets[0].merges, ['A1:B1', 'C4:D5']);
+  assert.throws(() => parseSheetWorkbook(workbook([{ name: 'A', cells: {}, merges: ['B1:B1'] }])), /one cell/);
+  assert.throws(() => parseSheetWorkbook(workbook([{ name: 'A', cells: {}, merges: ['A1:B1', 'B1:C1'] }])), /overlaps/);
+  assert.throws(() => parseSheetWorkbook(workbook([{ name: 'A', cells: {}, merges: ['nope'] }])), /invalid range/);
+  const merged = applySheetOperations(workbook([{
+    name: 'Budget',
+    cells: { A1: 'Quarter', B1: 'Q1', C1: 'Q2', D3: 'kept', D4: 'gone' },
+  }]), [{ op: 'merge', range: 'A1:C1' }]).workbook;
+  assert.deepEqual(merged.sheets[0].merges, ['A1:C1']);
+  assert.equal(merged.sheets[0].cells.A1.value, 'Quarter');
+  assert.equal(merged.sheets[0].cells.B1, undefined);
+  assert.equal(merged.sheets[0].cells.C1, undefined);
+  assert.equal(merged.sheets[0].cells.D3.value, 'kept');
+  assert.throws(() => applySheetOperations(serializeSheetWorkbook(merged), [{ op: 'merge', range: 'B1:D1' }]), /overlaps/);
+  assert.throws(() => applySheetOperations(serializeSheetWorkbook(merged), [{ op: 'merge', range: 'A2:A2' }]), /one cell/);
+  const unmerged = applySheetOperations(serializeSheetWorkbook(merged), [{ op: 'unmerge', range: 'B1' }]).workbook;
+  assert.equal(unmerged.sheets[0].merges, undefined);
+  assert.throws(() => applySheetOperations(serializeSheetWorkbook(unmerged), [{ op: 'unmerge', range: 'C3' }]), /No merged range/);
+  assert.throws(() => parseSheetOperations([{ op: 'merge', range: 'A1' }]), /must be a range/);
+});
+
+test('SHEET-UNIT-016: xlsx carries merged ranges', () => {
+  const parsed = parseSheetWorkbook(workbook([{ name: 'Budget', cells: { A1: 'Quarter', B1: 'Q1', B2: 1200 }, merges: ['A1:B1'] }]));
+  const parts = unzipSync(new Uint8Array(workbookToXlsx(parsed)));
+  const sheetXml = strFromU8(parts['xl/worksheets/sheet1.xml']);
+  assert.match(sheetXml, /<mergeCells count="1"><mergeCell ref="A1:B1"\/><\/mergeCells>/);
+  assert.ok(sheetXml.indexOf('<') >= 0);
+  assert.ok(sheetXml.indexOf('<mergeCells') > sheetXml.indexOf('</sheetData>'), 'mergeCells must follow sheetData');
+});
+
+test('SHEET-UNIT-017: wrapped text grows its row and exports as wrapText', () => {
+  const text = 'A long note that needs wrapping in a narrow column';
+  const parsed = parseSheetWorkbook(workbook([{
+    name: 'Budget',
+    cells: { A1: { value: text, style: { wrap: true, bold: true } }, B1: 'Plain' },
+  }]));
+  assert.equal(parsed.sheets[0].cells.A1.style.wrap, true);
+  assert.deepEqual(JSON.parse(serializeSheetWorkbook(parsed)).sheets[0].cells.A1.style, { bold: true, wrap: true });
+  const perLine = Math.floor((96 - 12) / 6.6);
+  const lines = wrappedLineCount(text, 96);
+  assert.equal(lines, Math.ceil(text.length / perLine));
+  assert.equal(wrappedLineCount('8', 96), 1);
+  assert.equal(wrappedLineCount('', 96), 1);
+  const evaluated = evaluateWorkbook(parsed);
+  const heights = sheetRowHeights(parsed.sheets[0], evaluated);
+  const expected = Math.min(400, Math.max(28, lines * 16 + 10));
+  assert.equal(heights.get(1), expected);
+  assert.equal(heights.get(2), undefined);
+  const narrow = parseSheetWorkbook(workbook([{ name: 'Budget', cells: { A1: { value: text, style: { wrap: true } } }, columnWidths: { A: 24 } }]));
+  const tall = sheetRowHeights(narrow.sheets[0], evaluateWorkbook(narrow));
+  assert.ok((tall.get(1) ?? 0) > expected);
+  assert.ok((tall.get(1) ?? 0) <= 400);
+  const parts = unzipSync(new Uint8Array(workbookToXlsx(parsed)));
+  const sheetXml = strFromU8(parts['xl/worksheets/sheet1.xml']);
+  const stylesXml = strFromU8(parts['xl/styles.xml']);
+  assert.match(stylesXml, /wrapText="1"/);
+  assert.match(stylesXml, /applyAlignment="1"/);
+  const xmlHeight = Math.round(expected * 0.75 * 100) / 100;
+  assert.ok(sheetXml.includes('<row r="1" ht="' + String(xmlHeight) + '" customHeight="1">'), sheetXml.slice(0, 400));
+  assert.throws(() => parseSheetWorkbook(workbook([{ name: 'A', cells: { A1: { value: 1, style: { wrap: 'yes' } } } }])), /wrap must be true or false/);
+  const cleared = applySheetOperations(serializeSheetWorkbook(parsed), [{ op: 'format', range: 'A1:A1', style: { wrap: null } }]).workbook;
+  assert.equal(cleared.sheets[0].cells.A1.style?.wrap, undefined);
+  assert.equal(cleared.sheets[0].cells.A1.style?.bold, true);
+});
+
+test('SHEET-UNIT-018: row and column edits shift cells, merges, widths, and references', () => {
+  const source = workbook([
+    {
+      name: 'Budget',
+      cells: {
+        A1: 'Item', B1: 'Cost', C1: 'Note',
+        A2: 'Hosting', B2: 1200,
+        A3: 'Support', B3: 800,
+        B4: '=SUM(B2:B3)',
+        D2: '=$B$2*2',
+        E1: '=Sheet2!A1',
+      },
+      columnWidths: { A: 160, B: 140 },
+      merges: ['A1:C1', 'D2:D3'],
+    },
+    { name: 'Sheet2', cells: { A1: '=Budget!B4', A2: '="Budget!B4"', A3: '=LOG10(100)', A4: '=Budget!A2', A5: '=Budget!$A$2' } },
+  ]);
+
+  const rows = applySheetOperations(source, [{ op: 'insert-rows', at: 2, count: 1 }]).workbook;
+  const inserted = rows.sheets[0];
+  assert.equal(inserted.cells.A1.value, 'Item');
+  assert.equal(inserted.cells.A3.value, 'Hosting');
+  assert.equal(inserted.cells.B3.value, 1200);
+  assert.equal(inserted.cells.B5.formula, '=SUM(B3:B4)');
+  assert.equal(inserted.cells.D3.formula, '=$B$3*2');
+  assert.deepEqual(inserted.merges, ['A1:C1', 'D3:D4']);
+  assert.equal(rows.sheets[1].cells.A1.formula, '=Budget!B5');
+  assert.equal(rows.sheets[1].cells.A2.formula, '="Budget!B4"');
+  assert.equal(rows.sheets[1].cells.A3.formula, '=LOG10(100)');
+  assert.equal(rows.sheets[1].cells.A4.formula, '=Budget!A3');
+  assert.equal(rows.sheets[1].cells.A5.formula, '=Budget!$A$3');
+
+  const columns = applySheetOperations(source, [{ op: 'insert-columns', at: 'B', count: 1 }]).workbook;
+  const widened = columns.sheets[0];
+  assert.equal(widened.cells.A1.value, 'Item');
+  assert.equal(widened.cells.C1.value, 'Cost');
+  assert.equal(widened.cells.C2.value, 1200);
+  assert.equal(widened.cells.C4.formula, '=SUM(C2:C3)');
+  assert.equal(widened.cells.E2.formula, '=$C$2*2');
+  assert.deepEqual(widened.columnWidths, { A: 160, C: 140 });
+  assert.deepEqual(widened.merges, ['A1:D1', 'E2:E3']);
+  assert.equal(columns.sheets[1].cells.A1.formula, '=Budget!C4');
+  assert.equal(columns.sheets[1].cells.A5.formula, '=Budget!$A$2');
+
+  const deletedRows = applySheetOperations(source, [{ op: 'delete-rows', at: 2, count: 1 }]).workbook;
+  const shortened = deletedRows.sheets[0];
+  assert.equal(shortened.cells.A2.value, 'Support');
+  assert.equal(shortened.cells.B2.value, 800);
+  assert.equal(shortened.cells.B3.formula, '=SUM(B2:B2)');
+  assert.equal(shortened.cells.D2, undefined);
+  assert.deepEqual(shortened.merges, ['A1:C1']);
+  assert.equal(deletedRows.sheets[1].cells.A1.formula, '=Budget!B3');
+  assert.equal(deletedRows.sheets[1].cells.A4.formula, '=Budget!#REF!');
+  assert.equal(deletedRows.sheets[1].cells.A5.formula, '=Budget!#REF!');
+
+  const deletedColumns = applySheetOperations(source, [{ op: 'delete-columns', at: 'A', count: 1 }]).workbook;
+  const narrowed = deletedColumns.sheets[0];
+  assert.equal(narrowed.cells.A1.value, 'Cost');
+  assert.equal(narrowed.cells.A2.value, 1200);
+  assert.equal(narrowed.cells.A4.formula, '=SUM(A2:A3)');
+  assert.deepEqual(narrowed.columnWidths, { A: 140 });
+  assert.deepEqual(narrowed.merges, ['A1:B1', 'C2:C3']);
+  assert.equal(deletedColumns.sheets[1].cells.A1.formula, '=Budget!A4');
+  assert.equal(deletedColumns.sheets[1].cells.A4.formula, '=Budget!#REF!');
+
+  assert.throws(() => parseSheetOperations([{ op: 'insert-rows', at: 0 }]), /row number/);
+  assert.throws(() => parseSheetOperations([{ op: 'insert-rows', at: 5000, count: 2 }]), /last row/);
+  assert.throws(() => parseSheetOperations([{ op: 'insert-columns', at: 'CV', count: 2 }]), /last column/);
+  assert.throws(() => applySheetOperations(workbook([{ name: 'Full', cells: { A5000: 1 } }]), [{ op: 'insert-rows', at: 4999, count: 2 }]), /past row 5000/);
+});
+
+test('SHEET-UNIT-019: moving rows and columns carries cells, widths, merges, and references', () => {
+  const source = workbook([
+    {
+      name: 'Order',
+      cells: {
+        A1: 'one', A2: 'two', A3: 'three', A4: 'four',
+        B1: 10, B2: 20, B3: 30, B4: 40,
+        C2: '=A2', C3: '=A3', C4: '=A4',
+      },
+      columnWidths: { A: 160, B: 140, C: 120 },
+      merges: ['A1:B1'],
+    },
+    { name: 'Other', cells: { A1: '=Order!A4', A2: '=SUM(Order!A1:A4)', A3: '="Order!A4"', A4: '=Order!A3' } },
+  ]);
+
+  const moved = applySheetOperations(source, [{ op: 'move-rows', at: 4, count: 1, to: 2 }]).workbook;
+  const rows = moved.sheets[0];
+  assert.deepEqual([rows.cells.A1.value, rows.cells.A2.value, rows.cells.A3.value, rows.cells.A4.value], ['one', 'four', 'two', 'three']);
+  assert.deepEqual([rows.cells.B1.value, rows.cells.B2.value, rows.cells.B3.value, rows.cells.B4.value], [10, 40, 20, 30]);
+  assert.deepEqual(rows.cells.C2, { formula: '=A2' });
+  assert.deepEqual(rows.cells.C3, { formula: '=A3' });
+  assert.deepEqual(rows.cells.C4, { formula: '=A4' });
+  assert.deepEqual(rows.merges, ['A1:B1']);
+  assert.equal(moved.sheets[1].cells.A1.formula, '=Order!A2');
+  assert.equal(moved.sheets[1].cells.A2.formula, '=SUM(Order!A1:A4)');
+  assert.equal(moved.sheets[1].cells.A3.formula, '="Order!A4"');
+  assert.equal(moved.sheets[1].cells.A4.formula, '=Order!A4');
+
+  const columns = applySheetOperations(source, [{ op: 'move-columns', at: 'C', to: 'A', count: 1 }]).workbook;
+  const wide = columns.sheets[0];
+  assert.equal(wide.cells.A1, undefined);
+  assert.equal(wide.cells.B1.value, 'one');
+  assert.equal(wide.cells.C1.value, 10);
+  const widths = wide.columnWidths;
+  assert.deepEqual(widths, { A: 120, B: 160, C: 140 });
+  assert.deepEqual(wide.merges, ['B1:C1']);
+  assert.equal(columns.sheets[1].cells.A1.formula, '=Order!B4');
+
+  const order = workbook([{ name: 'Numbers', cells: { A1: 1, A2: 2, A3: 3, A4: 4, A5: 5 } }]);
+  const block = applySheetOperations(order, [{ op: 'move-rows', at: 2, count: 2, to: 3 }]).workbook.sheets[0];
+  assert.deepEqual([block.cells.A1.value, block.cells.A2.value, block.cells.A3.value, block.cells.A4.value, block.cells.A5.value], [1, 4, 2, 3, 5]);
+
+  assert.throws(() => parseSheetOperations([{ op: 'move-rows', at: 1, count: 2, to: 5000 }]), /last row/);
+  assert.throws(() => parseSheetOperations([{ op: 'move-columns', at: 'A', count: 2, to: 'CV' }]), /last column/);
+  assert.throws(() => parseSheetOperations([{ op: 'move-rows', at: 0, to: 2 }]), /row number/);
+  assert.deepEqual(parseSheetOperations([{ op: 'move-rows', at: 4, to: 2 }])[0], { op: 'move-rows', at: 4, count: 1, to: 2 });
+});

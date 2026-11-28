@@ -13,6 +13,7 @@ import {
   requiredFormat,
   requiredInteger,
   requiredString,
+  requiredTransferMode,
   requiredType,
 } from './validate.js';
 import type { Fields } from './validate.js';
@@ -24,6 +25,7 @@ export const ENDPOINTS = [
   'create',
   'update',
   'delete',
+  'transfer',
   'history',
   'restore',
   'export',
@@ -99,6 +101,13 @@ async function dispatch(service: ArtifactService, endpoint: Endpoint, fields: Fi
       };
     case 'delete':
       return service.remove(target, requiredString(fields, 'id'));
+    case 'transfer':
+      return {
+        manifest: await service.transfer(target, requiredString(fields, 'id'), {
+          targetWorkspaceId: requiredString(fields, 'targetWorkspaceId'),
+          mode: requiredTransferMode(fields),
+        }),
+      };
     case 'history':
       return { versions: await service.history(target, requiredString(fields, 'id')) };
     case 'restore':

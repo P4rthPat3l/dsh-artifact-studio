@@ -15,6 +15,10 @@ export function isArtifactType(value: unknown): value is ArtifactType {
 export const SCOPES = ['workspace', 'library'] as const;
 export type Scope = (typeof SCOPES)[number];
 
+/** How an artifact moves into another workspace: leave a copy, or leave this one. */
+export const TRANSFER_MODES = ['copy', 'move'] as const;
+export type TransferMode = (typeof TRANSFER_MODES)[number];
+
 export const EXPORT_FORMATS = ['html', 'md', 'docx', 'png', 'svg', 'fig', 'html-svg', 'csv', 'xlsx'] as const;
 export type ExportFormat = (typeof EXPORT_FORMATS)[number];
 

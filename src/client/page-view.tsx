@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { PREVIEW_SANDBOX, pageDocument, selectionFrom } from './frames.js';
+import { PREVIEW_SANDBOX, linkFrom, pageDocument, selectionFrom } from './frames.js';
+import { openPageLink } from './runtime.js';
 
 /** Props for one sandboxed page preview. */
 export interface PageFrameProps {
@@ -37,16 +38,20 @@ export function PageFrame({ content, designCss, title, frameTitle, dark = false,
   }, [content, designCss, title, dark, bridge]);
 
   useEffect(() => {
-    if (!bridge) return undefined;
     const onMessage = (event: MessageEvent) => {
       // After a self-navigation the frame holds a document without the injected policy, so it is no longer trusted to report.
       if (frameRef.current === null || loads.current > 1 || event.source !== frameRef.current.contentWindow) return;
+      const url = linkFrom(event.data);
+      if (url !== undefined) {
+        openPageLink(url);
+        return;
+      }
       const text = selectionFrom(event.data);
       if (text !== undefined) report.current?.(text);
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [bridge]);
+  }, []);
 
   if (navigated) {
     return <div className="art-center" role="alert">{title}</div>;

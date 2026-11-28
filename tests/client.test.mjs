@@ -264,6 +264,14 @@ function fakeHost() {
           state.artifacts.set(id, entry);
           return { ok: true, value: { manifest: entry.manifest } };
         }
+        case 'transfer': {
+          if (item === undefined) return { ok: false, error: { code: 'artifact/not-found', message: 'gone', details: {} } };
+          const id = `art_ws_moved${String(calls.length).padStart(8, '0')}`;
+          const moved = { ...item.manifest, id, scope: 'workspace' };
+          state.artifacts.set(id, { manifest: moved, content: item.content, workspaceId: payload.targetWorkspaceId });
+          if (payload.mode === 'move') state.artifacts.delete(payload.id);
+          return { ok: true, value: { manifest: moved } };
+        }
         case 'history':
           return {
             ok: true,
@@ -330,9 +338,12 @@ function stubContext(host) {
     },
     sidebarRight: {
       openResource: (address) => records.opened.push(address),
-      openTab: (kind) => records.openedTabs.push(kind),
+      openTab: (kind, options) => records.openedTabs.push({ kind, options }),
     },
-    sidebarRightTabs: { register: (definition) => { records.tabs.push(definition); return () => undefined; } },
+    sidebarRightTabs: {
+      register: (definition) => { records.tabs.push(definition); return () => undefined; },
+      get: (kind) => records.tabs.find((definition) => definition.kind === kind),
+    },
     get: (name) => (name === 'layout' ? { selectPanel: (id) => records.panels.push(id) } : undefined),
     workspaces: (() => {
       const snapshot = { items: [{ workspaceId: 'ws-a', path: '/work/a', title: 'Work A', sessionIds: ['ses-a'] }] };
@@ -797,6 +808,62 @@ test('AC-010: page documents carry the network-blocking policy', async () => {
   assert.match(html, /default-src &#39;none&#39;/);
   assert.ok(html.indexOf('Content-Security-Policy') < html.indexOf('fetch('), 'the policy must precede page scripts');
   await view.unmount();
+});
+
+test('AC-099: a page link opens in the browser tab instead of navigating the frame', async () => {
+  const host = fakeHost();
+  host.state.artifacts.set('art_ws_page000004', { manifest: host.manifest('art_ws_page000004', 'page', 'Links', 1), content: '<a href="https://example.com/docs">Docs</a>' });
+  const { ctx, records } = stubContext(host);
+  plugin.apply(ctx);
+  records.tabs.push({ kind: 'browser', title: () => 'Browser' });
+  const tab = slot(records, 'sidebar.right.pane.tab', 'dsh-artifact-studio/artifact');
+  const view = await render(tab.component, tabProps('dsh-resource://artifact/workspace/ws-a/art_ws_page000004'));
+  try {
+    const frame = view.container.querySelector('iframe');
+    assert.match(await blobs.get(frame.getAttribute('src')).text(), /dshArtifactOpen/, 'the preview must report a link click');
+    await act(async () => {
+      window.dispatchEvent(new window.MessageEvent('message', {
+        data: { dshArtifactOpen: 'https://example.com/docs' },
+        source: frame.contentWindow,
+      }));
+      await settle(20);
+    });
+    assert.deepEqual(records.openedTabs, [{ kind: 'browser', options: { params: { url: 'https://example.com/docs' } } }]);
+  } finally {
+    await view.unmount();
+  }
+});
+
+test('AC-100: a page link opens externally when the browser tab cannot take it, and other protocols stay in the frame', async () => {
+  const host = fakeHost();
+  host.state.artifacts.set('art_ws_page000005', { manifest: host.manifest('art_ws_page000005', 'page', 'Links', 1), content: '<a href="https://example.com/docs">Docs</a>' });
+  const { ctx, records } = stubContext(host);
+  plugin.apply(ctx);
+  const tab = slot(records, 'sidebar.right.pane.tab', 'dsh-artifact-studio/artifact');
+  const view = await render(tab.component, tabProps('dsh-resource://artifact/workspace/ws-a/art_ws_page000005'));
+  const opened = [];
+  const originalOpen = window.open;
+  window.open = (url, target, features) => { opened.push({ url, target, features }); return null; };
+  try {
+    const frame = view.container.querySelector('iframe');
+    const post = (data) => act(async () => {
+      window.dispatchEvent(new window.MessageEvent('message', { data, source: frame.contentWindow }));
+      await settle(20);
+    });
+    await post({ dshArtifactOpen: 'https://example.com/docs' });
+    assert.deepEqual(opened, [{ url: 'https://example.com/docs', target: '_blank', features: 'noopener,noreferrer' }]);
+    await post({ dshArtifactOpen: 'javascript:alert(1)' });
+    await post({ dshArtifactOpen: 'mailto:someone@example.com' });
+    await post({ dshArtifactOpen: 42 });
+    assert.equal(opened.length, 1, 'only HTTP(S) leaves the frame');
+    records.tabs.push({ kind: 'browser', title: () => 'Browser' });
+    ctx.sidebarRight.openTab = () => { throw new Error('sidebarRight: no session surface is mounted'); };
+    await post({ dshArtifactOpen: 'https://example.com/fallback' });
+    assert.deepEqual(opened[1], { url: 'https://example.com/fallback', target: '_blank', features: 'noopener,noreferrer' });
+  } finally {
+    window.open = originalOpen;
+    await view.unmount();
+  }
 });
 
 test('AC-011: save refreshes the same tab', async () => {
@@ -2679,18 +2746,33 @@ async function mountSheet(content = SHEET_CONTENT, editable = true) {
   document.body.appendChild(element);
   const changes = [];
   const selections = [];
+  const notices = [];
   let saves = 0;
   const live = {
     current: {
       onChange: (json) => changes.push(json),
       onSave: () => { saves += 1; },
       onSelectionText: (text) => selections.push(text),
+      notify: (text) => notices.push(text),
       t,
     },
   };
   const handle = sheetChunk.mountSheetEditor({ element, content, editable, label: 'Budget', dark: false, live });
   await act(async () => settle(80));
-  return { element, handle, changes, selections, savesRef: () => saves };
+  return { element, handle, changes, selections, notices, savesRef: () => saves };
+}
+
+/** Open the sheet context menu at a grid point, or on a header element. */
+async function openSheetMenu(element, x, y, target = '.art-sheet-scroll') {
+  const host = typeof target === 'string' ? element.querySelector(target) : target;
+  assert.ok(host, 'the context menu target did not render');
+  const event = new window.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 2 });
+  await act(async () => {
+    host.dispatchEvent(event);
+    await settle(40);
+  });
+  assert.equal(event.defaultPrevented, true, 'the browser menu was not replaced');
+  return [...element.querySelectorAll('[role="menuitem"]')];
 }
 
 /** Click one cell of the mounted grid. */
@@ -2877,4 +2959,580 @@ test('SHEET-AC-108: unfilled colored cells remain readable after a theme switch 
     skin.remove();
     document.body.removeAttribute('data-sheet-test-dark');
   }
+});
+
+/** Dispatch one wheel event at the sheet grid. */
+async function wheelSheet(element, init) {
+  const wrap = element.querySelector('.art-sheet-gridwrap');
+  assert.ok(wrap, 'the sheet grid wrapper did not render');
+  await act(async () => {
+    wrap.dispatchEvent(new window.WheelEvent('wheel', { bubbles: true, cancelable: true, deltaMode: 0, ...init }));
+    await settle(30);
+  });
+}
+
+/** The rendered width of one cell, in pixels. */
+function cellWidth(element, ref) {
+  const cell = element.querySelector('[data-cell="' + ref + '"]');
+  assert.ok(cell, 'cell ' + ref + ' did not render');
+  return Number.parseFloat(cell.style.width);
+}
+
+/** The zoom percent the status bar shows. */
+function zoomPercent(element) {
+  const match = /(\d+)%/.exec(element.querySelector('.art-sheet-zoom').textContent ?? '');
+  assert.ok(match, 'the zoom control did not render');
+  return Number(match[1]);
+}
+
+test('SHEET-AC-111: zoom scales the grid and never writes to the workbook', async () => {
+  const { element, handle, changes } = await mountSheet();
+  try {
+    assert.equal(cellWidth(element, 'B2'), 96);
+    assert.equal(zoomPercent(element), 100);
+    const zoomIn = [...element.querySelectorAll('button')].find((button) => button.getAttribute('aria-label') === 'sheet.zoomIn');
+    await click(zoomIn);
+    assert.equal(cellWidth(element, 'B2'), 120);
+    assert.equal(cellWidth(element, 'A2'), 120);
+    assert.equal(zoomPercent(element), 125);
+    assert.equal(changes.length, 0);
+    const zoomOut = [...element.querySelectorAll('button')].find((button) => button.getAttribute('aria-label') === 'sheet.zoomOut');
+    await click(zoomOut);
+    assert.equal(cellWidth(element, 'B2'), 96);
+    await click(zoomIn);
+    await click(element.querySelector('.art-sheet-zoom-value'));
+    assert.equal(zoomPercent(element), 100);
+  } finally {
+    handle.destroy();
+    element.remove();
+  }
+});
+
+test('SHEET-AC-112: ctrl+wheel zooms the grid, a plain wheel does not', async () => {
+  const { element, handle } = await mountSheet();
+  try {
+    await wheelSheet(element, { deltaY: -100 });
+    assert.equal(zoomPercent(element), 100);
+    await wheelSheet(element, { deltaY: -100, ctrlKey: true });
+    assert.ok(zoomPercent(element) > 100, 'a ctrl+wheel notch should zoom in');
+    await wheelSheet(element, { deltaY: 100, ctrlKey: true });
+    assert.equal(zoomPercent(element), 100);
+    const scroll = element.querySelector('.art-sheet-scroll');
+    await act(async () => {
+      scroll.dispatchEvent(new window.WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 100, ctrlKey: true }));
+      await settle(30);
+    });
+    assert.ok(zoomPercent(element) < 100, 'a ctrl+wheel scroll down should zoom out');
+  } finally {
+    handle.destroy();
+    element.remove();
+  }
+});
+
+test('SHEET-AC-113: the status bar reports the selection count, sum, and average', async () => {
+  const { element, handle } = await mountSheet();
+  try {
+    assert.match(element.textContent, /sheet\.count 1/);
+    assert.doesNotMatch(element.textContent, /sheet\.sum/);
+    await clickSheetCell(element, 1, 2);
+    assert.match(element.textContent, /sheet\.count 1/);
+    assert.match(element.textContent, /sheet\.sum 1200/);
+    assert.match(element.textContent, /sheet\.average 1200/);
+    const scroll = element.querySelector('.art-sheet-scroll');
+    const rect = scroll.getBoundingClientRect();
+    await act(async () => {
+      scroll.dispatchEvent(new window.MouseEvent('pointerdown', {
+        bubbles: true,
+        clientX: rect.left + 96 + 40 - scroll.scrollLeft,
+        clientY: rect.top + 3 * 28 + 14 - scroll.scrollTop,
+        shiftKey: true,
+      }));
+      await settle(30);
+    });
+    assert.match(element.textContent, /sheet\.count 3/);
+    assert.match(element.textContent, /sheet\.sum 4000/);
+    assert.match(element.textContent, /sheet\.average 1333.33/);
+  } finally {
+    handle.destroy();
+    element.remove();
+  }
+});
+
+test('SHEET-AC-114: the grid spans a merged range and the toolbar merges a selection', async () => {
+  const merged = JSON.stringify({
+    schemaVersion: 1,
+    sheets: [{
+      name: 'Budget',
+      cells: { A1: 'Quarter', B1: 'Q1', B2: 1200, B3: 800, B4: '=SUM(B2:B3)' },
+      merges: ['A1:B1'],
+    }],
+  });
+  const { element, handle, changes } = await mountSheet(merged);
+  try {
+    const anchor = element.querySelector('[data-cell="A1"]');
+    assert.ok(anchor, 'the merged anchor did not render');
+    assert.equal(Number.parseFloat(anchor.style.width), 192);
+    assert.equal(element.querySelector('[data-cell="B1"]'), null);
+    assert.match(anchor.textContent, /Quarter/);
+    await clickSheetCell(element, 1, 1);
+    assert.equal(element.querySelector('.art-sheet-ref').textContent, 'A1');
+  } finally {
+    handle.destroy();
+    element.remove();
+  }
+
+  const second = await mountSheet();
+  try {
+    await clickSheetCell(second.element, 0, 1);
+    const scroll = second.element.querySelector('.art-sheet-scroll');
+    const rect = scroll.getBoundingClientRect();
+    await act(async () => {
+      scroll.dispatchEvent(new window.MouseEvent('pointerdown', {
+        bubbles: true,
+        clientX: rect.left + 40 - scroll.scrollLeft,
+        clientY: rect.top + 2 * 28 + 14 - scroll.scrollTop,
+        shiftKey: true,
+      }));
+      await settle(30);
+    });
+    const merge = [...second.element.querySelectorAll('button')].find((button) => button.getAttribute('aria-label') === 'sheet.merge');
+    assert.equal(merge.disabled, false);
+    await click(merge);
+    const draft = JSON.parse(second.changes[second.changes.length - 1]);
+    assert.deepEqual(draft.sheets[0].merges, ['A1:A3']);
+    assert.equal(draft.sheets[0].cells.A1, 'Item');
+    assert.equal(draft.sheets[0].cells.A2, undefined);
+    const unmerge = [...second.element.querySelectorAll('button')].find((button) => button.getAttribute('aria-label') === 'sheet.unmerge');
+    assert.equal(unmerge.disabled, false);
+    await click(unmerge);
+    const undone = JSON.parse(second.changes[second.changes.length - 1]);
+    assert.equal(undone.sheets[0].merges, undefined);
+  } finally {
+    second.handle.destroy();
+    second.element.remove();
+  }
+  assert.equal(changes.length, 0);
+
+  const tall = await mountSheet(JSON.stringify({
+    schemaVersion: 1,
+    sheets: [{ name: 'Budget', cells: { A1: 'Tall note', D2: 1 }, merges: ['A1:A3'] }],
+  }));
+  try {
+    const anchor = tall.element.querySelector('[data-cell="A1"]');
+    assert.equal(Number.parseFloat(anchor.style.height), 84);
+    // A merge taller than the viewport must not centre its text off screen.
+    assert.equal(anchor.style.alignItems, 'flex-start');
+  } finally {
+    tall.handle.destroy();
+    tall.element.remove();
+  }
+});
+
+test('SHEET-AC-115: the wrap button wraps a cell and grows its row', async () => {
+  const text = 'A long note that needs wrapping in a narrow column';
+  const content = JSON.stringify({
+    schemaVersion: 1,
+    sheets: [{ name: 'Budget', cells: { A1: text, C2: 1 } }],
+  });
+  const { element, handle, changes } = await mountSheet(content);
+  try {
+    const rowHeads = () => element.querySelectorAll('.art-sheet-rowhead');
+    assert.equal(rowHeads()[1].style.top, '28px');
+    await click([...element.querySelectorAll('button')].find((button) => button.getAttribute('aria-label') === 'sheet.wrap'));
+    const draft = JSON.parse(changes[changes.length - 1]);
+    assert.equal(draft.sheets[0].cells.A1.style.wrap, true);
+    const cell = element.querySelector('[data-cell="A1"]');
+    const height = Number.parseFloat(cell.style.height);
+    assert.ok(height > 28, 'the wrapped row should grow, got ' + String(height));
+    assert.equal(cell.style.whiteSpace, 'pre-wrap');
+    // The grid paints the row and the row header from one geometry.
+    assert.equal(Number.parseFloat(rowHeads()[0].style.height), height);
+    assert.equal(Number.parseFloat(rowHeads()[1].style.top), height);
+    const wrapButton = [...element.querySelectorAll('button')].find((button) => button.getAttribute('aria-label') === 'sheet.wrap');
+    assert.equal(wrapButton.getAttribute('aria-pressed'), 'true');
+    await click(wrapButton);
+    const cleared = JSON.parse(changes[changes.length - 1]);
+    assert.equal(cleared.sheets[0].cells.A1.style, undefined);
+    assert.equal(rowHeads()[1].style.top, '28px');
+  } finally {
+    handle.destroy();
+    element.remove();
+  }
+});
+
+test('SHEET-AC-116: ctrl+f steps through matches and escape closes the find bar', async () => {
+  const content = JSON.stringify({
+    schemaVersion: 1,
+    sheets: [{ name: 'Budget', cells: {
+      A1: 'Item', B1: 'Cost', A2: 'Hosting', B2: 1200, A3: 'Hosting fee', B3: 800, B4: '=SUM(B2:B3)',
+    } }],
+  });
+  const { element, handle, changes } = await mountSheet(content);
+  try {
+    const scroll = element.querySelector('.art-sheet-scroll');
+    const opening = new window.KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true, cancelable: true });
+    await act(async () => {
+      scroll.dispatchEvent(opening);
+      await settle(60);
+    });
+    assert.equal(opening.defaultPrevented, true, 'the browser find was not replaced');
+    const find = element.querySelector('.art-sheet-find-input');
+    assert.ok(find, 'ctrl+f did not open the find bar');
+    assert.equal(document.activeElement, find, 'the find input did not take focus');
+    assert.equal(element.querySelector('.art-sheet-find-count').textContent, '');
+    const byLabel = (label) => [...element.querySelectorAll('button')].find((button) => button.getAttribute('aria-label') === label);
+
+    await changeValue(find, 'Hosting');
+    await act(async () => settle(60));
+    assert.equal(element.querySelector('.art-sheet-ref').textContent, 'A2');
+    assert.equal(element.querySelector('[data-cell="A2"]').getAttribute('data-match'), 'current');
+    assert.equal(element.querySelector('[data-cell="A3"]').getAttribute('data-match'), 'true');
+    assert.equal(element.querySelector('.art-sheet-find-count').textContent, 'sheet.findMatchOf|index=1|count=2');
+
+    await click(byLabel('sheet.findNext'));
+    assert.equal(element.querySelector('.art-sheet-ref').textContent, 'A3');
+    assert.equal(element.querySelector('[data-cell="A3"]').getAttribute('data-match'), 'current');
+    assert.equal(element.querySelector('.art-sheet-find-count').textContent, 'sheet.findMatchOf|index=2|count=2');
+    await click(byLabel('sheet.findNext'));
+    assert.equal(element.querySelector('.art-sheet-ref').textContent, 'A2', 'next did not wrap');
+    await click(byLabel('sheet.findPrevious'));
+    assert.equal(element.querySelector('.art-sheet-ref').textContent, 'A3', 'previous did not wrap');
+
+    await changeValue(find, 'missing');
+    await act(async () => settle(60));
+    assert.equal(element.querySelector('.art-sheet-find-count').textContent, 'sheet.findNoMatch');
+    assert.equal(element.querySelector('[data-cell="A2"]').getAttribute('data-match'), null);
+    assert.equal(element.querySelector('[data-cell="A3"]').getAttribute('data-match'), null);
+
+    await act(async () => {
+      find.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      await settle(60);
+    });
+    assert.equal(element.querySelector('.art-sheet-find'), null, 'escape did not close the find bar');
+    assert.equal(document.activeElement, scroll, 'the grid did not take focus back');
+
+    const findButton = [...element.querySelectorAll('button')].find((button) => button.getAttribute('aria-label') === 'sheet.findAndReplace');
+    await click(findButton);
+    assert.ok(element.querySelector('.art-sheet-find'), 'the toolbar find button did not open the bar');
+    await act(async () => {
+      findButton.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      await settle(40);
+    });
+    assert.equal(element.querySelector('.art-sheet-find'), null, 'escape from the toolbar did not close the bar');
+    assert.equal(changes.length, 0);
+  } finally {
+    handle.destroy();
+    element.remove();
+  }
+});
+
+test('SHEET-AC-117: replace edits the current cell and replace all commits once', async () => {
+  const content = JSON.stringify({
+    schemaVersion: 1,
+    sheets: [{ name: 'Budget', cells: {
+      A1: 'Item', B1: 'Cost', A2: { value: 'Hosting', style: { bold: true } }, B2: 1200, A3: 'Hosting fee', B3: 800,
+    } }],
+  });
+  const { element, handle, changes } = await mountSheet(content);
+  try {
+    await act(async () => {
+      element.querySelector('.art-sheet-scroll').dispatchEvent(new window.KeyboardEvent('keydown', { key: 'h', ctrlKey: true, bubbles: true, cancelable: true }));
+      await settle(60);
+    });
+    const inputs = () => element.querySelectorAll('.art-sheet-find-input');
+    assert.equal(inputs().length, 2, 'ctrl+h did not open the replace row');
+    const action = (label) => [...element.querySelectorAll('.art-sheet-find-action')].find((button) => button.textContent === label);
+
+    await changeValue(inputs()[0], '1200');
+    await changeValue(inputs()[1], '1500');
+    await act(async () => settle(40));
+    await click(action('sheet.replaceOne'));
+    assert.equal(changes.length, 1);
+    assert.equal(JSON.parse(changes[0]).sheets[0].cells.B2, 1500);
+    assert.equal(element.querySelector('.art-sheet-find-count').textContent, 'sheet.findNoMatch');
+
+    await clickSheetCell(element, 0, 1);
+    await changeValue(inputs()[0], 'Hosting');
+    await changeValue(inputs()[1], 'Booking');
+    await act(async () => settle(40));
+    await click(action('sheet.replaceAll'));
+    assert.equal(changes.length, 2, 'replace all did not commit once');
+    const draft = JSON.parse(changes[1]);
+    assert.equal(draft.sheets[0].cells.A2.value, 'Booking');
+    assert.equal(draft.sheets[0].cells.A2.style.bold, true);
+    assert.equal(draft.sheets[0].cells.A3, 'Booking fee');
+    assert.equal(draft.sheets[0].cells.B2, 1500);
+    assert.equal(element.querySelector('.art-sheet-find-count').textContent, 'sheet.findNoMatch');
+
+    await click([...element.querySelectorAll('button')].find((button) => button.getAttribute('aria-label') === 'sheet.undo'));
+    const restored = JSON.parse(changes[changes.length - 1]);
+    assert.equal(restored.sheets[0].cells.A2.value, 'Hosting');
+    assert.equal(restored.sheets[0].cells.A3, 'Hosting fee');
+    assert.equal(restored.sheets[0].cells.B2, 1500);
+  } finally {
+    handle.destroy();
+    element.remove();
+  }
+});
+
+test('SHEET-AC-118: a read-only sheet can find cells but offers no replace', async () => {
+  const { element, handle, changes } = await mountSheet(SHEET_CONTENT, false);
+  try {
+    await act(async () => {
+      element.querySelector('.art-sheet-scroll').dispatchEvent(new window.KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true, cancelable: true }));
+      await settle(60);
+    });
+    const find = element.querySelector('.art-sheet-find-input');
+    assert.ok(find, 'a read-only sheet should still find');
+    assert.deepEqual([...element.querySelectorAll('.art-sheet-find-action')], []);
+    assert.equal([...element.querySelectorAll('button')].find((button) => button.getAttribute('aria-label') === 'sheet.findAndReplace'), undefined);
+    await changeValue(find, 'Hosting');
+    await act(async () => settle(60));
+    assert.equal(element.querySelector('.art-sheet-ref').textContent, 'A2');
+    assert.equal(changes.length, 0);
+  } finally {
+    handle.destroy();
+    element.remove();
+  }
+});
+
+test('SHEET-AC-119: replace treats the query literally and leaves an unchanged literal cell alone', async () => {
+  const content = JSON.stringify({
+    schemaVersion: 1,
+    sheets: [{ name: 'Budget', cells: {
+      A1: { value: '=literal note' }, B1: '=1+1*2',
+    } }],
+  });
+  const { element, handle, changes } = await mountSheet(content);
+  try {
+    await act(async () => {
+      element.querySelector('.art-sheet-scroll').dispatchEvent(new window.KeyboardEvent('keydown', { key: 'h', ctrlKey: true, bubbles: true, cancelable: true }));
+      await settle(60);
+    });
+    const inputs = () => element.querySelectorAll('.art-sheet-find-input');
+    const action = () => [...element.querySelectorAll('.art-sheet-find-action')].find((button) => button.textContent === 'sheet.replaceOne');
+
+    await changeValue(inputs()[0], '*');
+    await changeValue(inputs()[1], '/');
+    await act(async () => settle(40));
+    assert.equal(element.querySelector('.art-sheet-find-count').textContent, 'sheet.findMatchOf|index=1|count=1');
+    await click(action());
+    assert.deepEqual(JSON.parse(changes[0]).sheets[0].cells.B1, { formula: '=1+1/2' });
+
+    await changeValue(inputs()[0], '=literal note');
+    await changeValue(inputs()[1], '=literal note');
+    await act(async () => settle(40));
+    await click(action());
+    assert.equal(changes.length, 1, 'an unchanged replacement still committed');
+    assert.equal(JSON.parse(handle.getJson()).sheets[0].cells.A1.value, '=literal note');
+  } finally {
+    handle.destroy();
+    element.remove();
+  }
+});
+
+test('SHEET-AC-120: the cell menu inserts a row and moves formulas and the selection', async () => {
+  const { element, handle, changes } = await mountSheet();
+  try {
+    const items = await openSheetMenu(element, 96 + 40, 28 + 14);
+    const insert = items.find((item) => item.textContent.startsWith('sheet.insertRowsAbove'));
+    assert.ok(insert, 'the insert-row action is missing: ' + items.map((item) => item.textContent).join(', '));
+    assert.match(insert.textContent, /count=1/);
+    await click(insert);
+    const draft = JSON.parse(changes[changes.length - 1]);
+    assert.equal(draft.sheets[0].cells.B2, undefined);
+    assert.equal(draft.sheets[0].cells.B3, 1200);
+    assert.deepEqual(draft.sheets[0].cells.C3, { formula: '=B3*1.2' });
+    assert.deepEqual(draft.sheets[0].cells.B5, { formula: '=SUM(B3:B4)' });
+    assert.equal(element.querySelector('.art-sheet-ref').textContent, 'B3');
+    assert.equal(element.querySelectorAll('[role="menuitem"]').length, 0, 'the menu stayed open');
+
+    const scroll = element.querySelector('.art-sheet-scroll');
+    await act(async () => {
+      scroll.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'F10', shiftKey: true, bubbles: true, cancelable: true }));
+      await settle(40);
+    });
+    const keyboardItems = [...element.querySelectorAll('[role="menuitem"]')];
+    assert.ok(keyboardItems.length > 0, 'Shift+F10 did not open the menu');
+    await act(async () => {
+      keyboardItems[0].dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      await settle(40);
+    });
+    assert.equal(element.querySelectorAll('[role="menuitem"]').length, 0, 'Escape did not close the menu');
+  } finally {
+    handle.destroy();
+    element.remove();
+  }
+});
+
+test('SHEET-AC-121: header menus act on the selected row or column', async () => {
+  const first = await mountSheet();
+  try {
+    const rowHead = first.element.querySelectorAll('.art-sheet-rowhead')[2];
+    const items = await openSheetMenu(first.element, 10, 10, rowHead);
+    const remove = items.find((item) => item.textContent.startsWith('sheet.deleteRows'));
+    assert.ok(remove, 'the delete-row action is missing');
+    await click(remove);
+    const draft = JSON.parse(first.changes[first.changes.length - 1]);
+    assert.equal(draft.sheets[0].cells.B3.formula, '=SUM(B2:B2)');
+    assert.equal(draft.sheets[0].cells.B3.value, undefined);
+    assert.equal(first.element.querySelector('.art-sheet-ref').textContent, 'A3');
+  } finally {
+    first.handle.destroy();
+    first.element.remove();
+  }
+
+  const second = await mountSheet();
+  try {
+    const columnHead = second.element.querySelectorAll('.art-sheet-colhead')[1];
+    const items = await openSheetMenu(second.element, 10, 10, columnHead);
+    const insert = items.find((item) => item.textContent.startsWith('sheet.insertColumnsLeft'));
+    assert.ok(insert, 'the insert-column action is missing');
+    await click(insert);
+    const draft = JSON.parse(second.changes[second.changes.length - 1]);
+    assert.equal(draft.sheets[0].cells.B1, undefined);
+    assert.equal(draft.sheets[0].cells.C1, 'Cost');
+    assert.deepEqual(draft.sheets[0].cells.D2, { formula: '=C2*1.2' });
+    assert.deepEqual(draft.sheets[0].cells.C4, { formula: '=SUM(C2:C3)' });
+  } finally {
+    second.handle.destroy();
+    second.element.remove();
+  }
+});
+
+test('SHEET-AC-122: a read-only sheet menu offers only copy and reports a refused clipboard', async () => {
+  const { element, handle, notices } = await mountSheet(SHEET_CONTENT, false);
+  try {
+    const items = await openSheetMenu(element, 96 + 40, 28 + 14);
+    assert.deepEqual(items.map((item) => item.textContent), ['sheet.copy']);
+    await click(items[0]);
+    assert.deepEqual(notices, ['sheet.copyFailed']);
+    assert.equal(element.querySelectorAll('[role="menuitem"]').length, 0, 'the menu stayed open');
+  } finally {
+    handle.destroy();
+    element.remove();
+  }
+});
+
+test('SHEET-AC-123: the header menu moves a row and a column with their formulas', async () => {
+  const first = await mountSheet();
+  try {
+    const rowHead = first.element.querySelectorAll('.art-sheet-rowhead')[1];
+    const items = await openSheetMenu(first.element, 10, 10, rowHead);
+    const down = items.find((item) => item.textContent.startsWith('sheet.moveRowsDown'));
+    assert.ok(down, 'the move-row action is missing');
+    await click(down);
+    const draft = JSON.parse(first.changes[first.changes.length - 1]);
+    assert.equal(draft.sheets[0].cells.A2, undefined);
+    assert.equal(draft.sheets[0].cells.B2, 800);
+    assert.equal(draft.sheets[0].cells.A3, 'Hosting');
+    assert.equal(draft.sheets[0].cells.B3, 1200);
+    assert.deepEqual(draft.sheets[0].cells.C3, { formula: '=B3*1.2' });
+    assert.deepEqual(draft.sheets[0].cells.B4, { formula: '=SUM(B2:B3)' });
+    assert.equal(first.element.querySelector('.art-sheet-ref').textContent, 'A3:CV3');
+  } finally {
+    first.handle.destroy();
+    first.element.remove();
+  }
+
+  const second = await mountSheet();
+  try {
+    const columnHead = second.element.querySelectorAll('.art-sheet-colhead')[1];
+    const items = await openSheetMenu(second.element, 10, 10, columnHead);
+    const right = items.find((item) => item.textContent.startsWith('sheet.moveColumnsRight'));
+    assert.ok(right, 'the move-column action is missing');
+    await click(right);
+    const draft = JSON.parse(second.changes[second.changes.length - 1]);
+    assert.equal(draft.sheets[0].cells.C2, 1200);
+    assert.deepEqual(draft.sheets[0].cells.B2, { formula: '=C2*1.2' });
+    assert.deepEqual(draft.sheets[0].cells.C4, { formula: '=SUM(C2:C3)' });
+  } finally {
+    second.handle.destroy();
+    second.element.remove();
+  }
+});
+
+test('AC-119: the artifact menu moves a saved artifact to another workspace and follows it', async () => {
+  const host = fakeHost();
+  const id = 'art_ws_transfer11601';
+  host.state.artifacts.set(id, { workspaceId: 'ws-a', manifest: host.manifest(id, 'page', 'Transfer me', 2), content: '<p>saved</p>' });
+  const { ctx, records } = stubContext(host);
+  plugin.apply(ctx);
+  const workspaces = [
+    { workspaceId: 'ws-a', path: '/work/a', title: 'Work A', sessionIds: ['ses-a'] },
+    { workspaceId: 'ws-b', path: '/work/b', title: 'Work B' },
+  ];
+  const opened = [];
+  const tab = slot(records, 'sidebar.right.pane.tab', 'dsh-artifact-studio/artifact');
+  const view = await render(tab.component, {
+    ...tabProps(`dsh-resource://artifact/workspace/ws-a/${id}`, { open: (address, options) => opened.push({ address, options }) }),
+    useWorkspaces: (select) => select({ items: workspaces }),
+  });
+  try {
+    await click(view.container.querySelector('[aria-label="gallery.more"]'));
+    const move = [...view.container.querySelectorAll('[role="menuitem"]')].find((button) => button.textContent === 'transfer.move');
+    assert.ok(move, 'the move action is missing');
+    await click(move);
+    const select = view.container.querySelector('[role="dialog"] select');
+    assert.ok(select, 'the target workspace select is missing');
+    assert.deepEqual([...select.options].map((option) => option.value), ['ws-b'], 'the source workspace is offered as a target');
+    await click([...view.container.querySelectorAll('[role="dialog"] button')].find((button) => button.textContent === 'transfer.moveAction'));
+    const call = host.calls.find((entry) => entry.endpoint === 'transfer');
+    assert.deepEqual(call.payload, { scope: 'workspace', workspaceId: 'ws-a', id, targetWorkspaceId: 'ws-b', mode: 'move' });
+    assert.equal(opened.length, 1, 'the moved artifact was not opened');
+    assert.match(opened[0].address, /workspace\/ws-b\/art_ws_moved/);
+    assert.equal(opened[0].options.replaceTab, true);
+  } finally { await view.unmount(); }
+});
+
+test('AC-120: copying keeps the open artifact and writes the copy to the target workspace', async () => {
+  const host = fakeHost();
+  const id = 'art_ws_transfer11701';
+  host.state.artifacts.set(id, { workspaceId: 'ws-a', manifest: host.manifest(id, 'doc', 'Copy me', 1), content: 'saved' });
+  const { ctx, records } = stubContext(host);
+  plugin.apply(ctx);
+  const opened = [];
+  const tab = slot(records, 'sidebar.right.pane.tab', 'dsh-artifact-studio/artifact');
+  const view = await render(tab.component, {
+    ...tabProps(`dsh-resource://artifact/workspace/ws-a/${id}`, { open: (address, options) => opened.push({ address, options }) }),
+    useWorkspaces: (select) => select({ items: [
+      { workspaceId: 'ws-a', path: '/work/a', title: 'Work A', sessionIds: ['ses-a'] },
+      { workspaceId: 'ws-b', path: '/work/b', title: 'Work B' },
+    ] }),
+  });
+  try {
+    await click(view.container.querySelector('[aria-label="gallery.more"]'));
+    await click([...view.container.querySelectorAll('[role="menuitem"]')].find((button) => button.textContent === 'transfer.copy'));
+    await click([...view.container.querySelectorAll('[role="dialog"] button')].find((button) => button.textContent === 'transfer.copyAction'));
+    const call = host.calls.find((entry) => entry.endpoint === 'transfer');
+    assert.equal(call.payload.mode, 'copy');
+    assert.equal(opened.length, 0, 'a copy should not replace the open artifact');
+    assert.equal(host.state.artifacts.has(id), true, 'the source artifact was removed');
+    assert.ok([...host.state.artifacts.values()].some((entry) => entry.workspaceId === 'ws-b' && entry.manifest.title === 'Copy me'));
+  } finally { await view.unmount(); }
+});
+
+test('AC-121: a move from the full-page artifact view shows the destination artifact', async () => {
+  const host = fakeHost();
+  const id = 'art_ws_transfer11801';
+  host.state.artifacts.set(id, { workspaceId: 'ws-a', manifest: host.manifest(id, 'page', 'Panel transfer', 1), content: '<p>panel</p>' });
+  const { ctx, records } = stubContext(host);
+  const snapshot = { items: [
+    { workspaceId: 'ws-a', path: '/work/a', title: 'Work A' },
+    { workspaceId: 'ws-b', path: '/work/b', title: 'Work B' },
+  ] };
+  ctx.workspaces.list.getSnapshot = () => snapshot;
+  plugin.apply(ctx);
+  const view = await galleryView(records);
+  try {
+    await click(view.container.querySelector('.art-tile-open'));
+    await click(view.container.querySelector('[aria-label="gallery.more"]'));
+    await click([...view.container.querySelectorAll('[role="menuitem"]')].find((button) => button.textContent === 'transfer.move'));
+    await click([...view.container.querySelectorAll('[role="dialog"] button')].find((button) => button.textContent === 'transfer.moveAction'));
+    await act(async () => settle(120));
+    const section = view.container.querySelector('[data-artifact-id]');
+    assert.ok(section, 'the moved artifact did not stay open');
+    assert.match(section.getAttribute('data-artifact-id'), /^art_ws_moved/);
+    assert.match(view.container.textContent, /Work B/);
+  } finally { await view.unmount(); }
 });

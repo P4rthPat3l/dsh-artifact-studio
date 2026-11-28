@@ -30,7 +30,7 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
     | { type: 'label'; id: string; text: string };
   export interface MenuProps {
     open: boolean;
-    anchor: ReactElement;
+    anchor: ReactElement | null;
     items?: readonly MenuEntry[];
     onSelect?: (id: string) => void;
     onClose: () => void;
@@ -39,6 +39,12 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
     portal?: boolean;
     autoFocus?: boolean;
     minWidthFromAnchor?: boolean;
+    /** A pointer-positioned context menu, not a dropdown under its anchor. */
+    contextual?: boolean;
+    /** The client coordinates captured when a context menu opens. */
+    anchorPoint?: { readonly x: number; readonly y: number } | undefined;
+    /** The control that gets focus back when the menu closes. */
+    returnFocus?: (() => HTMLElement | null) | undefined;
     className?: string;
     listClassName?: string;
   }

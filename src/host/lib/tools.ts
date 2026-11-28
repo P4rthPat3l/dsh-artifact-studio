@@ -1,6 +1,7 @@
 import type { Manifest, Scope } from '../../contract.js';
+import type { SheetWorkbook } from '../../sheet/index.js';
 import { checkPage } from './checks.js';
-import { SheetError, applySheetOperations, checkSheetWorkbook, parseSheetWorkbook, serializeSheetWorkbook, sheetOverview } from '../../sheet/index.js';
+import { SheetError, applySheetOperations, checkSheetWorkbook, evaluateWorkbook, parseSheetWorkbook, serializeSheetWorkbook, sheetOverview, sheetValues } from '../../sheet/index.js';
 import { MAX_INSTRUCTIONS } from './guide.js';
 import type { GuidePatch } from './guide.js';
 import type { ResolvedRecipe } from './recipes.js';
@@ -279,6 +280,50 @@ function outlineText(rows: readonly JsonValue[]): string {
   return lines.join('\n');
 }
 
+/**
+ * The bounded evaluated read of one sheet, from the values argument.
+ * @param workbook the sheet workbook.
+ * @param raw the values argument.
+ * @returns the evaluated cells and their range.
+ */
+function sheetValuesOf(workbook: SheetWorkbook, raw: unknown): JsonValue {
+  const fields = fieldsOf(raw);
+  const sheet = typeof fields.sheet === 'string' ? fields.sheet : undefined;
+  const range = typeof fields.range === 'string' ? fields.range : undefined;
+  try {
+    const values = sheetValues(workbook, evaluateWorkbook(workbook), sheet, range);
+    return {
+      sheet: values.sheet,
+      range: values.range,
+      truncated: values.truncated,
+      cells: values.cells.map((cell) => ({ ref: cell.ref, value: cell.value, display: cell.display, error: cell.error ?? null })),
+    };
+  } catch (error) {
+    if (error instanceof SheetError) throw new ArtifactError('artifact/invalid-sheet', error.message, { message: error.message });
+    throw error;
+  }
+}
+
+/**
+ * The values block the model reads: one line per row, tab separated.
+ * @param value the sheetValues part of the read result.
+ * @returns the text, empty when the read carried no values.
+ */
+function valuesText(value: JsonValue | undefined): string {
+  const fields = record(value ?? null);
+  const cells = Array.isArray(fields.cells) ? fields.cells.map(record) : [];
+  if (cells.length === 0) return '';
+  const rows = new Map<string, string[]>();
+  for (const cell of cells) {
+    const rowKey = /[0-9]+$/.exec(String(cell.ref))?.[0] ?? '0';
+    const values = rows.get(rowKey) ?? [];
+    values.push(String(cell.display));
+    rows.set(rowKey, values);
+  }
+  const head = '\n\nValues ' + String(fields.sheet) + '!' + String(fields.range) + (fields.truncated === true ? ' (truncated; narrow the range)' : '') + ':';
+  return head + '\n' + [...rows.values()].map((values) => values.join('\t')).join('\n');
+}
+
 const SUMMARY_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -383,6 +428,15 @@ export function createTools(host: ToolHost): ToolDefinition[] {
         id: { type: 'string', description: 'Artifact id from artifact_create or artifact_list.' },
         version: { type: 'integer', description: 'An earlier version to read. Omit for the current one.' },
         outline: { type: 'boolean', description: 'For a design, include the layer outline with paths for artifact_patch. Defaults to false; set it when you plan to patch.' },
+        values: {
+          type: 'object',
+          additionalProperties: false,
+          description: 'For a sheet, also return evaluated cells: the computed value, display text, and error code. Bounded to 500 cells; check the truncated flag.',
+          properties: {
+            sheet: { type: 'string', description: 'Sheet name. Defaults to the first sheet.' },
+            range: { type: 'string', description: 'A1 range such as B2:F20. Defaults to the used range.' },
+          },
+        },
         workspaceId: WORKSPACE_PARAM,
       },
     },
@@ -404,6 +458,10 @@ export function createTools(host: ToolHost): ToolDefinition[] {
             description: 'Per-sheet size and counts for a sheet artifact.',
             items: { type: 'object' },
           },
+          sheetValues: {
+            type: 'object',
+            description: 'Evaluated cells for the requested sheet and range, when values was sent.',
+          },
         },
       },
       render: (_args, value) => {
@@ -416,6 +474,7 @@ export function createTools(host: ToolHost): ToolDefinition[] {
         const sheetLine = sheetRows.length === 0
           ? ''
           : '\n\nSheets: ' + sheetRows.map((row) => String(row.name) + ' (' + String(row.rows) + ' x ' + String(row.columns) + ', ' + String(row.cells) + ' cells)').join('; ') + '.';
+        const valuesBlock = valuesText(fields.sheetValues);
         const summaryLine = info.nodes === undefined
           ? ''
           : `\n\nDesign: ${String(info.nodes)} nodes, ${String(info.pages)} page(s), fonts ${Array.isArray(info.fonts) && info.fonts.length > 0 ? info.fonts.map(String).join(', ') : 'none'}.`
@@ -423,7 +482,7 @@ export function createTools(host: ToolHost): ToolDefinition[] {
         return [
           {
             type: 'text',
-            text: `${line(artifact, 'Artifact')} Showing version ${String(fields.readVersion)}.${summaryLine}${sheetLine}${outlineBlock}\n\n${String(fields.content)}`,
+            text: `${line(artifact, 'Artifact')} Showing version ${String(fields.readVersion)}.${summaryLine}${sheetLine}${valuesBlock}${outlineBlock}\n\n${String(fields.content)}`,
           },
         ];
       },
@@ -435,6 +494,8 @@ export function createTools(host: ToolHost): ToolDefinition[] {
       const result = await service.read(target, id, optionalInteger(fields, 'version'));
       const info = result.designInfo;
       const wantOutline = fields.outline === true;
+      const workbook = result.manifest.type === 'sheet' ? parseSheetWorkbook(result.content) : undefined;
+      const values = workbook === undefined || fields.values === undefined ? undefined : sheetValuesOf(workbook, fields.values);
       return {
         artifact: summary(result.manifest, target),
         readVersion: result.version,
@@ -442,9 +503,10 @@ export function createTools(host: ToolHost): ToolDefinition[] {
         ...(info === undefined
           ? {}
           : { designInfo: { pages: info.pages, nodes: info.nodes, types: info.types, fonts: info.fonts, warnings: info.warnings, ...(wantOutline ? { outline: info.outline ?? [] } : {}) } }),
-        ...(result.manifest.type === 'sheet'
-          ? { sheetInfo: sheetOverview(parseSheetWorkbook(result.content)).map((item) => ({ name: item.name, rows: item.rows, columns: item.columns, cells: item.cells, formulas: item.formulas })) }
-          : {}),
+        ...(workbook === undefined
+          ? {}
+          : { sheetInfo: sheetOverview(workbook).map((item) => ({ name: item.name, rows: item.rows, columns: item.columns, cells: item.cells, formulas: item.formulas })) }),
+        ...(values === undefined ? {} : { sheetValues: values }),
       };
     },
   };
@@ -569,7 +631,7 @@ export function createTools(host: ToolHost): ToolDefinition[] {
     name: 'artifact_sheet_update',
     description: [
       'Edit a sheet artifact\'s cells and structure without rewriting the whole workbook JSON. Read the artifact first when the user may have edited it, then send one operations array with the current baseVersion.',
-      'Operations run in order: set one cell, write a block, clear a range, format a range, add, rename, or delete a sheet, or set a column width. A string that starts with "=" is a formula in a written block. The whole workbook is validated before it is saved, and formula warnings come back with the result.',
+      'Operations run in order: set one cell, write a block, clear a range, format a range, merge or unmerge cells, insert, delete, or move rows and columns, add, rename, or delete a sheet, or set a column width. A string that starts with "=" is a formula in a written block. The whole workbook is validated before it is saved, and formula warnings come back with the result. Inserting, deleting, or moving rows and columns moves cells, merged ranges, column widths, and formula references.',
       'Use artifact_read for the current workbook and artifact_update when you rewrite most of it, change its title, or change the sheet structure in one batch.',
     ].join('\n'),
     parameters: {
@@ -581,7 +643,7 @@ export function createTools(host: ToolHost): ToolDefinition[] {
         baseVersion: { type: 'integer', description: 'The version you read; a stale value is refused.' },
         operations: {
           type: 'array',
-          description: 'Ordered edits. set {op,sheet?,ref,value?|formula?,style?}; write {op,sheet?,ref,values}; clear {op,sheet?,range}; format {op,sheet?,range,style}; add-sheet {op,name}; rename-sheet {op,from,to}; delete-sheet {op,name}; set-column-width {op,sheet?,column,width}.',
+          description: 'Ordered edits. set {op,sheet?,ref,value?|formula?,style?}; write {op,sheet?,ref,values}; clear {op,sheet?,range}; format {op,sheet?,range,style} where style accepts bold, italic, underline, strike, wrap, align, color, background, and numberFormat; merge {op,sheet?,range}; unmerge {op,sheet?,range}; add-sheet {op,name}; rename-sheet {op,from,to}; delete-sheet {op,name}; set-column-width {op,sheet?,column,width}; insert-rows, delete-rows, and move-rows {op,sheet?,at,count?,to?}; insert-columns, delete-columns, and move-columns {op,sheet?,at,count?,to?} where at and to are column letters.',
           items: { type: 'object' },
         },
         workspaceId: WORKSPACE_PARAM,
@@ -711,13 +773,14 @@ export function createTools(host: ToolHost): ToolDefinition[] {
   const exportTool: ToolDefinition = {
     name: 'artifact_export',
     description:
-      'Write an artifact to a standalone file and return its path. A page exports as html; a doc exports as md, docx, or printable html; a design exports as png, svg, .fig, a self-contained view-only html viewer, or a smaller html page with an svg scene and selectable text; a sheet exports as csv (first sheet) or xlsx (every sheet).',
+      'Write an artifact to a standalone file and return its path. A page exports as html; a doc exports as md, docx, or printable html; a design exports as png, svg, .fig, a self-contained view-only html viewer, or a smaller html page with an svg scene and selectable text; a sheet exports as csv (one sheet, the first by default) or xlsx (every sheet).',
     parameters: {
       type: 'object',
       additionalProperties: false,
       required: ['id', 'format'],
       properties: { id: { type: 'string' }, format: { type: 'string', enum: ['html', 'md', 'docx', 'png', 'svg', 'fig', 'html-svg', 'csv', 'xlsx'] },
         version: { type: 'integer', minimum: 1, description: 'Saved version to export. Omit for the current version.' },
+        sheet: { type: 'string', description: 'Sheet name for a CSV export. Defaults to the first sheet. XLSX exports every sheet.' },
         workspaceId: WORKSPACE_PARAM },
     },
     output: {
@@ -728,7 +791,7 @@ export function createTools(host: ToolHost): ToolDefinition[] {
       const fields = fieldsOf(args);
       const id = requiredString(fields, 'id');
       const target = await targetFor(host, exec, id.startsWith('art_lib_') ? 'library' : undefined, optionalString(fields, 'workspaceId'));
-      const file = await service.export(target, id, requiredFormat(fields), optionalInteger(fields, 'version'));
+      const file = await service.export(target, id, requiredFormat(fields), optionalInteger(fields, 'version'), optionalString(fields, 'sheet'));
       return { path: file.path, bytes: file.bytes };
     },
   };

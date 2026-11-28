@@ -14,6 +14,7 @@ export interface SheetLive {
   onChange(json: string): void;
   onSave(): void;
   onSelectionText(text: string): void;
+  notify(text: string): void;
   t: Translator;
 }
 

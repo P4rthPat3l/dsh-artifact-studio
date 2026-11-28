@@ -1,4 +1,4 @@
-import { ARTIFACT_DESIGN_SKILL, VISUAL_CODEBASE_WALKTHROUGH_SKILL } from './lib/skill.js';
+import { ARTIFACT_DESIGN_SKILL, VISUAL_CODEBASE_WALKTHROUGH_SKILL, VISUAL_FEATURE_FLOW_SKILL } from './lib/skill.js';
 import type { BundledSkill } from './lib/skill.js';
 
 export const name = 'dsh-artifact-studio-skill';
@@ -18,4 +18,5 @@ export interface SkillHostContext {
 export function apply(ctx: SkillHostContext): void {
   ctx.skills.register(ARTIFACT_DESIGN_SKILL);
   ctx.skills.register(VISUAL_CODEBASE_WALKTHROUGH_SKILL);
+  ctx.skills.register(VISUAL_FEATURE_FLOW_SKILL);
 }

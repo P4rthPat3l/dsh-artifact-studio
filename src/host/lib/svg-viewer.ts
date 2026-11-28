@@ -195,9 +195,10 @@ function boxHtml(box: SvgTextBox): string {
 }
 
 /**
- * The page script: fit the stage to the window, pan with a drag or a plain wheel, and
- * zoom about the pointer with Ctrl or Cmd wheel. A left drag that starts on a text box
- * selects text instead of panning, because the page exists to be read and copied.
+ * The page script: fit the stage to the window, pan with a drag, a plain wheel, or two
+ * fingers, and zoom about the pointer with Ctrl or Cmd wheel or a two-finger pinch. A
+ * left drag that starts on a text box selects text instead of panning, because the page
+ * exists to be read and copied.
  * @param width the stage width.
  * @param height the stage height.
  * @returns the script body.
@@ -214,6 +215,7 @@ let zoom = 1, panX = 0, panY = 0, touched = false, space = false;
 // selection misfires on transform-scaled text at some fit scales, and the page
 // exists to be read and copied. Panning is a translate on the wrapper outside it.
 const apply = () => { pan.style.transform = 'translate(' + panX + 'px,' + panY + 'px)'; stage.style.zoom = String(zoom); };
+const clampZoom = (value) => Math.min(8, Math.max(0.02, value));
 const fit = () => {
   zoom = Math.min(window.innerWidth / W, window.innerHeight / H);
   panX = (window.innerWidth - W * zoom) / 2;
@@ -279,8 +281,60 @@ const pressCount = (event) => {
   return lastPress.count;
 };
 let drag = null;
+// Touch pointers pan and pinch together; a mouse has only one pointer.
+const touches = new Map();
+let pinch = null;
+const startPinch = () => {
+  const [first, second] = [...touches.values()];
+  const rect = host.getBoundingClientRect();
+  pinch = {
+    ids: [first.id, second.id],
+    distance: Math.hypot(first.x - second.x, first.y - second.y),
+    midX: (first.x + second.x) / 2 - rect.left,
+    midY: (first.y + second.y) / 2 - rect.top,
+  };
+  selecting = null;
+  drag = null;
+  touched = true;
+};
+const movePinch = () => {
+  const first = touches.get(pinch.ids[0]);
+  const second = touches.get(pinch.ids[1]);
+  if (first === undefined || second === undefined) return;
+  const distance = Math.hypot(first.x - second.x, first.y - second.y);
+  if (distance < 0.5) return;
+  const rect = host.getBoundingClientRect();
+  const midX = (first.x + second.x) / 2 - rect.left;
+  const midY = (first.y + second.y) / 2 - rect.top;
+  // The first spread after two fingers land sets the baseline, not a jump.
+  if (pinch.distance < 0.5) {
+    pinch.distance = distance;
+    pinch.midX = midX;
+    pinch.midY = midY;
+    return;
+  }
+  const next = clampZoom(zoom * (distance / pinch.distance));
+  panX += midX - pinch.midX;
+  panY += midY - pinch.midY;
+  panX = midX - (midX - panX) * (next / zoom);
+  panY = midY - (midY - panY) * (next / zoom);
+  zoom = next;
+  pinch.distance = distance;
+  pinch.midX = midX;
+  pinch.midY = midY;
+  apply();
+};
 host.addEventListener('pointerdown', (event) => {
   if (event.button !== 0 && event.button !== 1) return;
+  if (event.pointerType === 'touch') {
+    touches.set(event.pointerId, { id: event.pointerId, x: event.clientX, y: event.clientY });
+    if (touches.size >= 2) {
+      event.preventDefault();
+      if (pinch === null) startPinch();
+      host.setPointerCapture(event.pointerId);
+      return;
+    }
+  }
   if (event.button === 0 && !space && onText(event)) {
     if (event.altKey) return;
     const caret = caretAt(event.clientX, event.clientY);
@@ -318,6 +372,15 @@ host.addEventListener('pointerdown', (event) => {
   host.style.cursor = 'grabbing';
 });
 host.addEventListener('pointermove', (event) => {
+  const point = touches.get(event.pointerId);
+  if (point !== undefined) {
+    point.x = event.clientX;
+    point.y = event.clientY;
+  }
+  if (pinch !== null) {
+    if (pinch.ids.includes(event.pointerId)) movePinch();
+    return;
+  }
   if (selecting !== null) {
     extendSelection(event);
     return;
@@ -327,7 +390,25 @@ host.addEventListener('pointermove', (event) => {
   panY = event.clientY - drag.y;
   apply();
 });
-const end = (event) => { drag = null; selecting = null; host.style.cursor = space ? 'grabbing' : 'grab'; if (host.hasPointerCapture(event.pointerId)) host.releasePointerCapture(event.pointerId); };
+const end = (event) => {
+  const wasPinching = pinch !== null && pinch.ids.includes(event.pointerId);
+  if (event.pointerType === 'touch') {
+    touches.delete(event.pointerId);
+    if (wasPinching) {
+      pinch = null;
+      selecting = null;
+      const remaining = [...touches.values()];
+      drag = remaining.length === 1 ? { x: remaining[0].x - panX, y: remaining[0].y - panY } : null;
+      if (remaining.length === 1) host.setPointerCapture(remaining[0].id);
+    }
+  }
+  if (!wasPinching) {
+    drag = null;
+    selecting = null;
+  }
+  host.style.cursor = space ? 'grabbing' : 'grab';
+  if (host.hasPointerCapture(event.pointerId)) host.releasePointerCapture(event.pointerId);
+};
 host.addEventListener('pointerup', end);
 host.addEventListener('pointercancel', end);
 window.addEventListener('keydown', (event) => {
@@ -346,7 +427,7 @@ host.addEventListener('wheel', (event) => {
   touched = true;
   if (event.ctrlKey || event.metaKey) {
     const rect = host.getBoundingClientRect();
-    const next = Math.min(8, Math.max(0.02, zoom * (event.deltaY < 0 ? 1.1 : 1 / 1.1)));
+    const next = clampZoom(zoom * (event.deltaY < 0 ? 1.1 : 1 / 1.1));
     const mx = event.clientX - rect.left;
     const my = event.clientY - rect.top;
     panX = mx - (mx - panX) * (next / zoom);

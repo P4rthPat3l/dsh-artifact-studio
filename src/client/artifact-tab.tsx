@@ -21,7 +21,7 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives';
 import { FORMATS_BY_TYPE, formatArtifactAddress, parseArtifactAddress } from '../contract.js';
-import type { ArtifactAddress, ArtifactPayload, DesignSelection, ExportFormat, VersionEntry } from '../contract.js';
+import type { ArtifactAddress, ArtifactPayload, DesignSelection, ExportFormat, Manifest, TransferMode, VersionEntry } from '../contract.js';
 import { api, codeOf, download, errorKey } from './api.js';
 import type { CanvasSnapshot, DesignCanvasHandle, SelectedLayer } from './canvas/entry.js';
 import { DesignCanvasView } from './design-canvas-view.jsx';
@@ -31,14 +31,15 @@ import { DesignView } from './design-view.jsx';
 import { DocView } from './doc-view.jsx';
 import { useEditor } from './editor-model.js';
 import { printDocument } from './frames.js';
-import type { InputActions, TabInfo, TabProps, Translator, UseTabInfo } from './harness.js';
+import type { InputActions, TabInfo, TabProps, Translator, UseTabInfo, WorkspaceItem } from './harness.js';
 import { HistoryPanel } from './history.jsx';
-import { announceListChange, announceVersion, notify, useAnnouncedVersion } from './store.js';
+import { announceListChange, announceVersion, notify, rememberTitle, useAnnouncedVersion } from './store.js';
 import { PageFrame, SourceEditor } from './page-view.jsx';
 import { SheetView } from './sheet-view.jsx';
 import { buildDesignQuote, buildReference, plainRequest, quoteText } from './review.js';
 import type { Quote } from './review.js';
 import { RebaseDialog } from './rebase-dialog.jsx';
+import { TransferDialog } from './transfer-dialog.jsx';
 import { useHarnessDark } from './theme.js';
 
 /**
@@ -225,15 +226,17 @@ function DrawerShell({ label, closeLabel, overlay, onClose, head, children }: {
 export function ArtifactTab(props: TabProps) {
   const info = props.useTabInfo();
   const address = parseArtifactAddress(info.tab.contentId ?? info.tab.navigation?.address);
-  const workspaceName = props.useWorkspaces(state => state.items.find(item => address?.scope === 'workspace' && item.workspaceId === address.workspaceId)?.title);
+  const workspaces = props.useWorkspaces(state => state.items);
+  const workspaceName = workspaces.find(item => address?.scope === 'workspace' && item.workspaceId === address.workspaceId)?.title;
   if (address === undefined) return <section className="art-root"><p className="art-note">{props.t('error.notFound')}</p></section>;
-  return <ArtifactBody key={formatArtifactAddress(address)} t={props.t} address={address} useTabInfo={props.useTabInfo} onBack={info.tab.actions?.close} workspaceName={workspaceName} inputActions={props.inputActions} />;
+  return <ArtifactBody key={formatArtifactAddress(address)} t={props.t} address={address} useTabInfo={props.useTabInfo} onBack={info.tab.actions?.close} workspaceName={workspaceName} workspaces={workspaces} inputActions={props.inputActions} />;
 }
 
-export function ArtifactPanelBody({ t, address, onBack, workspaceName, inputActions }: {
-  t: Translator; address: ArtifactAddress; onBack: () => void; workspaceName?: string; inputActions?: InputActions;
+export function ArtifactPanelBody({ t, address, onBack, workspaceName, workspaces, onMoved, inputActions }: {
+  t: Translator; address: ArtifactAddress; onBack: () => void; workspaceName?: string;
+  workspaces?: readonly WorkspaceItem[]; onMoved?: (address: string) => void; inputActions?: InputActions;
 }) {
-  return <ArtifactBody key={formatArtifactAddress(address)} t={t} address={address} onBack={onBack} workspaceName={workspaceName} back inputActions={inputActions} />;
+  return <ArtifactBody key={formatArtifactAddress(address)} t={t} address={address} onBack={onBack} workspaceName={workspaceName} workspaces={workspaces} onMoved={onMoved} back inputActions={inputActions} />;
 }
 
 interface ArtifactBodyProps {
@@ -242,6 +245,8 @@ interface ArtifactBodyProps {
   useTabInfo?: UseTabInfo;
   onBack?: () => void;
   workspaceName?: string;
+  workspaces?: readonly WorkspaceItem[];
+  onMoved?: (address: string) => void;
   back?: boolean;
   inputActions?: InputActions;
 }
@@ -252,7 +257,7 @@ type LeaveAction = () => void | Promise<void>;
 const useNoTab = (): TabInfo | undefined => undefined;
 type Mode = 'view' | 'edit' | 'source';
 
-function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, back, inputActions }: ArtifactBodyProps) {
+function ArtifactBody({ t, address, useTabInfo, onBack, workspaceName, workspaces, onMoved, back, inputActions }: ArtifactBodyProps) {
   const { model, state } = useEditor(address);
   const { payload, draft, saving, conflict, failure, failureMessage } = state;
   const where = model.where;
@@ -277,6 +282,7 @@ const [warningsDismissed, setWarningsDismissed] = useState<string | null>(null);
   const [menu, setMenu] = useState<'export' | 'more' | 'version' | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [rebasing, setRebasing] = useState(false);
+  const [transfer, setTransfer] = useState<TransferMode | null>(null);
   const [renameText, setRenameText] = useState('');
   const [leave, setLeave] = useState<{ run: LeaveAction } | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -499,6 +505,23 @@ const [warningsDismissed, setWarningsDismissed] = useState<string | null>(null);
     if (await model.save(renameText.trim())) setRenaming(false);
   };
 
+  /** Announce the new artifact, then follow a move to its destination tab. */
+  const transferred = (manifest: Manifest, targetWorkspaceId: string) => {
+    const target = workspaces?.find((workspace) => workspace.workspaceId === targetWorkspaceId);
+    const name = target?.title ?? targetWorkspaceId;
+    announceListChange();
+    rememberTitle(manifest.id, manifest.title);
+    if (transfer === 'move') {
+      notify(t('transfer.moved', { title: manifest.title, workspace: name }));
+      const next = formatArtifactAddress({ scope: 'workspace', workspaceId: targetWorkspaceId, id: manifest.id });
+      if (info?.tab.actions === undefined) onMoved?.(next);
+      else info.tab.actions.openResource(next, { replaceTab: true });
+    } else {
+      notify(t('transfer.copied', { title: manifest.title, workspace: name }));
+    }
+    setTransfer(null);
+  };
+
   const restore = async () => {
     if (viewing === null || busy) return;
     const version = viewing.version;
@@ -600,6 +623,10 @@ const [warningsDismissed, setWarningsDismissed] = useState<string | null>(null);
             : draft !== null ? t('tab.unsaved') : t('tab.saved');
   const tone = conflict || (failure !== undefined && !saving) ? 'error' : saving ? 'warn' : undefined;
   const identity = address.scope === 'workspace' ? workspaceName ?? address.workspaceId : t('scope.library');
+  const sourceWorkspaceId = address.scope === 'workspace' ? address.workspaceId : null;
+  const transferTargets = sourceWorkspaceId === null
+    ? []
+    : (workspaces ?? []).filter((workspace) => workspace.workspaceId !== sourceWorkspaceId);
   const showEditor = mode === 'source' && !readOnly && (editing || draft !== null);
   const unpanelled = type === 'doc' || type === 'sheet';
 
@@ -620,10 +647,15 @@ const [warningsDismissed, setWarningsDismissed] = useState<string | null>(null);
     if (entry === 'print') void output('print');
     else void output(entry as ExportFormat);
   };
+  const transferEntries: MenuEntry[] = transferTargets.length === 0 ? [] : [
+    { id: 'copy', label: t('transfer.copy'), disabled: busy || saving || conflict || readOnly },
+    { id: 'move', label: t('transfer.move'), disabled: busy || saving || conflict || readOnly },
+  ];
   const moreEntries: MenuEntry[] = [
     ...(overlay ? [...exportEntries, { type: 'separator' as const, id: 'more-gap' }] : []),
     ...(type === 'design' || type === 'sheet' || readOnly ? [] : [{ id: 'rebase', label: t('generation.rebase'), disabled: busy || saving || conflict }]),
     { id: 'rename', label: t('tab.rename') },
+    ...transferEntries,
     { id: 'reload', label: t('tab.reload') },
     { type: 'separator', id: 'danger-gap' },
     { id: 'delete', label: t('tab.delete'), danger: true },
@@ -632,6 +664,7 @@ const [warningsDismissed, setWarningsDismissed] = useState<string | null>(null);
     setMenu(null);
     if (entry === 'rename') { setRenameText(payload.manifest.title); setRenaming(true); }
     else if (entry === 'rebase') setRebasing(true);
+    else if (entry === 'copy' || entry === 'move') guarded(() => setTransfer(entry));
     else if (entry === 'reload') guarded(reload);
     else if (entry === 'delete') setDeleting(true);
     else runExport(entry);
@@ -753,6 +786,7 @@ const [warningsDismissed, setWarningsDismissed] = useState<string | null>(null);
         </div>
       </header>
       {rebasing ? <RebaseDialog t={t} where={where} onClose={() => setRebasing(false)} onApply={rebase} /> : null}
+      {transfer === null ? null : <TransferDialog t={t} mode={transfer} where={where} id={id} title={payload.manifest.title} targets={transferTargets} onClose={() => setTransfer(null)} onDone={transferred} />}
       {renaming ? <form className="art-inline-form" onSubmit={event => { event.preventDefault(); void rename(); }}>
         <Input aria-label={t('tab.rename')} value={renameText} maxLength={120} autoFocus onChange={event => setRenameText(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') setRenaming(false); }} />
         <Button type="submit" size="sm" variant="primary" disabled={saving || conflict}>{t('tab.save')}</Button>
@@ -802,7 +836,7 @@ const [warningsDismissed, setWarningsDismissed] = useState<string | null>(null);
             />
           ) : null}
           {type === 'sheet' ? (
-            <SheetView content={text} revision={(viewing?.version ?? 0) + ':' + state.revision} editable={!readOnly && !conflict} label={payload.manifest.title} loadingLabel={t('empty.loading')} failedLabel={t('error.generic')} design={selectedPayload.design} dark={dark} t={t} onChange={value => model.edit(value)} onSave={() => void model.save()} onSelectionText={reportSelection} />
+            <SheetView content={text} revision={(viewing?.version ?? 0) + ':' + state.revision} editable={!readOnly && !conflict} label={payload.manifest.title} loadingLabel={t('empty.loading')} failedLabel={t('error.generic')} design={selectedPayload.design} dark={dark} t={t} onChange={value => model.edit(value)} onSave={() => void model.save()} onSelectionText={reportSelection} onNotify={notify} />
           ) : type === 'doc' ? (
             <DocView markdown={text} revision={(viewing?.version ?? 0) + ':' + state.revision} editable={!readOnly && !conflict} label={payload.manifest.title} loadingLabel={t('empty.loading')} failedLabel={t('error.generic')} design={selectedPayload.design} dark={dark} t={t} onChange={value => model.edit(value)} onSave={() => void model.save()} onSelectionText={reportSelection} selectionAction={selection === null ? null : <Button size="sm" variant="primary" icon={<IconSparkleRegular size={14} />} onMouseDown={event => event.preventDefault()} onClick={() => void askAgent(selection)}>{t('agent.ask')}</Button>} />
           ) : mode !== 'source' ? (

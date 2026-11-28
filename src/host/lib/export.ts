@@ -22,8 +22,8 @@ import type { MarkedToken, Token, Tokens } from 'marked';
 import { FORMATS_BY_TYPE } from '../../contract.js';
 import type { DesignTokens, ExportFormat, ExportedFile, Manifest } from '../../contract.js';
 import { DOC_CSP, DOC_STYLE, PAGE_CSP, PRINT_CSP, composePage, escapeHtml } from '../../render.js';
-import { effectiveTextColor, evaluateWorkbook, parseSheetWorkbook, sheetTable, sheetToCsv } from '../../sheet/index.js';
-import type { SheetTable, SheetWorkbook } from '../../sheet/index.js';
+import { SheetError, effectiveTextColor, evaluateWorkbook, parseRangeRef, parseSheetWorkbook, sheetOf, sheetTable, sheetToCsv } from '../../sheet/index.js';
+import type { CellRange, SheetTable, SheetWorkbook } from '../../sheet/index.js';
 import { workbookToXlsx } from './xlsx.js';
 import type { DesignRenderer } from './design-render.js';
 import { ArtifactError } from './errors.js';
@@ -408,13 +408,21 @@ export function sheetToPrintableHtml(workbook: SheetWorkbook, designCss: string,
     }
     const byPosition = new Map<string, SheetTable['cells'][number]>();
     for (const cell of table.cells) byPosition.set(String(cell.row) + ',' + String(cell.column), cell);
+    const merges = (sheet.merges ?? []).map(parseRangeRef).filter((range): range is CellRange => range !== undefined);
     const rows: string[] = [];
     for (let row = 1; row <= table.rows; row += 1) {
       const cells: string[] = [];
       for (let column = 0; column < table.columns; column += 1) {
         const cell = byPosition.get(String(row) + ',' + String(column));
+        const merge = merges.find((range) => row >= range.row1 && row <= range.row2 && column >= range.column1 && column <= range.column2);
+        const isAnchor = merge === undefined || (row === merge.row1 && column === merge.column1);
+        if (!isAnchor) continue;
         const style = cell === undefined ? '' : printCellStyle(cell);
-        cells.push('<td' + (style === '' ? '' : ' style="' + escapeHtml(style) + '"') + '>' + escapeHtml(cell?.display ?? '') + '</td>');
+        const span = merge === undefined
+          ? ''
+          : (merge.column2 > merge.column1 ? ' colspan="' + String(merge.column2 - merge.column1 + 1) + '"' : '')
+            + (merge.row2 > merge.row1 ? ' rowspan="' + String(merge.row2 - merge.row1 + 1) + '"' : '');
+        cells.push('<td' + span + (style === '' ? '' : ' style="' + escapeHtml(style) + '"') + '>' + escapeHtml(cell?.display ?? '') + '</td>');
       }
       rows.push('<tr>' + cells.join('') + '</tr>');
     }
@@ -443,6 +451,7 @@ td { padding: 4px 8px; border: .5px solid color-mix(in srgb, var(--artifact-colo
  * @param design the resolved design system.
  * @param now the clock value.
  * @param designs the design renderer, needed for a design's derived formats.
+ * @param sheet the sheet a CSV exports; the first sheet when omitted.
  * @returns the written file and its bytes, base64 encoded for a browser download.
  */
 export async function writeExport(
@@ -453,6 +462,7 @@ export async function writeExport(
   design: { tokens: DesignTokens; css: string },
   now: Date,
   designs?: DesignRenderer,
+  sheet?: string,
 ): Promise<ExportedFile> {
   if (!FORMATS_BY_TYPE[manifest.type].includes(format)) {
     throw new ArtifactError('artifact/unsupported-format', `A ${manifest.type} cannot be exported as ${format}.`, {
@@ -489,8 +499,16 @@ export async function writeExport(
     } catch {
       throw new ArtifactError('artifact/corrupt', 'The saved sheet content cannot be read.', { id: manifest.id });
     }
-    if (format === 'csv') data = Buffer.from(sheetToCsv(workbook, evaluateWorkbook(workbook)), 'utf8');
-    else if (format === 'xlsx') data = workbookToXlsx(workbook);
+    if (format === 'csv') {
+      if (sheet !== undefined) {
+        try {
+          sheetOf(workbook, sheet);
+        } catch (error) {
+          throw new ArtifactError('artifact/invalid-sheet', error instanceof SheetError ? error.message : 'No sheet is named "' + sheet + '".', { sheet });
+        }
+      }
+      data = Buffer.from(sheetToCsv(workbook, evaluateWorkbook(workbook), sheet), 'utf8');
+    } else if (format === 'xlsx') data = workbookToXlsx(workbook);
     else {
       throw new ArtifactError('artifact/unsupported-format', 'A sheet exports as csv or xlsx.', {
         supported: FORMATS_BY_TYPE.sheet,

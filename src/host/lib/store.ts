@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { CONTENT_FILE, ID_PATTERN, MAX_LIST_LIMIT, MAX_TITLE, isArtifactType, isManifest, isVersionSource, isGenerationSummary } from '../../contract.js';
-import type { ArtifactType, ListResult, Manifest, Scope, VersionEntry, VersionSource } from '../../contract.js';
+import type { ArtifactType, ListResult, Manifest, Scope, TransferMode, VersionEntry, VersionSource } from '../../contract.js';
 import { ArtifactError, errnoCode } from './errors.js';
 import { assertWithin, assertPlainPath, withWriteLock, writeAtomic } from './fsutil.js';
 import { generationText, generationHash, generationSummary, parseGeneration } from './generation.js';
@@ -646,6 +646,80 @@ export class ArtifactStore {
   }
 
   /**
+   * Copy an artifact into another scope root under a new id, and optionally
+   * trash the source after the copy is complete. The id is always regenerated,
+   * so a copy can never collide with the artifact it came from.
+   * @param source the source scope root.
+   * @param id the source artifact id.
+   * @param destination the destination scope root.
+   * @param mode copy, or move after the copy is complete.
+   * @returns the manifest in the destination.
+   */
+  async transfer(source: ScopeRoot, id: string, destination: ScopeRoot, mode: TransferMode): Promise<Manifest> {
+    if (source.root === destination.root) {
+      throw new ArtifactError('artifact/same-workspace', 'The artifact is already in that workspace.', { workspaceId: destination.workspaceId });
+    }
+    const sourceDir = await artifactDir(source, id);
+    return withWriteLock(source.root, sourceDir, async () => {
+      const manifest = await this.readManifest(sourceDir);
+      const targetId = newId(destination.scope);
+      const targetDir = path.join(destination.root, targetId);
+      await assertPlainPath(destination.root, targetDir);
+      try {
+        await fs.mkdir(targetDir);
+      } catch (error) {
+        throw new ArtifactError('artifact/storage-failure', 'The artifact could not be copied.', {
+          errno: errnoCode(error),
+        });
+      }
+      let next: Manifest;
+      try {
+        await this.copyTree(source.root, sourceDir, destination.root, targetDir);
+        next = { ...manifest, id: targetId, scope: destination.scope };
+        await writeAtomic(path.join(targetDir, MANIFEST), `${JSON.stringify(next, null, 2)}\n`);
+      } catch (error) {
+        await fs.rm(targetDir, { recursive: true, force: true });
+        if (error instanceof ArtifactError) throw error;
+        throw new ArtifactError('artifact/storage-failure', 'The artifact could not be copied.', {
+          errno: errnoCode(error),
+        });
+      }
+      // The copy is complete. A failed trash leaves it in place and the source
+      // untouched, so a retry adds a copy rather than losing the artifact.
+      if (mode === 'move') await this.trash(source, sourceDir, id);
+      return next;
+    });
+  }
+
+  /**
+   * Copy every stored file and directory, refusing a link or a special file.
+   * The destination is a new id, so nothing there is overwritten.
+   * @param sourceRoot the source scope root.
+   * @param from the source directory.
+   * @param targetRoot the destination scope root.
+   * @param to the destination directory.
+   */
+  private async copyTree(sourceRoot: string, from: string, targetRoot: string, to: string): Promise<void> {
+    for (const entry of await fs.readdir(from, { withFileTypes: true })) {
+      const sourcePath = path.join(from, entry.name);
+      const targetPath = path.join(to, entry.name);
+      await assertWithin(sourceRoot, sourcePath);
+      await assertWithin(targetRoot, targetPath);
+      if (entry.isSymbolicLink() || (!entry.isDirectory() && !entry.isFile())) {
+        throw new ArtifactError('artifact/forbidden-path', 'The artifact tree holds a link or a special file.', {
+          name: entry.name,
+        });
+      }
+      if (entry.isDirectory()) {
+        await fs.mkdir(targetPath);
+        await this.copyTree(sourceRoot, sourcePath, targetRoot, targetPath);
+      } else {
+        await writeAtomic(targetPath, await fs.readFile(sourcePath));
+      }
+    }
+  }
+
+  /**
    * Move an artifact into the scope's trash, then sweep trash entries past retention.
    * @param root the scope root.
    * @param id the artifact id.
@@ -655,15 +729,26 @@ export class ArtifactStore {
     const dir = await artifactDir(root, id);
     return withWriteLock(root.root, dir, async () => {
       await this.readManifest(dir);
-      const trashRoot = path.join(root.root, TRASH);
-      await assertWithin(root.root, trashRoot);
-      await fs.mkdir(trashRoot, { recursive: true });
-      const target = path.join(trashRoot, `${id}-${this.now().getTime()}`);
-      await assertWithin(root.root, target);
-      await fs.rename(dir, target);
-      await this.sweepTrash(trashRoot);
-      return { trashed: true, trashPath: target };
+      return { trashed: true, trashPath: await this.trash(root, dir, id) };
     });
+  }
+
+  /**
+   * Move one artifact directory into the scope's trash as `<id>-<epoch ms>`.
+   * @param root the scope root.
+   * @param dir the artifact directory.
+   * @param id the artifact id.
+   * @returns the trash location.
+   */
+  private async trash(root: ScopeRoot, dir: string, id: string): Promise<string> {
+    const trashRoot = path.join(root.root, TRASH);
+    await assertWithin(root.root, trashRoot);
+    await fs.mkdir(trashRoot, { recursive: true });
+    const target = path.join(trashRoot, `${id}-${this.now().getTime()}`);
+    await assertWithin(root.root, target);
+    await fs.rename(dir, target);
+    await this.sweepTrash(trashRoot);
+    return target;
   }
 
   /**

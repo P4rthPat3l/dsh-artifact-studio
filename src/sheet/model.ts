@@ -43,10 +43,13 @@ export const SHEET_LIMITS = {
   maxColumnWidth: 800,
   defaultColumnWidth: 96,
   defaultRowHeight: 28,
+  maxRowHeight: 400,
   maxOperations: 200,
   maxOperationCells: 4000,
   maxEvaluationCells: 200000,
   maxSelectionQuote: 1500,
+  maxReadCells: 500,
+  maxMerges: 200,
 } as const;
 
 /** A scalar a cell can hold. */
@@ -70,6 +73,8 @@ export interface SheetStyle {
   /** A hex fill color such as "#f3f4f6". */
   background?: string;
   numberFormat?: NumberFormat;
+  /** Wrap the text to the cell width, which grows its row. */
+  wrap?: boolean;
 }
 
 /** A style update. A null value removes one property. */
@@ -90,6 +95,11 @@ export interface SheetData {
   cells: Record<string, SheetCell>;
   /** Column letter to pixel width. Omitted widths use the default. */
   columnWidths?: Record<string, number>;
+  /**
+   * Merged ranges such as "A1:C1". Only the top-left cell of a range holds a
+   * shown value; the rest stay stored but covered.
+   */
+  merges?: string[];
 }
 
 /** The complete stored workbook. */
@@ -130,9 +140,9 @@ const BAD_SHEET_NAME = /[\\/?*[\]:]/;
 const NUMBER_FORMATS: readonly NumberFormat[] = ['general', 'number', 'integer', 'currency', 'percent', 'date'];
 const ALIGNS: readonly HorizontalAlign[] = ['left', 'center', 'right'];
 
-const STYLE_KEYS = ['bold', 'italic', 'underline', 'strike', 'align', 'color', 'background', 'numberFormat'] as const;
+const STYLE_KEYS = ['bold', 'italic', 'underline', 'strike', 'align', 'color', 'background', 'numberFormat', 'wrap'] as const;
 const CELL_KEYS = ['value', 'formula', 'style'] as const;
-const SHEET_KEYS = ['name', 'cells', 'columnWidths'] as const;
+const SHEET_KEYS = ['name', 'cells', 'columnWidths', 'merges'] as const;
 const WORKBOOK_KEYS = ['schemaVersion', 'sheets'] as const;
 
 function isFields(value: unknown): value is Record<string, unknown> {
@@ -344,7 +354,7 @@ function checkStyle(raw: unknown, at: string): SheetStyle {
   if (!isFields(raw)) throw new SheetError(at + ' must be an object.');
   onlyKeys(raw, STYLE_KEYS, at);
   const style: SheetStyle = {};
-  for (const key of ['bold', 'italic', 'underline', 'strike'] as const) {
+  for (const key of ['bold', 'italic', 'underline', 'strike', 'wrap'] as const) {
     const value = raw[key];
     if (value === undefined) continue;
     if (typeof value !== 'boolean') throw new SheetError(at + '.' + key + ' must be true or false.');
@@ -390,7 +400,7 @@ export function copyStyle(style: SheetStyle | undefined): SheetStyle | undefined
  */
 export function mergeStyle(base: SheetStyle | undefined, patch: SheetStylePatch): SheetStyle | undefined {
   const next: SheetStyle = { ...(base ?? {}) };
-  const booleans = ['bold', 'italic', 'underline', 'strike'] as const;
+  const booleans = ['bold', 'italic', 'underline', 'strike', 'wrap'] as const;
   for (const key of booleans) {
     const value = patch[key];
     if (value === undefined) continue;
@@ -463,6 +473,44 @@ function normalizeFormula(raw: unknown, at: string): string {
   return formula;
 }
 
+/**
+ * Whether two ranges share at least one cell.
+ * @param left the first range.
+ * @param right the second range.
+ * @returns whether they overlap.
+ */
+export function rangesOverlap(left: CellRange, right: CellRange): boolean {
+  return left.row1 <= right.row2 && right.row1 <= left.row2 && left.column1 <= right.column2 && right.column1 <= left.column2;
+}
+
+/**
+ * Validate the merged ranges of one sheet. Ranges are canonicalised, must cover
+ * at least two cells, and may not overlap.
+ * @param raw the stored value.
+ * @param at the field path for a message.
+ * @returns the canonical ranges in reading order, or undefined when empty.
+ */
+function normalizeMerges(raw: unknown, at: string): string[] | undefined {
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw)) throw new SheetError(at + ' must be an array of ranges such as "A1:C1".');
+  if (raw.length > SHEET_LIMITS.maxMerges) throw new SheetError(at + ' holds at most ' + String(SHEET_LIMITS.maxMerges) + ' merged ranges.');
+  const ranges: CellRange[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== 'string') throw new SheetError(at + ' must hold range text such as "A1:C1".');
+    const range = parseRangeRef(entry);
+    if (range === undefined) throw new SheetError(at + ' has an invalid range "' + entry + '".');
+    if (rangeSize(range) < 2) throw new SheetError(at + ' has "' + entry + '", which covers one cell; a merge needs at least two.');
+    if (range.row2 > SHEET_LIMITS.maxRows || range.column2 >= SHEET_LIMITS.maxColumns) {
+      throw new SheetError(at + ' has "' + entry + '", which falls outside the sheet.');
+    }
+    if (ranges.some((other) => rangesOverlap(other, range))) throw new SheetError(at + ' has "' + entry + '", which overlaps another merged range.');
+    ranges.push(range);
+  }
+  if (ranges.length === 0) return undefined;
+  const sorted = [...ranges].sort((left, right) => (left.row1 - right.row1) || (left.column1 - right.column1));
+  return sorted.map(formatRangeRef);
+}
+
 function normalizeWidths(raw: unknown, at: string): Record<string, number> | undefined {
   if (raw === undefined) return undefined;
   if (!isFields(raw)) throw new SheetError(at + ' must be an object of column letters to pixel widths.');
@@ -533,7 +581,8 @@ export function normalizeSheetWorkbook(value: unknown): SheetWorkbook {
       if (cell !== undefined) ordered[ref] = cell;
     }
     const columnWidths = normalizeWidths(rawSheet.columnWidths, at + '.columnWidths');
-    return { name, cells: ordered, ...(columnWidths === undefined ? {} : { columnWidths }) };
+    const merges = normalizeMerges(rawSheet.merges, at + '.merges');
+    return { name, cells: ordered, ...(columnWidths === undefined ? {} : { columnWidths }), ...(merges === undefined ? {} : { merges }) };
   });
   return { schemaVersion: SHEET_SCHEMA_VERSION, sheets };
 }
@@ -612,6 +661,7 @@ export function serializeSheetWorkbook(workbook: SheetWorkbook): string {
       }
       data.columnWidths = widths;
     }
+    if (sheet.merges !== undefined && sheet.merges.length > 0) data.merges = [...sheet.merges];
     return data;
   });
   return JSON.stringify({ schemaVersion: SHEET_SCHEMA_VERSION, sheets }, null, 2) + '\n';
@@ -697,6 +747,7 @@ export function cloneWorkbook(workbook: SheetWorkbook): SheetWorkbook {
       name: sheet.name,
       cells: Object.fromEntries(Object.entries(sheet.cells).map(([ref, cell]) => [ref, cloneCell(cell)])),
       ...(sheet.columnWidths === undefined ? {} : { columnWidths: { ...sheet.columnWidths } }),
+      ...(sheet.merges === undefined ? {} : { merges: [...sheet.merges] }),
     })),
   };
 }

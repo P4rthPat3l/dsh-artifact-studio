@@ -1,5 +1,5 @@
-import { ARTIFACT_TYPES, EXPORT_FORMATS, SCOPES } from '../../contract.js';
-import type { ArtifactType, ExportFormat, Scope, DesignSelection, DesignSaveOptions } from '../../contract.js';
+import { ARTIFACT_TYPES, EXPORT_FORMATS, SCOPES, TRANSFER_MODES } from '../../contract.js';
+import type { ArtifactType, ExportFormat, Scope, DesignSelection, DesignSaveOptions, TransferMode } from '../../contract.js';
 import { ArtifactError } from './errors.js';
 import type { TextEdit } from './store.js';
 
@@ -106,6 +106,12 @@ export function requiredType(fields: Fields): ArtifactType {
   const type = optionalType(fields);
   if (type === undefined) throw new ArtifactError('artifact/bad-request', `"type" must be one of ${ARTIFACT_TYPES.join(', ')}.`);
   return type;
+}
+
+export function requiredTransferMode(fields: Fields): TransferMode {
+  const mode = optionalEnum(fields, 'mode', TRANSFER_MODES, 'artifact/bad-request');
+  if (mode === undefined) throw new ArtifactError('artifact/bad-request', '"mode" must be copy or move.');
+  return mode;
 }
 
 export function requiredFormat(fields: Fields): ExportFormat {

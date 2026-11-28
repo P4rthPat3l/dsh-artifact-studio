@@ -16,6 +16,7 @@ import type {
   PreviewResult,
   ResolvedDesignSystem,
   Scope,
+  TransferMode,
   VersionEntry,
   VersionSource,
 } from '../../contract.js';
@@ -496,6 +497,27 @@ export class ArtifactService {
   }
 
   /**
+   * Copy or move a workspace artifact into another registered workspace. The
+   * destination gets a new id, and a move trashes the source after the copy
+   * lands. Library artifacts are shared by design and stay where they are.
+   * @param target the caller's context, naming the source workspace.
+   * @param id the artifact id.
+   * @param input the destination workspace and whether to leave a copy.
+   * @returns the manifest in the destination.
+   */
+  async transfer(target: Target, id: string, input: { targetWorkspaceId: string; mode: TransferMode }): Promise<Manifest> {
+    const source = await this.root(target, id);
+    if (source.scope !== 'workspace' || source.workspaceId === undefined) {
+      throw new ArtifactError('artifact/unsupported-type', 'Only a workspace artifact can move to another workspace.', { id });
+    }
+    if (source.workspaceId === input.targetWorkspaceId) {
+      throw new ArtifactError('artifact/same-workspace', 'Choose a different workspace.', { workspaceId: input.targetWorkspaceId });
+    }
+    const destination = await workspaceRoot(this.config, requireWorkspace(this.registry, input.targetWorkspaceId));
+    return this.store.transfer(source, id, destination, input.mode);
+  }
+
+  /**
    * A print copy of the selected saved page or document.
    * @param target the caller's context.
    * @param id the artifact id.
@@ -529,14 +551,15 @@ export class ArtifactService {
    * @param id the artifact id.
    * @param format the format.
    * @param version the version, when the caller named one.
+   * @param sheet the sheet a CSV exports; the first sheet when omitted.
    * @returns the exported file.
    */
-  async export(target: Target, id: string, format: ExportFormat, version?: number): Promise<ExportedFile> {
+  async export(target: Target, id: string, format: ExportFormat, version?: number, sheet?: string): Promise<ExportedFile> {
     const root = await this.root(target, id);
     const result = await this.store.read(root, id, version);
     const { manifest, content, version: readVersion } = result;
     const design = await this.versionDesign(target, result);
-    return writeExport(root, { ...manifest, version: readVersion }, content, format, design, this.now(), this.designs);
+    return writeExport(root, { ...manifest, version: readVersion }, content, format, design, this.now(), this.designs, sheet);
   }
 
   /**

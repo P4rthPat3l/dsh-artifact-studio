@@ -13,6 +13,7 @@ import type {
   PreviewResult,
   ResolvedDesignSystem,
   Scope,
+  TransferMode,
   VersionEntry,
 } from '../contract.js';
 import type { ConnectionService, Translator } from './harness.js';
@@ -205,6 +206,8 @@ export const api = {
   rename: (where: Where, id: string, baseVersion: number, title: string) =>
     call('update', { ...fields(where), id, baseVersion, title }, hasManifest),
   remove: (where: Where, id: string) => call('delete', { ...fields(where), id }, isTrashed),
+  transfer: (where: Where, id: string, targetWorkspaceId: string, mode: TransferMode) =>
+    call('transfer', { ...fields(where), id, targetWorkspaceId, mode }, hasManifest),
   history: (where: Where, id: string, signal?: AbortSignal) => call('history', { ...fields(where), id }, isHistory, signal),
   restore: (where: Where, id: string, version: number, baseVersion: number) =>
     call('restore', { ...fields(where), id, version, baseVersion }, hasManifest),
@@ -257,6 +260,8 @@ export function errorKey(code: string | undefined): string {
       return 'error.tooLarge';
     case 'artifact/no-workspace':
       return 'error.noWorkspace';
+    case 'artifact/same-workspace':
+      return 'error.sameWorkspace';
     case 'artifact/forbidden-path':
       return 'error.forbidden';
     case 'artifact/corrupt':

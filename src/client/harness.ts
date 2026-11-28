@@ -14,6 +14,8 @@ export interface ConnectionService {
 export interface OpenResourceOptions {
   kind?: string;
   params?: Record<string, unknown>;
+  /** Replace the tab that asked to open the resource. */
+  replaceTab?: boolean;
 }
 
 export interface SidebarRightService {
@@ -119,6 +121,13 @@ export interface TabTypeDefinition {
   guide?: GuideEntry[];
 }
 
+/** The registry of right-sidebar tab types. */
+export interface SidebarRightTabsService {
+  register(definition: TabTypeDefinition): () => void;
+  /** The type registered under a kind, or undefined when this composition has none. */
+  get(kind: string): TabTypeDefinition | undefined;
+}
+
 export interface SlotSpec {
   name: string;
   key?: string;
@@ -139,7 +148,7 @@ export interface ClientContext {
   sidebarRight: SidebarRightService;
   locale: LocaleService;
   slots: SlotsService;
-  sidebarRightTabs: { register(definition: TabTypeDefinition): () => void };
+  sidebarRightTabs: SidebarRightTabsService;
   workspaces: WorkspacesService;
   /** Look up an optional service by name. */
   get(name: string): unknown;

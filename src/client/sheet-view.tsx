@@ -36,6 +36,7 @@ export interface SheetViewProps {
   onChange: (json: string) => void;
   onSave: () => void;
   onSelectionText?: (text: string) => void;
+  onNotify?: (text: string) => void;
   t: Translator;
   design?: DesignTokens;
   dark?: boolean;
@@ -55,11 +56,13 @@ export function SheetView(props: SheetViewProps) {
     onChange: props.onChange,
     onSave: props.onSave,
     onSelectionText: props.onSelectionText ?? (() => undefined),
+    notify: props.onNotify ?? (() => undefined),
     t: props.t,
   });
   liveRef.current.onChange = props.onChange;
   liveRef.current.onSave = props.onSave;
   liveRef.current.onSelectionText = props.onSelectionText ?? (() => undefined);
+  liveRef.current.notify = props.onNotify ?? (() => undefined);
   liveRef.current.t = props.t;
 
   const style = useMemo<CSSProperties>(() => {
