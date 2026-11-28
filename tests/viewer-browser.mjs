@@ -48,14 +48,22 @@ try {
   });
   assert.ok(corner !== null && corner.width > 0 && corner.height > 0, 'the canvas has no size');
 
-  // AC-VIEW-006: dragging moves the view, Ctrl wheel zooms it, and Delete edits nothing.
+  // AC-VIEW-006: a drag that starts on the frame pans the view and does not select
+  // it, Ctrl wheel zooms it, and Delete edits nothing. A drag back must restore the
+  // first frame exactly, which a selection outline would not.
   await page.mouse.move(450, 300);
   await page.mouse.down();
   await page.mouse.move(600, 420, { steps: 10 });
   await page.mouse.up();
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(300);
   const dragged = await page.screenshot();
   assert.ok(!painted.equals(dragged), 'dragging did not move the view');
+  await page.mouse.move(600, 420);
+  await page.mouse.down();
+  await page.mouse.move(450, 300, { steps: 10 });
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  assert.ok(painted.equals(await page.screenshot()), 'a drag across the frame selected it instead of panning');
   await page.keyboard.down('Control');
   await page.mouse.wheel(0, -240);
   await page.keyboard.up('Control');

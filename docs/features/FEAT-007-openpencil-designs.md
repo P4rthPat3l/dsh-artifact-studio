@@ -137,7 +137,7 @@ The agent writes Design JSX once and saves it as a versioned artifact. The user 
 | Native document | A `.fig` file, the writable native format of the current OpenPencil engine. `.pen` is read-only. |
 | Preview | A derived PNG rendered from the stored source. It is never the source of truth. |
 | Bundled font | A font file shipped in `@open-pencil/core/assets`: Inter in five weights and Noto Naskh Arabic. |
-| View | The default canvas mode. Pan, zoom, and click selection work; no tool can change the document. |
+| View | The default canvas mode. A drag pans from any point, the wheel pans and Ctrl or Cmd wheel zooms, and a click selects; no tool can change the document. |
 | Edit | The canvas mode that adds the drawing tools, undo and redo, and the inspector. |
 | Inspector | The React panel in the tab's right drawer with the Layers tree and the selection's Properties. |
 | Mockup | The user-facing name for a design artifact. The stored type stays `design`. |
@@ -438,7 +438,7 @@ Status: **Inferred**. The files exist, the typecheck is clean, and 159 tests pas
 | --- | --- | --- | --- | --- |
 | Client | Snapshot and mutation bridge over the Vue editor | `src/client/canvas/bridge.ts` | `createCanvasBridge` | Create |
 | Client | Handle API, mode, fit tracking, selection quote | `src/client/canvas/entry.ts` | `DesignCanvasHandle` | Modify |
-| Client | View input: click selection and panning without editing; Ctrl wheel zoom caught before the engine | `src/client/canvas/surface.ts` | `CanvasSurface` | Modify |
+| Client | View input: drag panning and release-click selection without editing; Ctrl wheel zoom caught before the engine | `src/client/canvas/surface.ts` | `CanvasSurface` | Modify |
 | Client | Zoom range and the wheel and pinch scale steps | `src/client/canvas/zoom.ts` | `wheelZoom`, `clampZoom` | Create |
 | Client | Vue rail with the layer tree and properties | `src/client/canvas/panels.ts` | `DesignPanels` | Delete |
 | Client | Floating dock, opening and failure surfaces | `src/client/design-canvas-view.tsx` | `DesignCanvasView` | Modify |
@@ -631,7 +631,7 @@ declare function mountDesignCanvas(options: DesignCanvasOptions): Promise<Design
 
 The engine waits for CanvasKit before it mounts, compiles the source, creates the editor, and reports ready by resolving the promise. A mount failure rejects; the tab keeps the PNG and shows the retry bar. The engine serializes an edited page with `selectionToJSX(page.childIds, graph)` from `@open-pencil/design-jsx` on every settled history entry. It never writes; `onChange` hands the text to the tab's draft and `onSave` asks the tab to save. External revisions arrive through `setSource`, which recompiles and replaces the graph.
 
-A hidden Vue component inside `LayerTreeRoot` reads the SDK's composables and fills `src/client/canvas/bridge.ts`. The bridge builds a plain snapshot on every settled change and hands out the mutation methods above. Snapshot fields are either a value or null when the selected layers disagree. `quoteSelection` walks the graph for the node's path and serializes only that node. In View the engine's own input is disabled and the surface keeps click selection, wheel pan and zoom, and pointer panning, so no gesture can change the document.
+A hidden Vue component inside `LayerTreeRoot` reads the SDK's composables and fills `src/client/canvas/bridge.ts`. The bridge builds a plain snapshot on every settled change and hands out the mutation methods above. Snapshot fields are either a value or null when the selected layers disagree. `quoteSelection` walks the graph for the node's path and serializes only that node. In View the engine's own input is disabled and the surface keeps click selection, wheel pan and zoom, and pointer panning: a left press starts a pan anywhere, including on a frame, and a release without movement selects the layer under the press, so no gesture can change the document and a drag never selects the frame it started on.
 
 
 ## 13. Data Model and Storage
@@ -697,7 +697,7 @@ A preview is keyed by the sha256 of the source. The current version's cache is r
 | BR-017 | Inferred | A property edit commits as one undo entry per control edit. Typing previews without writing history | Inspector and canvas handle | AC-053 |
 | BR-018 | Inferred | Icons resolve only from the bundled `mdi` set. An unknown set or name refuses the write and never falls back to the network | Worker and canvas chunk | AC-037, AC-039 |
 | BR-019 | Inferred | A bundled family renders from `assets/fonts`. Any other family still warns and substitutes | Worker and canvas chunk | AC-041 |
-| BR-020 | Inferred | View is the default mode for a mockup. View gestures cannot change the document: the engine input is disabled and only click selection, pan, and zoom reach the editor | Canvas surface and mode | AC-043, AC-046 |
+| BR-020 | Inferred | View is the default mode for a mockup. View gestures cannot change the document: the engine input is disabled and only click selection, pan, and zoom reach the editor. A press starts a pan from any point and a release before the pointer moves 3 pixels on either axis selects, so a drag that starts on a frame pans instead of selecting it | Canvas surface and mode | AC-043, AC-046, AC-086 |
 | BR-021 | Inferred | Edit with agent on a layer quotes only that layer's name, path from the top-level frame, and JSX. The text is shortened at 4,000 characters with a marker | `review.ts` and the layer bar | AC-048, AC-049 |
 | BR-022 | Inferred | The inspector and History share one drawer and are never open together | `ArtifactTab` | AC-050 |
 | BR-023 | Inferred | The React inspector reads a plain snapshot from the canvas handle and writes only through handle methods. A disagreeing field is null and reads as Mixed | Canvas bridge and inspector | AC-051, AC-054 |
@@ -719,7 +719,7 @@ A preview is keyed by the sha256 of the source. The current version's cache is r
 
 ## 15. Acceptance Criteria and Cases
 
-Status: AC-001 to AC-042 are implemented and covered by host, engine, route, and client tests. AC-043 to AC-065 are implemented and covered by client tests named `FEAT-007 AC-0nn`. AC-066 is the wheel zoom step, measured in a browser run of the built engine chunk. AC-067 and AC-068 are covered by `tests/package.test.mjs` and `tests/host.test.mjs`. AC-069 is covered by `tests/canvas.test.mjs` and `tests/client.test.mjs`, and a live Chrome pass exported a 420x120 frame at 420x120 and an 180x320 frame as an 180-wide SVG. Their status is **Inferred** until a live pass records them. AC-070 to AC-082 are covered by `tests/design.test.mjs`, `tests/canvas.test.mjs`, and `tests/client.test.mjs`; the desktop live pass is pending.
+Status: AC-001 to AC-042 are implemented and covered by host, engine, route, and client tests. AC-043 to AC-065 are implemented and covered by client tests named `FEAT-007 AC-0nn`. AC-066 is the wheel zoom step, measured in a browser run of the built engine chunk. AC-067 and AC-068 are covered by `tests/package.test.mjs` and `tests/host.test.mjs`. AC-069 is covered by `tests/canvas.test.mjs` and `tests/client.test.mjs`, and a live Chrome pass exported a 420x120 frame at 420x120 and an 180x320 frame as an 180-wide SVG. Their status is **Inferred** until a live pass records them. AC-070 to AC-082 are covered by `tests/design.test.mjs`, `tests/canvas.test.mjs`, and `tests/client.test.mjs`; the desktop live pass is pending. AC-086 is the View drag, checked in the exported viewer's browser run and a live GUI pass.
 
 ### AC-001: Create a design stores the source and returns a summary
 
@@ -1376,6 +1376,17 @@ Installed-tool smoke check: from an image-capable session, call `artifact_previe
 **Then** it gets render-tested examples with aligned component captions, equal switch tracks on one right edge, and a single text node for a metric and its qualifier
 **And** the brief asks the agent to compare repeated elements at full size before saving
 
+### AC-086: A View drag pans from anywhere and a click still selects
+
+**Given** a mockup open in View
+**When** the user presses the left button on a frame and moves at least 3 pixels on either axis
+**Then** the view pans and the press changes no selection
+**And** releasing before the pointer moves 3 pixels on either axis selects the layer under the press
+**And** dragging back by the same distance restores the first frame exactly
+**And** the canvas shows a grab cursor, which reads grabbing while the press is held
+
+Checked in the exported viewer's real-browser check and in a live GUI pass: a drag that started on the frame moved the view, the layer bar stayed hidden, and the reverse drag restored the exact first frame. Test type: browser.
+
 ### Edge Cases
 
 | Case ID | Scenario | Expected behavior | Test type |
@@ -1401,6 +1412,7 @@ Installed-tool smoke check: from an image-capable session, call `artifact_previe
 | CASE-019 | The wheel is spun fast while Ctrl is held | One event zooms at most twice, so the view cannot jump | Browser |
 | CASE-020 | Opening fits a scale below the dock minimum | Zooming out stops at that scale instead of jumping up to the minimum | Browser |
 | CASE-021 | The renderer cannot load a module | The write is refused with "The design renderer stopped"; the agent reports it and does not create a page | Host, skill text |
+| CASE-022 | A drag begins on a frame in View | The view pans and the frame is not selected | Browser and manual |
 
 ## 16. Error and Recovery Behavior
 
@@ -1775,6 +1787,14 @@ The skill now maps mockups and wireframes to `design`, draws a flow as one frame
 
 Cost: a user who wants a clickable flow must ask for a page or for something clickable.
 
+### DEC-018: A View press pans, and a release without movement selects
+
+**Status:** Approved on 2026-11-28
+
+The View surface selected a hit layer on mousedown, so a left drag that started on a frame selected it and never panned. Only a drag from the empty background or the middle button moved the view, and View has no Hand tool. A left press now starts a pan from any point, records the layer under it, and applies the selection on release only when the pointer never moved 3 pixels on either axis, the engine's own drag threshold. The hit test still runs at press time, so the layer under the press is the one selected. The engine input stays disabled, so a View pan writes only `panX` and `panY`.
+
+Cost: a click in View selects on release rather than on press, a few pixels later. The canvas shows a grab cursor in View to make the gesture discoverable, and a middle-button drag still pans.
+
 ## 28. Open Questions
 
 | ID | Question | Owner | Needed by |
@@ -1798,7 +1818,7 @@ Answered on 2026-11-14: Q-003 (the canvas is the main value; the user asked for 
 - A design summary's layout warnings are computed in the worker and never block a save. A family outside the bundled three is drawn in Inter by registering the Inter faces under that name; never rewrite the stored source for it, and keep `src/fonts.ts` the one place that decides it for both the worker and the canvas.
 - A panel edit commits once per control. Never write history per keystroke. The inspector previews through the handle and commits once.
 - The React inspector never imports `@open-pencil/*` and never reaches the editor. It reads the handle snapshot and calls handle methods; the bridge stays under `src/client/canvas/`.
-- View must not change the document. The engine input is disabled in View; click selection, pan, and zoom stay on the surface.
+- View must not change the document. The engine input is disabled in View; click selection, pan, and zoom stay on the surface. A left press starts a pan from any point and only a release without movement selects, so a drag that begins on a frame pans instead of selecting it.
 - Ctrl or Cmd wheel zoom is caught on the surface wrapper in the capture phase before the engine's canvas listener. The engine applies 4x per notch. The range and the per-notch step live in `src/client/canvas/zoom.ts`; do not let both handlers run.
 - A layer quote carries only the selected node's name, path, and JSX, cut at 4,000 characters. Never quote the whole page.
 - Call the artifact a mockup in user-facing copy and in chat. Keep `design` for the stored type, the tool argument, and code identifiers.
@@ -1814,6 +1834,7 @@ Answered on 2026-11-14: Q-003 (the canvas is the main value; the user asked for 
 
 | Version | Date | Change |
 | --- | --- | --- |
+| 0.17.2 | 2026-11-28 | A View drag now pans from anywhere, including from a frame. The surface used to select the layer under the press, so only a drag from the empty background or the middle button moved the view, and View has no Hand tool. A left press now starts a pan and click selection is applied on release within 3 pixels; the canvas shows a grab cursor in View. Plain wheel panning stays with the engine and is unchanged. Added AC-086, CASE-022, DEC-018, and the new clause in BR-020. Typecheck and lint pass, the exported viewer's real-browser check passes, and a live GUI pass panned from a frame, kept the layer bar hidden, restored the exact first frame on a reverse drag, selected on a 1-pixel click, and left the scale at 80% on a plain wheel. The package version moves to 0.17.2 so the immutable-cached canvas engine asset is refetched. |
 | 0.17.0 | 2026-11-28 | Agents can inspect one mockup frame or component instead of the whole canvas: `artifact_preview` and `artifact_export` accept a dotted `path` from the `artifact_read` outline, the worker resolves it with the same reader as `artifact_patch` and renders that node at its own box, and a layer export file name carries the layer name and path so two exports in one second do not collide. A layer preview bypasses the whole-design preview cache. The mockup brief and the feature-flow skill now send the model to per-screen paths instead of cropping one exported PNG. Added AC-082 and BR-038. Typecheck, lint, the 43-test design suite, and the 58-test host suite pass. The package version moves to 0.17.0. |
 | 0.16.0 | 2026-11-28 | Mockup text and layout: the brief teaches `lineHeight` in pixels, the width a wrapping `Text` needs, that `gap` needs `flex`, and that only Inter, Roboto, and Noto Naskh Arabic draw, and it tells the agent to preview a draft before saving. The worker now warns about geometry the engine lint misses (line height under the font size, text outside its frame, texts stacked in a frame without flex), draws an unbundled family in Inter instead of leaving it blank, and `artifact_preview` accepts unsaved content without writing. Added AC-078 to AC-080 and BR-035 to BR-037. Typecheck, lint, the design suite (41 tests), and the generation suite (25 tests) pass. The package version moves to 0.16.0 so the immutable-cached canvas engine asset is refetched. |
 | 0.16.1 | 2026-11-28 | The worker measures text with the headless CanvasKit renderer before compiling. The engine's own measurement throws in Node, so every text box was estimated at 0.6 × font size per character, which reported a correct caption as overflowed and gave previews the wrong text height. The brief and the walkthrough skill now say a text wraps at the width its frame offers and a hug frame never wraps it. Layout warnings therefore match the render, and a genuine overflow still warns. Added AC-081; preview and summary cache paths carry DESIGN_RENDER_VERSION so a stale summary cannot keep reporting the old warning. Design suite 42 tests pass. The package version moves to 0.16.1 so the immutable-cached canvas engine asset is refetched. |

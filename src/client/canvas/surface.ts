@@ -3,23 +3,31 @@ import { useCanvasContext, useCanvasInput, useEditor, useTextEdit } from '@open-
 import type { CanvasMode } from './entry.js';
 import { wheelZoom } from './zoom.js';
 
+/** How far a press moves before it pans, the engine's own drag threshold. */
+const DRAG_THRESHOLD = 3;
+
 /** The pan drag the view surface runs itself, since the engine keeps no read-only input path. */
 interface PanDrag {
   startX: number;
   startY: number;
   panX: number;
   panY: number;
+  /** What a release without movement selects, or null for a middle-button drag. */
+  click: { id: string | null; additive: boolean } | null;
+  moved: boolean;
 }
 
 /**
  * The canvas element and its pointer and text input. The SDK's headless
  * CanvasSurface draws but does not wire input, so the editor shell owns it.
- * In View the engine's input is disabled and this surface keeps only click
- * selection and panning; a double click never reaches the engine there,
- * because the engine's dblclick handler ignores the enabled flag and would
- * still rename or start a text edit. Plain wheel panning stays with the
- * engine's canvas listener; Ctrl or Cmd wheel zooming is caught here first,
- * because the engine applies four times the scale of one notch.
+ * In View the engine's input is disabled and this surface keeps click
+ * selection and panning: a press anywhere starts a pan, and a release without
+ * movement selects the layer under it, so a drag that begins on a frame moves
+ * the view instead of selecting the frame. A double click never reaches the
+ * engine there, because the engine's dblclick handler ignores the enabled flag
+ * and would still rename or start a text edit. Plain wheel panning stays with
+ * the engine's canvas listener; Ctrl or Cmd wheel zooming is caught here
+ * first, because the engine applies four times the scale of one notch.
  */
 export const CanvasSurface = defineComponent({
   name: 'DesignCanvasSurface',
@@ -42,6 +50,12 @@ export const CanvasSurface = defineComponent({
     useTextEdit(context.canvasRef, editor, { isEnabled: () => props.mode === 'edit' });
     let pan: PanDrag | null = null;
     const host = ref<HTMLDivElement | null>(null);
+
+    /** Show the grab cursor while a View press holds the view. */
+    const setViewCursor = (grabbing: boolean): void => {
+      const canvas = context.canvasRef.value;
+      if (canvas !== null) canvas.style.cursor = grabbing ? 'grabbing' : 'grab';
+    };
 
     /**
      * The canvas and graph coordinates of a pointer event.
@@ -80,28 +94,41 @@ export const CanvasSurface = defineComponent({
       if (point === null) return;
       if (event.button === 1) {
         event.preventDefault();
-        pan = { startX: event.clientX, startY: event.clientY, panX: editor.state.panX, panY: editor.state.panY };
+        pan = { startX: event.clientX, startY: event.clientY, panX: editor.state.panX, panY: editor.state.panY, click: null, moved: true };
+        setViewCursor(true);
         return;
       }
       if (event.button !== 0) return;
       const hit = editor.hitTestAtPoint(point.cx, point.cy);
-      if (hit !== null) {
-        editor.select([hit.id], event.shiftKey || event.metaKey || event.ctrlKey);
-        return;
-      }
-      editor.clearSelection();
-      pan = { startX: event.clientX, startY: event.clientY, panX: editor.state.panX, panY: editor.state.panY };
+      pan = {
+        startX: event.clientX,
+        startY: event.clientY,
+        panX: editor.state.panX,
+        panY: editor.state.panY,
+        click: { id: hit?.id ?? null, additive: event.shiftKey || event.metaKey || event.ctrlKey },
+        moved: false,
+      };
+      setViewCursor(true);
     };
 
     const onMouseMove = (event: MouseEvent): void => {
       if (pan === null) return;
-      editor.state.panX = pan.panX + (event.clientX - pan.startX);
-      editor.state.panY = pan.panY + (event.clientY - pan.startY);
+      const dx = event.clientX - pan.startX;
+      const dy = event.clientY - pan.startY;
+      if (!pan.moved && Math.abs(dx) < DRAG_THRESHOLD && Math.abs(dy) < DRAG_THRESHOLD) return;
+      pan.moved = true;
+      editor.state.panX = pan.panX + dx;
+      editor.state.panY = pan.panY + dy;
       editor.requestRepaint();
     };
 
     const onMouseUp = (): void => {
+      const drag = pan;
       pan = null;
+      if (props.mode === 'view') setViewCursor(false);
+      if (drag === null || drag.moved || drag.click === null) return;
+      if (drag.click.id === null) editor.clearSelection();
+      else editor.select([drag.click.id], drag.click.additive);
     };
 
     /**
@@ -128,7 +155,7 @@ export const CanvasSurface = defineComponent({
           ref: (element: unknown) => {
             context.canvasRef.value = element as HTMLCanvasElement | null;
           },
-          style: 'display:block;width:100%;height:100%;outline:none',
+          style: 'display:block;width:100%;height:100%;outline:none' + (props.mode === 'view' ? ';cursor:grab' : ''),
           onMousedown: onMouseDown,
           onMousemove: onMouseMove,
           onMouseup: onMouseUp,
